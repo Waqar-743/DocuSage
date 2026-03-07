@@ -1,0 +1,48 @@
+name: Build & Upload Windows Installer
+
+on:
+  workflow_dispatch:
+  release:
+    types: [created]
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: DocuSage/package-lock.json
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: DocuSage/src-tauri -> target
+
+      - name: Install frontend dependencies
+        working-directory: DocuSage
+        run: npm ci
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: DocuSage
+          tagName: ${{ github.event.release.tag_name || 'v0.1.0' }}
+          releaseName: "DocuSage ${{ github.event.release.tag_name || 'v0.1.0' }}"
+          releaseBody: ""
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: false
