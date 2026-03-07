@@ -1,7 +1,7 @@
 mod commands;
 pub mod rag;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, RwLock};
 
 use mistralrs::Model;
@@ -25,26 +25,93 @@ pub struct AppState {
     pub chat_history: Mutex<Vec<String>>,
 }
 
-/// Resolve the model directory using the following precedence:
-///
-/// 1. `MODEL_PATH` environment variable (ideal for Codespace / CI).
-/// 2. `<OS Documents folder>/DocuSage/models` via the `dirs` crate.
-/// 3. Current working directory as a last-resort fallback.
-fn resolve_model_path() -> PathBuf {
-    // 1. Environment variable (loaded from .env by dotenv earlier).
-    if let Ok(env_path) = std::env::var("MODEL_PATH") {
-        if !env_path.is_empty() {
-            return PathBuf::from(env_path);
+fn normalize_env_path(raw: &str) -> Option<PathBuf> {
+    let trimmed = raw.trim().trim_matches('"');
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(trimmed))
+    }
+}
+
+pub(crate) fn path_has_gguf(path: &Path) -> bool {
+    std::fs::read_dir(path)
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|entry| {
+            entry
+                .path()
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("gguf"))
+        })
+}
+
+fn model_path_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    for key in ["MODEL_PATH", "DOCUSAGE_MODEL_PATH"] {
+        if let Ok(value) = std::env::var(key) {
+            if let Some(path) = normalize_env_path(&value) {
+                candidates.push(path);
+            }
         }
     }
 
-    // 2. OS Documents directory — works cross-platform (Win/Mac/Linux).
-    if let Some(doc_dir) = dirs::document_dir() {
-        return doc_dir.join("DocuSage").join("models");
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            candidates.push(exe_dir.join("models"));
+            candidates.push(exe_dir.join("DocuSage").join("models"));
+        }
     }
 
-    // 3. Fallback: current working directory.
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    if let Ok(current_dir) = std::env::current_dir() {
+        candidates.push(current_dir.join("models"));
+        candidates.push(current_dir.join("DocuSage").join("models"));
+    }
+
+    if let Some(doc_dir) = dirs::document_dir() {
+        candidates.push(doc_dir.join("DocuSage").join("models"));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        for drive in ['D', 'E', 'C'] {
+            candidates.push(PathBuf::from(format!("{drive}:\\DocuSage\\models")));
+        }
+    }
+
+    candidates
+}
+
+/// Resolve the model directory using the following precedence:
+///
+/// 1. Environment variables such as `MODEL_PATH`.
+/// 2. Common application-relative locations.
+/// 3. OS-specific conventional folders.
+/// 4. Windows drive-root fallbacks such as `D:\DocuSage\models`.
+/// 5. Current working directory as a last-resort fallback.
+pub(crate) fn resolve_model_path() -> PathBuf {
+    let candidates = model_path_candidates();
+
+    if let Some(path) = candidates
+        .iter()
+        .find(|path| path.is_dir() && path_has_gguf(path))
+        .cloned()
+    {
+        return path;
+    }
+
+    if let Some(path) = candidates.iter().find(|path| path.is_dir()).cloned() {
+        return path;
+    }
+
+    candidates
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

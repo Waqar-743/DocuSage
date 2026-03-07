@@ -29,11 +29,23 @@ pub async fn load_model(
         *model_path = new_path.clone();
         new_path
     } else {
-        state
+        let current_path = state
             .model_path
             .read()
             .map_err(|e| format!("Failed to acquire model_path read lock: {e}"))?
-            .clone()
+            .clone();
+
+        if current_path.exists() && crate::path_has_gguf(&current_path) {
+            current_path
+        } else {
+            let refreshed_path = crate::resolve_model_path();
+            let mut model_path = state
+                .model_path
+                .write()
+                .map_err(|e| format!("Failed to acquire model_path write lock: {e}"))?;
+            *model_path = refreshed_path.clone();
+            refreshed_path
+        }
     };
 
     if !resolved.exists() {
