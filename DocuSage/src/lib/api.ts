@@ -74,9 +74,11 @@ export async function chatRag(prompt: string): Promise<string> {
 /**
  * Ingest a PDF document into the local vector store.
  * The backend will extract text, chunk, embed, and persist it.
+ * ONLY the file path is sent over IPC — Rust reads the PDF from disk.
  * @param filePath Absolute path to the PDF file on disk.
  */
 export async function ingestDocument(filePath: string): Promise<string> {
   if (!isTauri()) { await mockDelay(1500); return `Ingested "${filePath}" (browser preview)`; }
-  return invoke<string>("ingest_document", { filePath });
+  // Send ONLY the path string — never read or transmit file content via IPC.
+  return invoke<string>("ingest_document", { filePath: String(filePath) });
 }

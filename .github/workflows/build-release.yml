@@ -45,8 +45,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: DocuSage
-          tagName: ${{ github.event.release.tag_name || 'v0.1.0' }}
-          releaseName: "DocuSage ${{ github.event.release.tag_name || 'v0.1.0' }}"
+          tagName: ${{ github.event.release.tag_name || 'v0.2.0' }}
+          releaseName: "DocuSage ${{ github.event.release.tag_name || 'v0.2.0' }}"
           releaseBody: ""
           releaseDraft: false
           prerelease: false

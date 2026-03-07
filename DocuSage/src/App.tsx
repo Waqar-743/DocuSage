@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Moon, Sun, Settings, Database, Plus, FileText, Send, Paperclip, AlertCircle, Trash2, X, MessageSquare } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { chatGeneral, chatRag, ingestDocument, isTauri } from './lib/api';
+import { chatGeneral, chatRag, ingestDocument, isTauri, loadModel } from './lib/api';
 import './App.css';
 
 type Message = {
@@ -51,6 +51,9 @@ export default function App() {
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [toastError, setToastError] = useState<string | null>(null);
+  const [isModelLoading, setIsModelLoading] = useState(false);
+  const [isModelReady, setIsModelReady] = useState(!isTauri());
+  const [modelStatus, setModelStatus] = useState<string>(isTauri() ? 'Model not loaded' : 'Browser preview mode');
 
   // Session State
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -133,22 +136,61 @@ export default function App() {
     setTimeout(() => setToastError(null), 5000);
   };
 
+  // Load the local GGUF model once on startup in desktop mode.
+  // Browser preview mode uses mocked chat responses and does not need this.
+  const ensureModelLoaded = async () => {
+    if (!isTauri() || isModelLoading) return;
+
+    setIsModelLoading(true);
+    setModelStatus('Loading local model...');
+
+    try {
+      const msg = await loadModel();
+      setIsModelReady(true);
+      setModelStatus(msg || 'Model loaded');
+    } catch (err) {
+      setIsModelReady(false);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setModelStatus(errorMessage);
+      showError(`Model load failed: ${errorMessage}`);
+    } finally {
+      setIsModelLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isTauri()) {
+      ensureModelLoaded();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handlePickFile = async () => {
     let filePath: string;
     let fileName: string;
 
     if (isTauri()) {
-      // Real Tauri desktop: native OS file picker
+      // Real Tauri desktop: native OS file picker — returns only the path string.
       try {
         const selected = await open({
           multiple: false,
+          directory: false,
           filters: [{ name: "PDF Documents", extensions: ["pdf"] }],
         });
         if (!selected) return;
-        filePath = selected;
+
+        // Guarantee we only have the path string, never file content.
+        filePath = typeof selected === 'string' ? selected : String(selected);
+
+        // Safety check: reject if the dialog somehow returned raw file content.
+        if (filePath.startsWith('%PDF')) {
+          showError('Received file content instead of path. Please update @tauri-apps/plugin-dialog.');
+          return;
+        }
+
         fileName = filePath.split(/[\\/]/).pop() ?? filePath;
-      } catch {
-        showError("Failed to open file picker.");
+      } catch (e) {
+        showError(`Failed to open file picker: ${String(e)}`);
         return;
       }
     } else {
@@ -160,27 +202,27 @@ export default function App() {
     }
 
     const newDoc: Document = {
-        id: Date.now().toString(),
-        name: fileName,
-        path: filePath,
-        status: 'ingesting',
-        messages: []
-      };
-      setDocuments(prev => [newDoc, ...prev]);
-      setSelectedDocId(newDoc.id);
-      setMode('rag');
+      id: Date.now().toString(),
+      name: fileName,
+      path: filePath,
+      status: 'ingesting',
+      messages: []
+    };
+    setDocuments(prev => [newDoc, ...prev]);
+    setSelectedDocId(newDoc.id);
+    setMode('rag');
 
-      try {
-        await ingestDocument(filePath);
-        setDocuments(prev => prev.map(d =>
-          d.id === newDoc.id ? { ...d, status: 'ready' } : d
-        ));
-      } catch (err) {
-        setDocuments(prev => prev.map(d =>
-          d.id === newDoc.id ? { ...d, status: 'error' } : d
-        ));
-        showError(`Failed to ingest ${fileName}: ${String(err)}`);
-      }
+    try {
+      await ingestDocument(filePath);
+      setDocuments(prev => prev.map(d =>
+        d.id === newDoc.id ? { ...d, status: 'ready' } : d
+      ));
+    } catch (err) {
+      setDocuments(prev => prev.map(d =>
+        d.id === newDoc.id ? { ...d, status: 'error' } : d
+      ));
+      showError(`Failed to ingest ${fileName}: ${String(err)}`);
+    }
   };
 
   const handleDeleteDoc = (id: string) => {
@@ -218,6 +260,11 @@ export default function App() {
 
   const handleSend = async () => {
     if (!inputValue.trim() || isTyping) return;
+
+    if (!isModelReady) {
+      showError('Model is not loaded yet. Click Retry Model Load in the header.');
+      return;
+    }
 
     const userText = inputValue.trim();
     setInputValue('');
@@ -303,6 +350,21 @@ export default function App() {
               <Sun size={14} /> Light
             </button>
           </div>
+
+          {isTauri() && (
+            <button
+              onClick={ensureModelLoaded}
+              disabled={isModelLoading}
+              className={`px-3 py-1.5 text-xs rounded-lg border transition-colors disabled:opacity-50 ${
+                isModelReady
+                  ? (isDark ? 'border-emerald-500/50 text-emerald-300 bg-emerald-500/10' : 'border-emerald-300 text-emerald-700 bg-emerald-50')
+                  : (isDark ? 'border-amber-500/50 text-amber-300 bg-amber-500/10 hover:bg-amber-500/20' : 'border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100')
+              }`}
+              title={modelStatus}
+            >
+              {isModelLoading ? 'Loading model...' : isModelReady ? 'Model Ready' : 'Retry Model Load'}
+            </button>
+          )}
         </div>
       </header>
 
