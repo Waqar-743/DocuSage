@@ -1,0 +1,14 @@
+<svg width="200" height="200" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background circle -->
+  <circle cx="100" cy="100" r="95" fill="white" stroke="#e4e4e7" stroke-width="2"/>
+  <!-- Outer D shape -->
+  <path d="M55 35H110C148.66 35 180 66.34 180 105C180 143.66 148.66 175 110 175H55V35Z"
+        stroke="#0F2854" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <!-- Inner accent -->
+  <path d="M55 70H95C113.778 70 129 85.222 129 104C129 122.778 113.778 138 95 138H55V70Z"
+        fill="#10b981"/>
+  <!-- Document lines hint -->
+  <line x1="30" y1="60" x2="45" y2="60" stroke="#10b981" stroke-width="4" stroke-linecap="round"/>
+  <line x1="30" y1="80" x2="45" y2="80" stroke="#10b981" stroke-width="4" stroke-linecap="round"/>
+  <line x1="30" y1="100" x2="45" y2="100" stroke="#10b981" stroke-width="4" stroke-linecap="round"/>
+</svg>

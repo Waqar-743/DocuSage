@@ -1,0 +1,14 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="1024" height="1024" rx="200" fill="#111113"/>
+  <!-- Outer D shape -->
+  <path d="M280 180H560C762.4 180 920 337.6 920 540C920 742.4 762.4 900 560 900H280V180Z"
+        stroke="white" stroke-width="60" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <!-- Inner accent D -->
+  <path d="M280 360H490C582.8 360 658 435.2 658 528C658 620.8 582.8 696 490 696H280V360Z"
+        fill="#10b981"/>
+  <!-- Document lines -->
+  <line x1="148" y1="310" x2="230" y2="310" stroke="#10b981" stroke-width="22" stroke-linecap="round"/>
+  <line x1="148" y1="410" x2="230" y2="410" stroke="#10b981" stroke-width="22" stroke-linecap="round"/>
+  <line x1="148" y1="510" x2="230" y2="510" stroke="#10b981" stroke-width="22" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+/* Reset body/html for full-viewport app. */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}

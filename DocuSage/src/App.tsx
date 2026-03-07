@@ -1,0 +1,562 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { Moon, Sun, Settings, Database, Plus, FileText, Send, Paperclip, AlertCircle, Trash2, X, MessageSquare } from 'lucide-react';
+import { open } from '@tauri-apps/plugin-dialog';
+import { chatGeneral, chatRag, ingestDocument, isTauri } from './lib/api';
+import './App.css';
+
+type Message = {
+  id: string;
+  text: string;
+  sender: 'user' | 'bot';
+  isStreaming?: boolean;
+  isError?: boolean;
+};
+
+type Document = {
+  id: string;
+  name: string;
+  path: string;
+  status: 'ingesting' | 'ready' | 'error';
+  messages: Message[];
+};
+
+type GeneralChat = {
+  id: string;
+  name: string;
+  messages: Message[];
+};
+
+const TypewriterEffect = ({ text, speed = 100 }: { text: string, speed?: number }) => {
+  const [displayedText, setDisplayedText] = useState('');
+
+  useEffect(() => {
+    let i = 0;
+    setDisplayedText('');
+    const timer = setInterval(() => {
+      i++;
+      setDisplayedText(text.slice(0, i));
+      if (i >= text.length) {
+        clearInterval(timer);
+      }
+    }, speed);
+    return () => clearInterval(timer);
+  }, [text, speed]);
+
+  return <span>{displayedText}</span>;
+};
+
+export default function App() {
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [mode, setMode] = useState<'general' | 'rag'>('rag');
+  const [inputValue, setInputValue] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
+  const [toastError, setToastError] = useState<string | null>(null);
+
+  // Session State
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [generalChats, setGeneralChats] = useState<GeneralChat[]>([
+    { id: 'default', name: 'New Chat', messages: [] }
+  ]);
+  const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
+  const [selectedGeneralChatId, setSelectedGeneralChatId] = useState<string>('default');
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const isDark = theme === 'dark';
+
+  // Context ref for stable callbacks
+  const contextRef = useRef({ mode, selectedDocId, selectedGeneralChatId });
+  useEffect(() => {
+    contextRef.current = { mode, selectedDocId, selectedGeneralChatId };
+  }, [mode, selectedDocId, selectedGeneralChatId]);
+
+  const activeMessages = mode === 'rag'
+    ? documents.find(d => d.id === selectedDocId)?.messages || []
+    : generalChats.find(c => c.id === selectedGeneralChatId)?.messages || [];
+
+  const updateMessages = (updater: Message[] | ((prev: Message[]) => Message[])) => {
+    const { mode: currentMode, selectedDocId: currentDocId, selectedGeneralChatId: currentChatId } = contextRef.current;
+
+    if (currentMode === 'rag' && currentDocId) {
+      setDocuments(prev => prev.map(doc => {
+        if (doc.id === currentDocId) {
+          const newMessages = typeof updater === 'function' ? updater(doc.messages) : updater;
+          return { ...doc, messages: newMessages };
+        }
+        return doc;
+      }));
+    } else if (currentMode === 'general' && currentChatId) {
+      setGeneralChats(prev => prev.map(chat => {
+        if (chat.id === currentChatId) {
+          const newMessages = typeof updater === 'function' ? updater(chat.messages) : updater;
+          let newName = chat.name;
+          if (chat.name === 'New Chat' && newMessages.length > 0 && newMessages[0].sender === 'user') {
+            newName = newMessages[0].text.slice(0, 30) + (newMessages[0].text.length > 30 ? '...' : '');
+          }
+          return { ...chat, name: newName, messages: newMessages };
+        }
+        return chat;
+      }));
+    }
+  };
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [activeMessages]);
+
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
+    }
+  }, [inputValue]);
+
+  // Global shortcut for clearing chat (Ctrl+Shift+C)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'c') {
+        e.preventDefault();
+        updateMessages([]);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  const showError = (msg: string) => {
+    setToastError(msg);
+    setTimeout(() => setToastError(null), 5000);
+  };
+
+  const handlePickFile = async () => {
+    let filePath: string;
+    let fileName: string;
+
+    if (isTauri()) {
+      // Real Tauri desktop: native OS file picker
+      try {
+        const selected = await open({
+          multiple: false,
+          filters: [{ name: "PDF Documents", extensions: ["pdf"] }],
+        });
+        if (!selected) return;
+        filePath = selected;
+        fileName = filePath.split(/[\\/]/).pop() ?? filePath;
+      } catch {
+        showError("Failed to open file picker.");
+        return;
+      }
+    } else {
+      // Browser preview: simulate a file pick with a prompt
+      const mockPath = window.prompt("Browser preview — enter a PDF path to simulate ingestion:", "C:\\Documents\\sample.pdf");
+      if (!mockPath) return;
+      filePath = mockPath;
+      fileName = filePath.split(/[\\/]/).pop() ?? filePath;
+    }
+
+    const newDoc: Document = {
+        id: Date.now().toString(),
+        name: fileName,
+        path: filePath,
+        status: 'ingesting',
+        messages: []
+      };
+      setDocuments(prev => [newDoc, ...prev]);
+      setSelectedDocId(newDoc.id);
+      setMode('rag');
+
+      try {
+        await ingestDocument(filePath);
+        setDocuments(prev => prev.map(d =>
+          d.id === newDoc.id ? { ...d, status: 'ready' } : d
+        ));
+      } catch (err) {
+        setDocuments(prev => prev.map(d =>
+          d.id === newDoc.id ? { ...d, status: 'error' } : d
+        ));
+        showError(`Failed to ingest ${fileName}: ${String(err)}`);
+      }
+  };
+
+  const handleDeleteDoc = (id: string) => {
+    const filtered = documents.filter(d => d.id !== id);
+    setDocuments(filtered);
+    if (selectedDocId === id) {
+      setSelectedDocId(null);
+    }
+  };
+
+  const handleDeleteGeneralChat = (id: string) => {
+    const filtered = generalChats.filter(c => c.id !== id);
+    if (filtered.length === 0) {
+      const newId = Date.now().toString();
+      setGeneralChats([{ id: newId, name: 'New Chat', messages: [] }]);
+      setSelectedGeneralChatId(newId);
+    } else {
+      setGeneralChats(filtered);
+      if (selectedGeneralChatId === id) {
+        setSelectedGeneralChatId(filtered[0].id);
+      }
+    }
+  };
+
+  const handleNewChat = () => {
+    setMode('general');
+    const newChatId = Date.now().toString();
+    setGeneralChats(prev => [{ id: newChatId, name: 'New Chat', messages: [] }, ...prev]);
+    setSelectedGeneralChatId(newChatId);
+    setInputValue('');
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
+  };
+
+  const handleSend = async () => {
+    if (!inputValue.trim() || isTyping) return;
+
+    const userText = inputValue.trim();
+    setInputValue('');
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
+
+    const newUserMsg: Message = { id: Date.now().toString(), text: userText, sender: 'user' };
+    const botMsgId = (Date.now() + 1).toString();
+
+    updateMessages(prev => [...prev, newUserMsg, { id: botMsgId, text: '', sender: 'bot', isStreaming: true }]);
+    setIsTyping(true);
+
+    try {
+      const response = mode === 'general'
+        ? await chatGeneral(userText)
+        : await chatRag(userText);
+
+      updateMessages(prev => prev.map(msg =>
+        msg.id === botMsgId
+          ? { ...msg, text: response, isStreaming: false }
+          : msg
+      ));
+    } catch (error: unknown) {
+      console.error("Error generating response:", error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      updateMessages(prev => prev.map(msg =>
+        msg.id === botMsgId
+          ? { ...msg, text: errorMessage, isError: true, isStreaming: false }
+          : msg
+      ));
+      showError("Failed to generate response. Please check your connection.");
+    } finally {
+      setIsTyping(false);
+    }
+  };
+
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (mode === 'rag' && !selectedDocId) {
+        showError("Please select or ingest a document first to use RAG mode.");
+        return;
+      }
+      handleSend();
+    }
+  };
+
+  return (
+    <div className={`flex flex-col h-screen font-sans transition-colors duration-200 relative ${isDark ? 'bg-[#151517] text-zinc-100 selection:bg-white/30' : 'bg-white text-zinc-900 selection:bg-[#0F2854]/30'}`}>
+
+      {/* Toast Notification for Errors */}
+      {toastError && (
+        <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-3 rounded-xl bg-red-500 text-white shadow-xl transition-all duration-300 ease-out">
+          <AlertCircle size={18} />
+          <span className="text-sm font-medium">{toastError}</span>
+        </div>
+      )}
+
+      {/* Header */}
+      <header className={`flex items-center justify-between px-5 h-14 border-b shrink-0 transition-colors duration-200 ${isDark ? 'border-[#2a2a2c]' : 'border-zinc-200'}`}>
+        <div className="flex items-center gap-3">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={isDark ? 'text-white' : 'text-[#0F2854]'}>
+            <path d="M5 4H12C16.4183 4 20 7.58172 20 12C20 16.4183 16.4183 20 12 20H5V4Z" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M5 8H10C12.2091 8 14 9.79086 14 12C14 14.2091 12.2091 16 10 16H5V8Z" fill="#10b981"/>
+          </svg>
+          <span className="font-semibold text-lg tracking-wide">DocuSage</span>
+        </div>
+
+        <div className="flex items-center gap-3">
+          {/* Theme Toggle */}
+          <div className={`flex rounded-full p-1 border transition-colors duration-200 ${isDark ? 'bg-[#232325] border-[#2a2a2c]' : 'bg-zinc-100 border-zinc-200'}`}>
+            <button
+              className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-full transition-colors ${isDark ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}
+              onClick={() => setTheme('dark')}
+            >
+              <Moon size={14} /> Dark
+            </button>
+            <button
+              className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-full transition-colors ${!isDark ? 'bg-[#0F2854] text-white shadow-sm' : 'text-zinc-400 hover:text-zinc-200'}`}
+              onClick={() => setTheme('light')}
+            >
+              <Sun size={14} /> Light
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="flex flex-1 overflow-hidden">
+        {/* Sidebar */}
+        <aside className={`w-[280px] flex flex-col border-r shrink-0 transition-colors duration-200 ${isDark ? 'border-[#2a2a2c]' : 'border-zinc-200'}`}>
+          <div className="p-4 flex flex-col shrink-0 gap-3">
+            <button
+              onClick={handleNewChat}
+              className={`flex items-center justify-between w-full py-2.5 px-4 rounded-xl transition-colors font-medium text-sm border shadow-sm ${
+                isDark ? 'bg-[#232325] border-[#2a2a2c] hover:bg-[#2a2a2c] text-zinc-200' : 'bg-white border-zinc-200 hover:bg-zinc-50 text-zinc-700'
+              }`}
+            >
+              <span>New Chat</span>
+              <Plus size={16} />
+            </button>
+
+            <button
+              onClick={handlePickFile}
+              className={`flex items-center justify-center gap-2 w-full py-2.5 px-4 rounded-xl transition-colors font-medium text-sm shadow-sm ${isDark ? 'bg-white hover:bg-zinc-200 text-zinc-900' : 'bg-[#0F2854] hover:bg-[#0a1b38] text-white'}`}
+            >
+              <Plus size={16} /> Ingest PDF
+            </button>
+          </div>
+
+          {/* Document / Chat List */}
+          <div className="flex-1 overflow-y-auto px-2 space-y-1 pb-4">
+            <h2 className={`text-[11px] font-semibold tracking-wider mb-3 px-2 mt-2 ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
+              {mode === 'rag' ? 'DOCUMENTS' : 'CHATS'}
+            </h2>
+
+            {mode === 'rag' ? (
+              documents.length === 0 ? (
+                <div className="flex items-start justify-center pt-4">
+                  <p className="text-xs text-zinc-500 text-center px-4">No documents ingested yet. Upload a PDF to get started.</p>
+                </div>
+              ) : (
+                documents.map(doc => (
+                  <button
+                    key={doc.id}
+                    onClick={() => setSelectedDocId(doc.id)}
+                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm transition-colors text-left group ${
+                      selectedDocId === doc.id
+                        ? (isDark ? 'bg-[#2a2a2c] text-white' : 'bg-zinc-100 text-zinc-900 font-medium')
+                        : (isDark ? 'text-zinc-400 hover:bg-[#232325] hover:text-zinc-200' : 'text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900')
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 truncate pr-2">
+                      <FileText size={16} className={`shrink-0 ${
+                        doc.status === 'ingesting' ? 'animate-pulse text-amber-400'
+                        : doc.status === 'error' ? 'text-red-400'
+                        : selectedDocId === doc.id ? (isDark ? 'text-white' : 'text-[#0F2854]')
+                        : ''
+                      }`} />
+                      <span className="truncate">{doc.name}</span>
+                    </div>
+                    {selectedDocId === doc.id && (
+                      <div
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteDoc(doc.id);
+                        }}
+                        className={`p-1.5 rounded-md transition-colors ${isDark ? 'hover:bg-red-900/30 text-red-400' : 'hover:bg-red-100 text-red-500'}`}
+                        title="Delete document"
+                      >
+                        <Trash2 size={14} />
+                      </div>
+                    )}
+                  </button>
+                ))
+              )
+            ) : (
+              generalChats.length === 0 ? (
+                <div className="flex items-start justify-center pt-4">
+                  <p className="text-xs text-zinc-500 text-center px-4">No chats yet. Start a new conversation.</p>
+                </div>
+              ) : (
+                generalChats.map(chat => (
+                  <button
+                    key={chat.id}
+                    onClick={() => setSelectedGeneralChatId(chat.id)}
+                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm transition-colors text-left group ${
+                      selectedGeneralChatId === chat.id
+                        ? (isDark ? 'bg-[#2a2a2c] text-white' : 'bg-zinc-100 text-zinc-900 font-medium')
+                        : (isDark ? 'text-zinc-400 hover:bg-[#232325] hover:text-zinc-200' : 'text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900')
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 truncate pr-2">
+                      <MessageSquare size={16} className={`shrink-0 ${selectedGeneralChatId === chat.id ? (isDark ? 'text-white' : 'text-[#0F2854]') : ''}`} />
+                      <span className="truncate">{chat.name}</span>
+                    </div>
+                    {selectedGeneralChatId === chat.id && (
+                      <div
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteGeneralChat(chat.id);
+                        }}
+                        className={`p-1.5 rounded-md transition-colors ${isDark ? 'hover:bg-red-900/30 text-red-400' : 'hover:bg-red-100 text-red-500'}`}
+                        title="Delete chat"
+                      >
+                        <Trash2 size={14} />
+                      </div>
+                    )}
+                  </button>
+                ))
+              )
+            )}
+          </div>
+        </aside>
+
+        {/* Main Content */}
+        <main className="flex-1 flex flex-col relative min-w-0">
+          {/* Main Content Header */}
+          <div className={`flex items-center justify-between px-6 py-3 border-b shrink-0 transition-colors duration-200 ${isDark ? 'border-[#2a2a2c]' : 'border-zinc-200'}`}>
+            <div className="flex items-center gap-3">
+              <h1 className="text-base font-semibold">
+                <TypewriterEffect key={`${theme}-${mode}`} text="Your Private Assistant" speed={100} />
+              </h1>
+              {mode === 'rag' && selectedDocId && (
+                <span className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md font-medium ${isDark ? 'bg-[#2a2a2c] text-zinc-300' : 'bg-zinc-100 text-zinc-600'}`}>
+                  <span className="truncate max-w-[200px]">Chatting with: {documents.find(d => d.id === selectedDocId)?.name}</span>
+                  <button
+                    onClick={() => setSelectedDocId(null)}
+                    className={`p-0.5 rounded-full transition-colors ${isDark ? 'hover:bg-[#353538] hover:text-white' : 'hover:bg-zinc-200 hover:text-zinc-900'}`}
+                    title="Clear selected document"
+                  >
+                    <X size={12} />
+                  </button>
+                </span>
+              )}
+              {mode === 'general' && selectedGeneralChatId && (
+                <span className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md font-medium ${isDark ? 'bg-[#2a2a2c] text-zinc-300' : 'bg-zinc-100 text-zinc-600'}`}>
+                  <span className="truncate max-w-[200px]">{generalChats.find(c => c.id === selectedGeneralChatId)?.name}</span>
+                </span>
+              )}
+            </div>
+
+            {/* Mode Toggle */}
+            <div className={`flex rounded-full p-1 border transition-colors duration-200 ${isDark ? 'bg-[#232325] border-[#2a2a2c]' : 'bg-zinc-100 border-zinc-200'}`}>
+              <button
+                className={`flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-full transition-colors ${mode === 'general' ? (isDark ? 'bg-white text-zinc-900 shadow-sm' : 'bg-[#0F2854] text-white shadow-sm') : isDark ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}
+                onClick={() => setMode('general')}
+              >
+                <Settings size={14} /> General
+              </button>
+              <button
+                className={`flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-full transition-colors ${mode === 'rag' ? (isDark ? 'bg-white text-zinc-900 shadow-sm' : 'bg-[#0F2854] text-white shadow-sm') : isDark ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}
+                onClick={() => setMode('rag')}
+              >
+                <Database size={14} /> RAG
+              </button>
+            </div>
+          </div>
+
+          {/* Chat Area */}
+          <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
+            {activeMessages.length === 0 ? (
+              <div className="flex flex-1 items-center justify-center">
+                <div className="text-center max-w-md">
+                  <div className={`inline-flex items-center justify-center w-12 h-12 rounded-full mb-4 ${isDark ? 'bg-[#232325]' : 'bg-zinc-100'}`}>
+                    {mode === 'rag' ? <Database size={24} className={isDark ? 'text-white' : 'text-[#0F2854]'} /> : <MessageSquare size={24} className={isDark ? 'text-white' : 'text-[#0F2854]'} />}
+                  </div>
+                  <h3 className="text-lg font-medium mb-2">Welcome to Your Private Assistant</h3>
+                  <p className={`text-sm ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                    {mode === 'rag'
+                      ? (selectedDocId ? "Ask a question about this document." : "Ingest a PDF from the sidebar and start asking questions about your documents.")
+                      : "Ask any general question to get started."}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              activeMessages.map((msg) => (
+                <div key={msg.id} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div
+                    className={`px-5 py-3.5 rounded-2xl max-w-[80%] text-sm shadow-sm whitespace-pre-wrap leading-relaxed ${
+                      msg.sender === 'user'
+                        ? (isDark ? 'bg-white text-zinc-900 rounded-tr-sm' : 'bg-[#0F2854] text-white rounded-tr-sm')
+                        : msg.isError
+                          ? isDark
+                            ? 'bg-red-900/20 border border-red-900/50 text-red-400 rounded-tl-sm'
+                            : 'bg-red-50 border border-red-200 text-red-600 rounded-tl-sm'
+                          : isDark
+                            ? 'bg-[#232325] border border-[#2a2a2c] text-zinc-100 rounded-tl-sm'
+                            : 'bg-white border border-zinc-200 text-zinc-900 rounded-tl-sm'
+                    }`}
+                  >
+                    {msg.text === '' && msg.isStreaming ? (
+                      <div className="flex space-x-1.5 items-center h-5 px-1">
+                        <div className="w-1.5 h-1.5 bg-current rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                        <div className="w-1.5 h-1.5 bg-current rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                        <div className="w-1.5 h-1.5 bg-current rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                      </div>
+                    ) : (
+                      <>
+                        {msg.text}
+                        {msg.isStreaming && (
+                          <span className="inline-block w-1.5 h-4 ml-1 align-middle bg-current animate-pulse rounded-full" />
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Input Area */}
+          <div className="p-4 shrink-0 pb-6">
+            <div className="max-w-4xl mx-auto relative">
+              <div className={`flex items-end gap-2 p-2 rounded-2xl border transition-all shadow-sm ${
+                isDark
+                  ? 'bg-[#232325] border-[#2a2a2c] focus-within:border-white focus-within:ring-1 focus-within:ring-white'
+                  : 'bg-white border-zinc-200 focus-within:border-[#0F2854] focus-within:ring-1 focus-within:ring-[#0F2854]'
+              }`}>
+                <button
+                  onClick={handlePickFile}
+                  className={`p-2.5 rounded-xl transition-colors shrink-0 mb-0.5 ${
+                    isDark ? 'text-zinc-400 hover:text-zinc-200 hover:bg-[#2a2a2c]' : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100'
+                  }`}
+                  title="Attach file"
+                >
+                  <Paperclip size={20} />
+                </button>
+
+                <textarea
+                  ref={textareaRef}
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  onKeyDown={handleInputKeyDown}
+                  disabled={isTyping || (mode === 'rag' && !selectedDocId)}
+                  placeholder={mode === 'rag' ? (selectedDocId ? "Ask about this document..." : "Select or ingest a document first...") : "Ask a general question..."}
+                  className="flex-1 bg-transparent border-none focus:ring-0 resize-none py-3 px-2 text-sm placeholder:text-zinc-500 disabled:opacity-50 max-h-[200px] overflow-y-auto focus:outline-none"
+                  rows={1}
+                />
+
+                <button
+                  onClick={handleSend}
+                  disabled={isTyping || !inputValue.trim() || (mode === 'rag' && !selectedDocId)}
+                  className={`p-2.5 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition-colors shrink-0 mb-0.5 ${isDark ? 'bg-white hover:bg-zinc-200 text-zinc-900' : 'bg-[#0F2854] hover:bg-[#0a1b38] text-white'}`}
+                  title="Send message"
+                >
+                  <Send size={20} />
+                </button>
+              </div>
+              <div className="text-center mt-2">
+                <span className={`text-[10px] ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                  Press Enter to send, Shift+Enter for new line, Ctrl+Shift+C to clear chat
+                </span>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+  );
+}

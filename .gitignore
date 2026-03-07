@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+dist-ssr/
+DocuSage/src-tauri/target/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.local
+
+# Artifacts / junk
+11.11.0
+docusage (1)/
+
+# Environment (contains local paths)
+DocuSage/src-tauri/.env
