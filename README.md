@@ -18,6 +18,13 @@
 
 ---
 
+<h2 align="center">Screenshot</h2>
+
+<p align="center">
+  <img src="Light-mode (1).png" alt="Screenshot" />
+  <img src="Light-mode (2).png" alt="Screenshot" />
+</p>
+
 ## Features
 
 - **General Chat** — Free-form conversations with a local LLM powered by [mistral.rs](https://github.com/EricLBuehler/mistral.rs)
@@ -163,14 +170,8 @@ DocuSage/
 
 ---
 
-## App Icon
-
-<p align="center">
-  <img src="DocuSage/public/logo-dark.svg" alt="DocuSage Dark Mode Icon" width="120" />
-</p>
-
----
-
 ## License
 
 MIT
+
+<p align="center"><strong>Build with Headache</strong></p>
