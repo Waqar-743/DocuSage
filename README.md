@@ -21,8 +21,8 @@
 <h2 align="center">Screenshot</h2>
 
 <p align="center">
-  <img src="Light-mode (1).png" alt="Screenshot" />
-  <img src="Light-mode (2).png" alt="Screenshot" />
+  <img src="Light-mode (1).png" alt="Light mode screenshot 1" width="48%" />
+  <img src="Light-mode (2).png" alt="Light mode screenshot 2" width="48%" />
 </p>
 
 ## Features
