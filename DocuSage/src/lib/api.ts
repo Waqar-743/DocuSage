@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 
+export type ChatHistoryMessage = {
+  sender: "user" | "bot";
+  text: string;
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Type-safe IPC wrappers for every Tauri command.
 //
@@ -57,18 +62,34 @@ export async function loadModel(path?: string): Promise<string> {
 /**
  * Send a prompt to the LLM in General Chat mode (no document context).
  */
-export async function chatGeneral(prompt: string): Promise<string> {
+export async function chatGeneral(
+  prompt: string,
+  history: ChatHistoryMessage[],
+  requestId: string,
+): Promise<string> {
   if (!isTauri()) { await mockDelay(1200); return nextMock("general"); }
-  return invoke<string>("chat_general", { prompt });
+  return invoke<string>("chat_general", { prompt, history, requestId });
 }
 
 /**
  * Send a prompt to the LLM in RAG Chat mode (retrieves context from
  * ingested documents before generating an answer).
  */
-export async function chatRag(prompt: string): Promise<string> {
+export async function chatRag(
+  prompt: string,
+  history: ChatHistoryMessage[],
+  requestId: string,
+): Promise<string> {
   if (!isTauri()) { await mockDelay(1200); return nextMock("rag"); }
-  return invoke<string>("chat_rag", { prompt });
+  return invoke<string>("chat_rag", { prompt, history, requestId });
+}
+
+export async function stopChat(requestId: string): Promise<void> {
+  if (!isTauri()) {
+    return;
+  }
+
+  await invoke<void>("stop_chat", { requestId });
 }
 
 /**

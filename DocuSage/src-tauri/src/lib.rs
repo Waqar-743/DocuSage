@@ -2,6 +2,7 @@ mod commands;
 pub mod rag;
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Mutex, RwLock};
 
 use mistralrs::Model;
@@ -14,15 +15,19 @@ use mistralrs::Model;
 /// - `model`      → `tokio::sync::Mutex` — holds the loaded LLM. Uses the
 ///   async Mutex because `send_chat_request` is async and the guard may
 ///   be held across await points.
-/// - `chat_history` → `Mutex` — mutated on every chat turn; exclusive access
-///   prevents interleaving.
+/// - `active_request_id` → `Mutex` — tracks which response can currently be
+///   cancelled from the UI.
+/// - `cancel_current_response` → `AtomicBool` — low-cost cancellation flag
+///   checked between streamed model chunks.
 pub struct AppState {
     /// Resolved directory that contains GGUF model files.
     pub model_path: RwLock<PathBuf>,
     /// The loaded LLM model, or `None` if not yet loaded.
     pub model: tokio::sync::Mutex<Option<Model>>,
-    /// Rolling conversation context (alternating "user: …" / "assistant: …").
-    pub chat_history: Mutex<Vec<String>>,
+    /// Request id for the in-flight generation, if any.
+    pub active_request_id: Mutex<Option<String>>,
+    /// Cancellation flag toggled by the stop button.
+    pub cancel_current_response: AtomicBool,
 }
 
 fn normalize_env_path(raw: &str) -> Option<PathBuf> {
@@ -137,7 +142,8 @@ pub fn run() {
     let app_state = AppState {
         model_path: RwLock::new(resolve_model_path()),
         model: tokio::sync::Mutex::new(None),
-        chat_history: Mutex::new(Vec::new()),
+        active_request_id: Mutex::new(None),
+        cancel_current_response: AtomicBool::new(false),
     };
 
     tauri::Builder::default()
@@ -149,6 +155,7 @@ pub fn run() {
             commands::load_model,
             commands::chat_general,
             commands::chat_rag,
+            commands::stop_chat,
             commands::ingest_document,
         ])
         .run(tauri::generate_context!())

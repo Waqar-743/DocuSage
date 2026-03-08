@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Moon, Sun, Settings, Database, Plus, FileText, Send, Paperclip, AlertCircle, Trash2, X, MessageSquare } from 'lucide-react';
+import { Moon, Sun, Settings, Database, Plus, FileText, Send, Paperclip, AlertCircle, Trash2, X, MessageSquare, Square } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { chatGeneral, chatRag, ingestDocument, isTauri, loadModel } from './lib/api';
+import { chatGeneral, chatRag, ingestDocument, isTauri, loadModel, stopChat, type ChatHistoryMessage } from './lib/api';
 import './App.css';
 
 type Message = {
@@ -27,6 +27,76 @@ type GeneralChat = {
   messages: Message[];
 };
 
+type PersistedAppState = {
+  theme: 'dark' | 'light';
+  mode: 'general' | 'rag';
+  documents: Document[];
+  generalChats: GeneralChat[];
+  selectedDocId: string | null;
+  selectedGeneralChatId: string;
+};
+
+const STORAGE_KEY = 'docusage:app-state:v1';
+const DEFAULT_CHAT_ID = 'default';
+
+const createEmptyChat = (id = DEFAULT_CHAT_ID): GeneralChat => ({
+  id,
+  name: 'New Chat',
+  messages: [],
+});
+
+const createRequestId = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}`;
+
+const loadPersistedState = (): PersistedAppState => {
+  const fallback: PersistedAppState = {
+    theme: 'dark',
+    mode: 'rag',
+    documents: [],
+    generalChats: [createEmptyChat()],
+    selectedDocId: null,
+    selectedGeneralChatId: DEFAULT_CHAT_ID,
+  };
+
+  if (typeof window === 'undefined') {
+    return fallback;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      return fallback;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<PersistedAppState>;
+    const generalChats = Array.isArray(parsed.generalChats) && parsed.generalChats.length > 0
+      ? parsed.generalChats
+      : [createEmptyChat()];
+    const documents: Document[] = Array.isArray(parsed.documents)
+      ? parsed.documents.map((doc) => ({
+        ...doc,
+        status: doc.status === 'error' ? 'error' as const : 'ready' as const,
+        messages: Array.isArray(doc.messages) ? doc.messages : [],
+      }))
+      : [];
+
+    return {
+      theme: parsed.theme === 'light' ? 'light' : 'dark',
+      mode: parsed.mode === 'general' ? 'general' : 'rag',
+      documents,
+      generalChats: generalChats.map((chat) => ({
+        ...chat,
+        messages: Array.isArray(chat.messages) ? chat.messages : [],
+      })),
+      selectedDocId: typeof parsed.selectedDocId === 'string' ? parsed.selectedDocId : null,
+      selectedGeneralChatId: typeof parsed.selectedGeneralChatId === 'string'
+        ? parsed.selectedGeneralChatId
+        : generalChats[0].id,
+    };
+  } catch {
+    return fallback;
+  }
+};
+
 const TypewriterEffect = ({ text, speed = 100 }: { text: string, speed?: number }) => {
   const [displayedText, setDisplayedText] = useState('');
 
@@ -47,22 +117,25 @@ const TypewriterEffect = ({ text, speed = 100 }: { text: string, speed?: number 
 };
 
 export default function App() {
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
-  const [mode, setMode] = useState<'general' | 'rag'>('rag');
+  const initialStateRef = useRef<PersistedAppState>(loadPersistedState());
+  const persistedState = initialStateRef.current;
+
+  const [theme, setTheme] = useState<'dark' | 'light'>(persistedState.theme);
+  const [mode, setMode] = useState<'general' | 'rag'>(persistedState.mode);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [isStopping, setIsStopping] = useState(false);
+  const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
   const [toastError, setToastError] = useState<string | null>(null);
   const [isModelLoading, setIsModelLoading] = useState(false);
   const [isModelReady, setIsModelReady] = useState(!isTauri());
   const [modelStatus, setModelStatus] = useState<string>(isTauri() ? 'Model not loaded' : 'Browser preview mode');
 
   // Session State
-  const [documents, setDocuments] = useState<Document[]>([]);
-  const [generalChats, setGeneralChats] = useState<GeneralChat[]>([
-    { id: 'default', name: 'New Chat', messages: [] }
-  ]);
-  const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
-  const [selectedGeneralChatId, setSelectedGeneralChatId] = useState<string>('default');
+  const [documents, setDocuments] = useState<Document[]>(persistedState.documents);
+  const [generalChats, setGeneralChats] = useState<GeneralChat[]>(persistedState.generalChats);
+  const [selectedDocId, setSelectedDocId] = useState<string | null>(persistedState.selectedDocId);
+  const [selectedGeneralChatId, setSelectedGeneralChatId] = useState<string>(persistedState.selectedGeneralChatId);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -166,6 +239,21 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      theme,
+      mode,
+      documents,
+      generalChats,
+      selectedDocId,
+      selectedGeneralChatId,
+    } satisfies PersistedAppState));
+  }, [theme, mode, documents, generalChats, selectedDocId, selectedGeneralChatId]);
+
   const handlePickFile = async () => {
     let filePath: string;
     let fileName: string;
@@ -237,8 +325,8 @@ export default function App() {
   const handleDeleteGeneralChat = (id: string) => {
     const filtered = generalChats.filter(c => c.id !== id);
     if (filtered.length === 0) {
-      const newId = Date.now().toString();
-      setGeneralChats([{ id: newId, name: 'New Chat', messages: [] }]);
+      const newId = createRequestId();
+      setGeneralChats([createEmptyChat(newId)]);
       setSelectedGeneralChatId(newId);
     } else {
       setGeneralChats(filtered);
@@ -250,12 +338,34 @@ export default function App() {
 
   const handleNewChat = () => {
     setMode('general');
-    const newChatId = Date.now().toString();
-    setGeneralChats(prev => [{ id: newChatId, name: 'New Chat', messages: [] }, ...prev]);
+    const newChatId = createRequestId();
+    setGeneralChats(prev => [createEmptyChat(newChatId), ...prev]);
     setSelectedGeneralChatId(newChatId);
     setInputValue('');
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
+    }
+  };
+
+  const getConversationHistory = (): ChatHistoryMessage[] => activeMessages
+    .filter((message) => message.text.trim() && !message.isError)
+    .map((message) => ({
+      sender: message.sender,
+      text: message.text,
+    }));
+
+  const handleStop = async () => {
+    if (!activeRequestId || isStopping) {
+      return;
+    }
+
+    setIsStopping(true);
+
+    try {
+      await stopChat(activeRequestId);
+    } catch (error) {
+      setIsStopping(false);
+      showError(`Failed to stop generation: ${String(error)}`);
     }
   };
 
@@ -268,23 +378,31 @@ export default function App() {
     }
 
     const userText = inputValue.trim();
+    const requestId = createRequestId();
+    const conversationHistory = getConversationHistory();
     setInputValue('');
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
 
-    const newUserMsg: Message = { id: Date.now().toString(), text: userText, sender: 'user' };
-    const botMsgId = (Date.now() + 1).toString();
+    const newUserMsg: Message = { id: `${requestId}-user`, text: userText, sender: 'user' };
+    const botMsgId = `${requestId}-assistant`;
 
     updateMessages(prev => [...prev, newUserMsg, { id: botMsgId, text: '', sender: 'bot', isStreaming: true }]);
     setIsTyping(true);
+    setIsStopping(false);
+    setActiveRequestId(requestId);
 
     // Set up streaming token listener before invoking the command so no
     // tokens are missed.  In browser preview mode we skip this entirely.
     let unlistenFn: UnlistenFn | null = null;
     if (isTauri()) {
       try {
-        unlistenFn = await listen<{ token: string; done: boolean }>('chat-token', (event) => {
+        unlistenFn = await listen<{ requestId: string; token: string; done: boolean }>('chat-token', (event) => {
+          if (event.payload.requestId !== requestId) {
+            return;
+          }
+
           const { token } = event.payload;
           if (token) {
             updateMessages(prev => prev.map(msg =>
@@ -301,8 +419,8 @@ export default function App() {
 
     try {
       const response = mode === 'general'
-        ? await chatGeneral(userText)
-        : await chatRag(userText);
+        ? await chatGeneral(userText, conversationHistory, requestId)
+        : await chatRag(userText, conversationHistory, requestId);
 
       // Set final text from the invoke return value for consistency.
       updateMessages(prev => prev.map(msg =>
@@ -322,6 +440,8 @@ export default function App() {
     } finally {
       unlistenFn?.();
       setIsTyping(false);
+      setIsStopping(false);
+      setActiveRequestId(null);
     }
   };
 
@@ -625,12 +745,12 @@ export default function App() {
                 />
 
                 <button
-                  onClick={handleSend}
-                  disabled={isTyping || !inputValue.trim() || (mode === 'rag' && !selectedDocId)}
+                  onClick={isTyping ? handleStop : handleSend}
+                  disabled={isTyping ? isStopping : (!inputValue.trim() || (mode === 'rag' && !selectedDocId))}
                   className={`p-2.5 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition-colors shrink-0 mb-0.5 ${isDark ? 'bg-white hover:bg-zinc-200 text-zinc-900' : 'bg-[#0F2854] hover:bg-[#0a1b38] text-white'}`}
-                  title="Send message"
+                  title={isTyping ? (isStopping ? 'Stopping response...' : 'Stop response') : 'Send message'}
                 >
-                  <Send size={20} />
+                  {isTyping ? <Square size={20} /> : <Send size={20} />}
                 </button>
               </div>
               <div className="text-center mt-2">
