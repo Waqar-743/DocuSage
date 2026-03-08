@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 
 use mistralrs::{
     ChatCompletionChunkResponse, ChunkChoice, Delta, GgufModelBuilder, Response,
@@ -8,12 +9,73 @@ use tauri::{Emitter, Manager};
 
 use crate::AppState;
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryMessage {
+    sender: String,
+    text: String,
+}
+
 /// Payload emitted for each streamed token so the frontend can display
 /// partial responses as they arrive.
 #[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct ChatTokenPayload {
+    request_id: String,
     token: String,
     done: bool,
+}
+
+fn build_messages(system_prompt: &str, history: &[HistoryMessage], prompt: &str) -> TextMessages {
+    let mut messages = TextMessages::new().add_message(TextMessageRole::System, system_prompt);
+
+    for entry in history {
+        let text = entry.text.trim();
+        if text.is_empty() {
+            continue;
+        }
+
+        messages = match entry.sender.as_str() {
+            "user" => messages.add_message(TextMessageRole::User, text),
+            "bot" => messages.add_message(TextMessageRole::Assistant, text),
+            _ => messages,
+        };
+    }
+
+    messages.add_message(TextMessageRole::User, prompt)
+}
+
+fn sanitize_reply(reply: &str) -> String {
+    reply
+        .replace("<|assistant|>", "")
+        .replace("<|user|>", "")
+        .replace("<|system|>", "")
+        .replace("<|end|>", "")
+        .replace("</s>", "")
+        .trim()
+        .to_string()
+}
+
+fn start_request(state: &AppState, request_id: &str) -> Result<(), String> {
+    state.cancel_current_response.store(false, Ordering::Relaxed);
+    let mut active_request = state
+        .active_request_id
+        .lock()
+        .map_err(|e| format!("Active request lock failed: {e}"))?;
+    *active_request = Some(request_id.to_string());
+    Ok(())
+}
+
+fn finish_request(state: &AppState, request_id: &str) -> Result<(), String> {
+    state.cancel_current_response.store(false, Ordering::Relaxed);
+    let mut active_request = state
+        .active_request_id
+        .lock()
+        .map_err(|e| format!("Active request lock failed: {e}"))?;
+    if active_request.as_deref() == Some(request_id) {
+        *active_request = None;
+    }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -143,35 +205,24 @@ pub async fn chat_general(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     prompt: String,
+    history: Vec<HistoryMessage>,
+    request_id: String,
 ) -> Result<String, String> {
+    start_request(&state, &request_id)?;
+
     let model_guard = state.model.lock().await;
     let model = model_guard
         .as_ref()
         .ok_or_else(|| "No model loaded. Call load_model first.".to_string())?;
 
-    // Build conversation history.
-    let history: Vec<String> = state
-        .chat_history
-        .lock()
-        .map_err(|e| format!("History lock failed: {e}"))?
-        .clone();
-
-    let mut messages = TextMessages::new().add_message(
-        TextMessageRole::System,
+    let messages = build_messages(
         "You are DocuSage, a helpful, accurate, and privacy-focused AI \
          assistant running entirely on the user's local machine. Keep \
-         answers clear and concise.",
+         answers clear, direct, and concise. When the user asks for a short \
+         answer, respond in 1-3 sentences unless they explicitly ask for more.",
+        &history,
+        &prompt,
     );
-
-    for entry in &history {
-        if let Some(text) = entry.strip_prefix("user: ") {
-            messages = messages.add_message(TextMessageRole::User, text);
-        } else if let Some(text) = entry.strip_prefix("assistant: ") {
-            messages = messages.add_message(TextMessageRole::Assistant, text);
-        }
-    }
-
-    messages = messages.add_message(TextMessageRole::User, &prompt);
 
     // ── Streaming inference ─────────────────────────────────────────────
     let mut stream = model
@@ -180,8 +231,14 @@ pub async fn chat_general(
         .map_err(|e| format!("Inference failed: {e}"))?;
 
     let mut full_reply = String::new();
+    let mut stopped = false;
 
     while let Some(chunk) = stream.next().await {
+        if state.cancel_current_response.load(Ordering::Relaxed) {
+            stopped = true;
+            break;
+        }
+
         match chunk {
             Response::Chunk(ChatCompletionChunkResponse { choices, .. }) => {
                 if let Some(ChunkChoice {
@@ -192,35 +249,50 @@ pub async fn chat_general(
                     full_reply.push_str(content);
                     let _ = app.emit(
                         "chat-token",
-                        ChatTokenPayload { token: content.clone(), done: false },
+                        ChatTokenPayload {
+                            request_id: request_id.clone(),
+                            token: content.clone(),
+                            done: false,
+                        },
                     );
                 }
             }
             Response::Done(_) => break,
-            Response::ModelError(msg, _) => return Err(msg),
-            Response::InternalError(e) => return Err(e.to_string()),
-            Response::ValidationError(e) => return Err(e.to_string()),
+            Response::ModelError(msg, _) => {
+                finish_request(&state, &request_id)?;
+                return Err(msg);
+            }
+            Response::InternalError(e) => {
+                finish_request(&state, &request_id)?;
+                return Err(e.to_string());
+            }
+            Response::ValidationError(e) => {
+                finish_request(&state, &request_id)?;
+                return Err(e.to_string());
+            }
             _ => {}
         }
     }
 
     let _ = app.emit(
         "chat-token",
-        ChatTokenPayload { token: String::new(), done: true },
+        ChatTokenPayload {
+            request_id: request_id.clone(),
+            token: String::new(),
+            done: true,
+        },
     );
 
-    if full_reply.is_empty() {
-        full_reply = "No response generated.".to_string();
-    }
+    finish_request(&state, &request_id)?;
 
-    // Persist in history
-    {
-        let mut h = state
-            .chat_history
-            .lock()
-            .map_err(|e| format!("History lock failed: {e}"))?;
-        h.push(format!("user: {prompt}"));
-        h.push(format!("assistant: {full_reply}"));
+    full_reply = sanitize_reply(&full_reply);
+
+    if full_reply.is_empty() {
+        full_reply = if stopped {
+            "Generation stopped.".to_string()
+        } else {
+            "No response generated.".to_string()
+        };
     }
 
     Ok(full_reply)
@@ -241,7 +313,11 @@ pub async fn chat_rag(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     prompt: String,
+    history: Vec<HistoryMessage>,
+    request_id: String,
 ) -> Result<String, String> {
+    start_request(&state, &request_id)?;
+
     // ── 1. Resolve DB path (no model lock needed) ───────────────────────
     let db_dir = app
         .path()
@@ -278,12 +354,12 @@ pub async fn chat_rag(
     let system_prompt = format!(
         "You are DocuSage, a helpful AI assistant that answers questions \
          based on the user's private documents. You are running locally \
-         and no data leaves this machine.\n\n{context}"
+         and no data leaves this machine. Keep answers direct and concise. \
+         When the user asks for a short answer, respond in 1-3 sentences \
+         unless they explicitly ask for more.\n\n{context}"
     );
 
-    let messages = TextMessages::new()
-        .add_message(TextMessageRole::System, &system_prompt)
-        .add_message(TextMessageRole::User, &prompt);
+    let messages = build_messages(&system_prompt, &history, &prompt);
 
     // ── 5. Streaming inference ──────────────────────────────────────────
     let mut stream = model
@@ -292,8 +368,14 @@ pub async fn chat_rag(
         .map_err(|e| format!("Inference failed: {e}"))?;
 
     let mut full_reply = String::new();
+    let mut stopped = false;
 
     while let Some(chunk) = stream.next().await {
+        if state.cancel_current_response.load(Ordering::Relaxed) {
+            stopped = true;
+            break;
+        }
+
         match chunk {
             Response::Chunk(ChatCompletionChunkResponse { choices, .. }) => {
                 if let Some(ChunkChoice {
@@ -304,28 +386,70 @@ pub async fn chat_rag(
                     full_reply.push_str(content);
                     let _ = app.emit(
                         "chat-token",
-                        ChatTokenPayload { token: content.clone(), done: false },
+                        ChatTokenPayload {
+                            request_id: request_id.clone(),
+                            token: content.clone(),
+                            done: false,
+                        },
                     );
                 }
             }
             Response::Done(_) => break,
-            Response::ModelError(msg, _) => return Err(msg),
-            Response::InternalError(e) => return Err(e.to_string()),
-            Response::ValidationError(e) => return Err(e.to_string()),
+            Response::ModelError(msg, _) => {
+                finish_request(&state, &request_id)?;
+                return Err(msg);
+            }
+            Response::InternalError(e) => {
+                finish_request(&state, &request_id)?;
+                return Err(e.to_string());
+            }
+            Response::ValidationError(e) => {
+                finish_request(&state, &request_id)?;
+                return Err(e.to_string());
+            }
             _ => {}
         }
     }
 
     let _ = app.emit(
         "chat-token",
-        ChatTokenPayload { token: String::new(), done: true },
+        ChatTokenPayload {
+            request_id: request_id.clone(),
+            token: String::new(),
+            done: true,
+        },
     );
 
+    finish_request(&state, &request_id)?;
+
+    full_reply = sanitize_reply(&full_reply);
+
     if full_reply.is_empty() {
-        full_reply = "No response generated.".to_string();
+        full_reply = if stopped {
+            "Generation stopped.".to_string()
+        } else {
+            "No response generated.".to_string()
+        };
     }
 
     Ok(full_reply)
+}
+
+#[tauri::command]
+pub fn stop_chat(
+    state: tauri::State<'_, AppState>,
+    request_id: String,
+) -> Result<(), String> {
+    let active_request = state
+        .active_request_id
+        .lock()
+        .map_err(|e| format!("Active request lock failed: {e}"))?;
+
+    if active_request.as_deref() == Some(request_id.as_str()) {
+        state.cancel_current_response.store(true, Ordering::Relaxed);
+    }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
