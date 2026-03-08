@@ -2,12 +2,28 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 
 use mistralrs::{
-    ChatCompletionChunkResponse, ChunkChoice, Delta, GgufModelBuilder, Response,
-    TextMessageRole, TextMessages,
+    ChatCompletionChunkResponse, ChunkChoice, Delta, GgufModelBuilder,
+    RequestBuilder, Response, StopTokens, TextMessageRole,
 };
 use tauri::{Emitter, Manager};
 
 use crate::AppState;
+
+/// Maximum number of tokens the model may generate per response.
+/// This prevents runaway generation when the model fails to produce a stop token.
+const MAX_GENERATION_TOKENS: usize = 1024;
+
+/// Stop sequences that cover all common GGUF chat template families.
+/// The engine will halt generation as soon as any of these is produced.
+const STOP_SEQUENCES: &[&str] = &[
+    "<|end|>",
+    "<|endoftext|>",
+    "<|im_end|>",
+    "<|eot_id|>",
+    "</s>",
+    "<|end_of_turn|>",
+    "<|END|>",
+];
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,34 +42,77 @@ struct ChatTokenPayload {
     done: bool,
 }
 
-fn build_messages(system_prompt: &str, history: &[HistoryMessage], prompt: &str) -> TextMessages {
-    let mut messages = TextMessages::new().add_message(TextMessageRole::System, system_prompt);
+/// Build a [`RequestBuilder`] with proper sampling parameters:
+/// - Stop sequences covering common chat-template end-of-turn markers.
+/// - A generation length cap ([`MAX_GENERATION_TOKENS`]).
+/// - Slightly creative temperature for natural-sounding answers.
+fn build_request(system_prompt: &str, history: &[HistoryMessage], prompt: &str) -> RequestBuilder {
+    let mut req = RequestBuilder::new()
+        .set_sampler_max_len(MAX_GENERATION_TOKENS)
+        .set_sampler_stop_toks(StopTokens::Seqs(
+            STOP_SEQUENCES.iter().map(|s| s.to_string()).collect(),
+        ))
+        .set_sampler_temperature(0.7)
+        .set_sampler_topk(40)
+        .set_sampler_topp(0.95)
+        .set_sampler_frequency_penalty(0.3)
+        .add_message(TextMessageRole::System, system_prompt);
 
     for entry in history {
         let text = entry.text.trim();
         if text.is_empty() {
             continue;
         }
-
-        messages = match entry.sender.as_str() {
-            "user" => messages.add_message(TextMessageRole::User, text),
-            "bot" => messages.add_message(TextMessageRole::Assistant, text),
-            _ => messages,
+        req = match entry.sender.as_str() {
+            "user" => req.add_message(TextMessageRole::User, text),
+            "bot" => req.add_message(TextMessageRole::Assistant, text),
+            _ => req,
         };
     }
 
-    messages.add_message(TextMessageRole::User, prompt)
+    req.add_message(TextMessageRole::User, prompt)
 }
 
-fn sanitize_reply(reply: &str) -> String {
-    reply
-        .replace("<|assistant|>", "")
-        .replace("<|user|>", "")
-        .replace("<|system|>", "")
-        .replace("<|end|>", "")
-        .replace("</s>", "")
-        .trim()
-        .to_string()
+/// Clean a single streamed token of common control-token debris.
+///
+/// This handles two classes of junk:
+/// 1. Literal chat-template markers that leaked through (e.g. `<|end|>`).
+/// 2. GGUF hex-byte escapes like `<0x0A>` (newline) that some tokenizers emit.
+fn sanitize_token(raw: &str) -> String {
+    // Fast path: most tokens have no angle brackets at all.
+    if !raw.contains('<') {
+        return raw.to_string();
+    }
+
+    let mut out = raw.to_string();
+
+    // Strip chat-template control tokens.
+    for marker in [
+        "<|assistant|>", "<|user|>", "<|system|>", "<|end|>",
+        "<|endoftext|>", "<|im_start|>", "<|im_end|>", "<|eot_id|>",
+        "<|end_of_turn|>", "</s>", "<s>", "<|END|>",
+    ] {
+        out = out.replace(marker, "");
+    }
+
+    // Decode GGUF hex-byte escapes: <0xNN> → the actual byte.
+    // E.g. <0x0A> → '\n',  <0x0D> → '\r'
+    while let Some(start) = out.find("<0x") {
+        if let Some(end) = out[start..].find('>') {
+            let hex_str = &out[start + 3..start + end];
+            if let Ok(byte_val) = u8::from_str_radix(hex_str, 16) {
+                let replacement = String::from(byte_val as char);
+                out = format!("{}{}{}", &out[..start], replacement, &out[start + end + 1..]);
+            } else {
+                // Malformed — remove the tag entirely to be safe.
+                out = format!("{}{}", &out[..start], &out[start + end + 1..]);
+            }
+        } else {
+            break; // No closing '>' — stop.
+        }
+    }
+
+    out
 }
 
 fn start_request(state: &AppState, request_id: &str) -> Result<(), String> {
@@ -215,18 +274,22 @@ pub async fn chat_general(
         .as_ref()
         .ok_or_else(|| "No model loaded. Call load_model first.".to_string())?;
 
-    let messages = build_messages(
+    let request = build_request(
         "You are DocuSage, a helpful, accurate, and privacy-focused AI \
-         assistant running entirely on the user's local machine. Keep \
-         answers clear, direct, and concise. When the user asks for a short \
-         answer, respond in 1-3 sentences unless they explicitly ask for more.",
+         assistant running entirely on the user's local machine.\n\
+         IMPORTANT RULES:\n\
+         - Keep answers clear, direct, and concise.\n\
+         - When the user asks for a short answer or specifies a word/line \
+           limit, you MUST respect it strictly.\n\
+         - Do NOT repeat yourself or generate multiple alternative answers.\n\
+         - Produce exactly one answer, then STOP.",
         &history,
         &prompt,
     );
 
     // ── Streaming inference ─────────────────────────────────────────────
     let mut stream = model
-        .stream_chat_request(messages)
+        .stream_chat_request(request)
         .await
         .map_err(|e| format!("Inference failed: {e}"))?;
 
@@ -246,15 +309,18 @@ pub async fn chat_general(
                     ..
                 }) = choices.first()
                 {
-                    full_reply.push_str(content);
-                    let _ = app.emit(
-                        "chat-token",
-                        ChatTokenPayload {
-                            request_id: request_id.clone(),
-                            token: content.clone(),
-                            done: false,
-                        },
-                    );
+                    let clean = sanitize_token(content);
+                    if !clean.is_empty() {
+                        full_reply.push_str(&clean);
+                        let _ = app.emit(
+                            "chat-token",
+                            ChatTokenPayload {
+                                request_id: request_id.clone(),
+                                token: clean,
+                                done: false,
+                            },
+                        );
+                    }
                 }
             }
             Response::Done(_) => break,
@@ -285,14 +351,14 @@ pub async fn chat_general(
 
     finish_request(&state, &request_id)?;
 
-    full_reply = sanitize_reply(&full_reply);
+    let full_reply = full_reply.trim().to_string();
 
     if full_reply.is_empty() {
-        full_reply = if stopped {
+        return Ok(if stopped {
             "Generation stopped.".to_string()
         } else {
             "No response generated.".to_string()
-        };
+        });
     }
 
     Ok(full_reply)
@@ -353,17 +419,25 @@ pub async fn chat_rag(
 
     let system_prompt = format!(
         "You are DocuSage, a helpful AI assistant that answers questions \
-         based on the user's private documents. You are running locally \
-         and no data leaves this machine. Keep answers direct and concise. \
-         When the user asks for a short answer, respond in 1-3 sentences \
-         unless they explicitly ask for more.\n\n{context}"
+         based STRICTLY on the user's private documents. You are running \
+         locally and no data leaves this machine.\n\
+         IMPORTANT RULES:\n\
+         - Answer ONLY using the provided document context below.\n\
+         - If the answer is not in the context, say \"The provided documents \
+           do not contain information about this.\"\n\
+         - Cite sources using [Source: filename].\n\
+         - When the user asks for a short answer or specifies a word/line \
+           limit, you MUST respect it strictly.\n\
+         - Do NOT repeat yourself or generate multiple alternative answers.\n\
+         - Produce exactly one answer, then STOP.\n\n\
+         DOCUMENT CONTEXT:\n{context}"
     );
 
-    let messages = build_messages(&system_prompt, &history, &prompt);
+    let request = build_request(&system_prompt, &history, &prompt);
 
     // ── 5. Streaming inference ──────────────────────────────────────────
     let mut stream = model
-        .stream_chat_request(messages)
+        .stream_chat_request(request)
         .await
         .map_err(|e| format!("Inference failed: {e}"))?;
 
@@ -383,15 +457,18 @@ pub async fn chat_rag(
                     ..
                 }) = choices.first()
                 {
-                    full_reply.push_str(content);
-                    let _ = app.emit(
-                        "chat-token",
-                        ChatTokenPayload {
-                            request_id: request_id.clone(),
-                            token: content.clone(),
-                            done: false,
-                        },
-                    );
+                    let clean = sanitize_token(content);
+                    if !clean.is_empty() {
+                        full_reply.push_str(&clean);
+                        let _ = app.emit(
+                            "chat-token",
+                            ChatTokenPayload {
+                                request_id: request_id.clone(),
+                                token: clean,
+                                done: false,
+                            },
+                        );
+                    }
                 }
             }
             Response::Done(_) => break,
@@ -422,14 +499,14 @@ pub async fn chat_rag(
 
     finish_request(&state, &request_id)?;
 
-    full_reply = sanitize_reply(&full_reply);
+    let full_reply = full_reply.trim().to_string();
 
     if full_reply.is_empty() {
-        full_reply = if stopped {
+        return Ok(if stopped {
             "Generation stopped.".to_string()
         } else {
             "No response generated.".to_string()
-        };
+        });
     }
 
     Ok(full_reply)
