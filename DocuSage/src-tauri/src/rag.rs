@@ -10,7 +10,7 @@
 //! can surface errors directly to the frontend without panicking.
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use arrow_array::{
     FixedSizeListArray, Float32Array, Int32Array, RecordBatch, RecordBatchIterator,
@@ -34,6 +34,25 @@ const EMBEDDING_DIM: i32 = 384;
 
 /// Name of the LanceDB table that stores document chunks + vectors.
 const TABLE_NAME: &str = "documents";
+
+/// Lazily-initialised singleton embedding model.
+///
+/// Avoids the cost of loading the ONNX model on every request.
+static EMBEDDING: OnceLock<TextEmbedding> = OnceLock::new();
+
+/// Return a reference to the shared [`TextEmbedding`] instance, creating it
+/// on first access.
+pub fn get_embedding() -> Result<&'static TextEmbedding, String> {
+    if let Some(m) = EMBEDDING.get() {
+        return Ok(m);
+    }
+    let model = TextEmbedding::try_new(
+        InitOptions::new(EMBEDDING_MODEL).with_show_download_progress(true),
+    )
+    .map_err(|e| format!("Failed to initialise embedding model: {e}"))?;
+    let _ = EMBEDDING.set(model);
+    Ok(EMBEDDING.get().expect("just initialised"))
+}
 
 /// Build a `FixedSizeList<Float32>` array from a flat `Float32Array`.
 ///
@@ -251,9 +270,8 @@ pub async fn embed_and_store(
         return Ok(());
     }
 
-    // ── 1. Initialise the embedding model ───────────────────────────────
-    let model = TextEmbedding::try_new(InitOptions::new(EMBEDDING_MODEL).with_show_download_progress(true))
-        .map_err(|e| format!("Failed to initialise embedding model: {e}"))?;
+    // ── 1. Get the cached embedding model ────────────────────────────────
+    let model = get_embedding()?;
 
     // ── 2. Generate embeddings ──────────────────────────────────────────
     // fastembed expects Vec<String>; we already have that.
@@ -336,10 +354,7 @@ pub async fn query_similar(
     top_k: usize,
 ) -> Result<Vec<(String, String)>, String> {
     // ── 1. Embed the query ──────────────────────────────────────────────
-    let model = TextEmbedding::try_new(
-        InitOptions::new(EMBEDDING_MODEL).with_show_download_progress(false),
-    )
-    .map_err(|e| format!("Embedding model init failed: {e}"))?;
+    let model = get_embedding()?;
 
     let embeddings = model
         .embed(vec![query.to_string()], None)

@@ -120,6 +120,20 @@ pub fn run() {
     // `.ok()` intentionally ignores a missing file — it is optional.
     dotenv::dotenv().ok();
 
+    // Optimise CPU threading for inference: use all logical cores minus one
+    // (reserving one for the UI / OS).  This is picked up by rayon (used by
+    // candle-core inside mistral.rs) and by the ONNX runtime (fastembed).
+    // Only set if the user hasn't already specified a value.
+    if std::env::var("RAYON_NUM_THREADS").is_err() {
+        let n = std::thread::available_parallelism()
+            .map(|p| p.get().saturating_sub(1).max(1))
+            .unwrap_or(1);
+        // SAFETY: called before any threads are spawned so there is no
+        // data-race concern.  In edition 2024 set_var is `unsafe fn`.
+        #[allow(unused_unsafe)]
+        unsafe { std::env::set_var("RAYON_NUM_THREADS", n.to_string()) };
+    }
+
     let app_state = AppState {
         model_path: RwLock::new(resolve_model_path()),
         model: tokio::sync::Mutex::new(None),

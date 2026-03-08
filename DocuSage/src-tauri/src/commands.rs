@@ -1,9 +1,20 @@
 use std::path::PathBuf;
 
-use mistralrs::{GgufModelBuilder, TextMessageRole, TextMessages};
-use tauri::Manager;
+use mistralrs::{
+    ChatCompletionChunkResponse, ChunkChoice, Delta, GgufModelBuilder, Response,
+    TextMessageRole, TextMessages,
+};
+use tauri::{Emitter, Manager};
 
 use crate::AppState;
+
+/// Payload emitted for each streamed token so the frontend can display
+/// partial responses as they arrive.
+#[derive(serde::Serialize, Clone)]
+struct ChatTokenPayload {
+    token: String,
+    done: bool,
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // load_model
@@ -123,8 +134,13 @@ pub async fn load_model(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Send a prompt to the LLM in **General Chat** mode (no RAG context).
+///
+/// Tokens are streamed to the frontend via `chat-token` events so the UI
+/// can display partial responses progressively.  The full accumulated text
+/// is also returned when inference completes.
 #[tauri::command]
 pub async fn chat_general(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     prompt: String,
 ) -> Result<String, String> {
@@ -157,18 +173,45 @@ pub async fn chat_general(
 
     messages = messages.add_message(TextMessageRole::User, &prompt);
 
-    // Inference
-    let response = model
-        .send_chat_request(messages)
+    // ── Streaming inference ─────────────────────────────────────────────
+    let mut stream = model
+        .stream_chat_request(messages)
         .await
         .map_err(|e| format!("Inference failed: {e}"))?;
 
-    let reply = response
-        .choices
-        .first()
-        .and_then(|c| c.message.content.as_ref())
-        .map(|c| c.to_string())
-        .unwrap_or_else(|| "No response generated.".to_string());
+    let mut full_reply = String::new();
+
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            Response::Chunk(ChatCompletionChunkResponse { choices, .. }) => {
+                if let Some(ChunkChoice {
+                    delta: Delta { content: Some(ref content), .. },
+                    ..
+                }) = choices.first()
+                {
+                    full_reply.push_str(content);
+                    let _ = app.emit(
+                        "chat-token",
+                        ChatTokenPayload { token: content.clone(), done: false },
+                    );
+                }
+            }
+            Response::Done(_) => break,
+            Response::ModelError(msg, _) => return Err(msg),
+            Response::InternalError(e) => return Err(e.to_string()),
+            Response::ValidationError(e) => return Err(e.to_string()),
+            _ => {}
+        }
+    }
+
+    let _ = app.emit(
+        "chat-token",
+        ChatTokenPayload { token: String::new(), done: true },
+    );
+
+    if full_reply.is_empty() {
+        full_reply = "No response generated.".to_string();
+    }
 
     // Persist in history
     {
@@ -177,10 +220,10 @@ pub async fn chat_general(
             .lock()
             .map_err(|e| format!("History lock failed: {e}"))?;
         h.push(format!("user: {prompt}"));
-        h.push(format!("assistant: {reply}"));
+        h.push(format!("assistant: {full_reply}"));
     }
 
-    Ok(reply)
+    Ok(full_reply)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -199,12 +242,7 @@ pub async fn chat_rag(
     state: tauri::State<'_, AppState>,
     prompt: String,
 ) -> Result<String, String> {
-    let model_guard = state.model.lock().await;
-    let model = model_guard
-        .as_ref()
-        .ok_or_else(|| "No model loaded. Call load_model first.".to_string())?;
-
-    // ── 1. Resolve DB path ──────────────────────────────────────────────
+    // ── 1. Resolve DB path (no model lock needed) ───────────────────────
     let db_dir = app
         .path()
         .app_data_dir()
@@ -213,10 +251,18 @@ pub async fn chat_rag(
         .or_else(|| dirs::data_local_dir().map(|p| p.join("DocuSage").join("lancedb")))
         .ok_or_else(|| "Cannot determine data directory.".to_string())?;
 
-    // ── 2. Retrieve relevant chunks ─────────────────────────────────────
+    // ── 2. Retrieve relevant chunks BEFORE acquiring the model lock ─────
+    //   This is the key optimisation: embedding + vector search runs while
+    //   the model mutex is free, allowing other requests to proceed.
     let chunks = crate::rag::query_similar(&prompt, &db_dir, 5).await?;
 
-    // ── 3. Build augmented prompt ───────────────────────────────────────
+    // ── 3. Acquire model lock ───────────────────────────────────────────
+    let model_guard = state.model.lock().await;
+    let model = model_guard
+        .as_ref()
+        .ok_or_else(|| "No model loaded. Call load_model first.".to_string())?;
+
+    // ── 4. Build augmented prompt ───────────────────────────────────────
     let context = if chunks.is_empty() {
         "No relevant documents found. Answer to the best of your knowledge \
          and state that no supporting documents were retrieved."
@@ -239,20 +285,47 @@ pub async fn chat_rag(
         .add_message(TextMessageRole::System, &system_prompt)
         .add_message(TextMessageRole::User, &prompt);
 
-    // ── 4. Inference ────────────────────────────────────────────────────
-    let response = model
-        .send_chat_request(messages)
+    // ── 5. Streaming inference ──────────────────────────────────────────
+    let mut stream = model
+        .stream_chat_request(messages)
         .await
         .map_err(|e| format!("Inference failed: {e}"))?;
 
-    let reply = response
-        .choices
-        .first()
-        .and_then(|c| c.message.content.as_ref())
-        .map(|c| c.to_string())
-        .unwrap_or_else(|| "No response generated.".to_string());
+    let mut full_reply = String::new();
 
-    Ok(reply)
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            Response::Chunk(ChatCompletionChunkResponse { choices, .. }) => {
+                if let Some(ChunkChoice {
+                    delta: Delta { content: Some(ref content), .. },
+                    ..
+                }) = choices.first()
+                {
+                    full_reply.push_str(content);
+                    let _ = app.emit(
+                        "chat-token",
+                        ChatTokenPayload { token: content.clone(), done: false },
+                    );
+                }
+            }
+            Response::Done(_) => break,
+            Response::ModelError(msg, _) => return Err(msg),
+            Response::InternalError(e) => return Err(e.to_string()),
+            Response::ValidationError(e) => return Err(e.to_string()),
+            _ => {}
+        }
+    }
+
+    let _ = app.emit(
+        "chat-token",
+        ChatTokenPayload { token: String::new(), done: true },
+    );
+
+    if full_reply.is_empty() {
+        full_reply = "No response generated.".to_string();
+    }
+
+    Ok(full_reply)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

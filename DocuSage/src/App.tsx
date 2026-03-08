@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Moon, Sun, Settings, Database, Plus, FileText, Send, Paperclip, AlertCircle, Trash2, X, MessageSquare } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { chatGeneral, chatRag, ingestDocument, isTauri, loadModel } from './lib/api';
 import './App.css';
 
@@ -278,11 +279,32 @@ export default function App() {
     updateMessages(prev => [...prev, newUserMsg, { id: botMsgId, text: '', sender: 'bot', isStreaming: true }]);
     setIsTyping(true);
 
+    // Set up streaming token listener before invoking the command so no
+    // tokens are missed.  In browser preview mode we skip this entirely.
+    let unlistenFn: UnlistenFn | null = null;
+    if (isTauri()) {
+      try {
+        unlistenFn = await listen<{ token: string; done: boolean }>('chat-token', (event) => {
+          const { token } = event.payload;
+          if (token) {
+            updateMessages(prev => prev.map(msg =>
+              msg.id === botMsgId
+                ? { ...msg, text: msg.text + token, isStreaming: true }
+                : msg
+            ));
+          }
+        });
+      } catch {
+        // If event listener setup fails, fall back to non-streaming.
+      }
+    }
+
     try {
       const response = mode === 'general'
         ? await chatGeneral(userText)
         : await chatRag(userText);
 
+      // Set final text from the invoke return value for consistency.
       updateMessages(prev => prev.map(msg =>
         msg.id === botMsgId
           ? { ...msg, text: response, isStreaming: false }
@@ -298,6 +320,7 @@ export default function App() {
       ));
       showError("Failed to generate response. Please check your connection.");
     } finally {
+      unlistenFn?.();
       setIsTyping(false);
     }
   };
