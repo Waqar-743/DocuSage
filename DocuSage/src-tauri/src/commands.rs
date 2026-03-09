@@ -25,6 +25,13 @@ const STOP_SEQUENCES: &[&str] = &[
     "<|END|>",
 ];
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IngestResult {
+    pub file_name: String,
+    pub chunk_count: usize,
+}
+
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryMessage {
@@ -558,7 +565,7 @@ pub async fn ingest_document(
     app: tauri::AppHandle,
     _state: tauri::State<'_, AppState>,
     file_path: String,
-) -> Result<String, String> {
+) -> Result<IngestResult, String> {
     // ── 1. Validate and canonicalize the input path ─────────────────────
     let pdf_path = PathBuf::from(&file_path);
     if !pdf_path.exists() {
@@ -644,9 +651,10 @@ pub async fn ingest_document(
 
     let chunk_count = result?;
 
-    Ok(format!(
-        "Successfully ingested {chunk_count} chunk(s) from '{pdf_display}' \
-         into LanceDB at '{}'.",
-        db_dir.display()
-    ))
+    let file_name = PathBuf::from(&pdf_display)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or(pdf_display);
+
+    Ok(IngestResult { file_name, chunk_count })
 }

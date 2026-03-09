@@ -5,6 +5,11 @@ export type ChatHistoryMessage = {
   text: string;
 };
 
+export type IngestResult = {
+  fileName: string;
+  chunkCount: number;
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Type-safe IPC wrappers for every Tauri command.
 //
@@ -98,8 +103,12 @@ export async function stopChat(requestId: string): Promise<void> {
  * ONLY the file path is sent over IPC — Rust reads the PDF from disk.
  * @param filePath Absolute path to the PDF file on disk.
  */
-export async function ingestDocument(filePath: string): Promise<string> {
-  if (!isTauri()) { await mockDelay(1500); return `Ingested "${filePath}" (browser preview)`; }
+export async function ingestDocument(filePath: string): Promise<IngestResult> {
+  if (!isTauri()) {
+    await mockDelay(1500);
+    const name = filePath.split(/[\\/]/).pop() ?? filePath;
+    return { fileName: name, chunkCount: 42 };
+  }
   // Send ONLY the path string — never read or transmit file content via IPC.
-  return invoke<string>("ingest_document", { filePath: String(filePath) });
+  return invoke<IngestResult>("ingest_document", { filePath: String(filePath) });
 }

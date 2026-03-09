@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Moon, Sun, Settings, Database, Plus, FileText, Send, Paperclip, AlertCircle, Trash2, X, MessageSquare, Square } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { chatGeneral, chatRag, ingestDocument, isTauri, loadModel, stopChat, type ChatHistoryMessage } from './lib/api';
+import { chatGeneral, chatRag, ingestDocument, isTauri, loadModel, stopChat, type ChatHistoryMessage, type IngestResult } from './lib/api';
 import './App.css';
 
 type Message = {
@@ -127,6 +127,8 @@ export default function App() {
   const [isStopping, setIsStopping] = useState(false);
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
   const [toastError, setToastError] = useState<string | null>(null);
+  const [toastSuccess, setToastSuccess] = useState<string | null>(null);
+  const [isIngesting, setIsIngesting] = useState(false);
   const [isModelLoading, setIsModelLoading] = useState(false);
   const [isModelReady, setIsModelReady] = useState(!isTauri());
   const [modelStatus, setModelStatus] = useState<string>(isTauri() ? 'Model not loaded' : 'Browser preview mode');
@@ -208,6 +210,11 @@ export default function App() {
   const showError = (msg: string) => {
     setToastError(msg);
     setTimeout(() => setToastError(null), 5000);
+  };
+
+  const showSuccess = (msg: string) => {
+    setToastSuccess(msg);
+    setTimeout(() => setToastSuccess(null), 4000);
   };
 
   // Load the local GGUF model once on startup in desktop mode.
@@ -301,16 +308,20 @@ export default function App() {
     setSelectedDocId(newDoc.id);
     setMode('rag');
 
+    setIsIngesting(true);
     try {
-      await ingestDocument(filePath);
+      const result: IngestResult = await ingestDocument(filePath);
       setDocuments(prev => prev.map(d =>
         d.id === newDoc.id ? { ...d, status: 'ready' } : d
       ));
+      showSuccess(`Successfully vectorized ${result.chunkCount} chunks from "${result.fileName}".`);
     } catch (err) {
       setDocuments(prev => prev.map(d =>
         d.id === newDoc.id ? { ...d, status: 'error' } : d
       ));
       showError(`Failed to ingest ${fileName}: ${String(err)}`);
+    } finally {
+      setIsIngesting(false);
     }
   };
 
@@ -464,6 +475,25 @@ export default function App() {
         <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-3 rounded-xl bg-red-500 text-white shadow-xl transition-all duration-300 ease-out">
           <AlertCircle size={18} />
           <span className="text-sm font-medium">{toastError}</span>
+        </div>
+      )}
+
+      {/* Toast Notification for Success */}
+      {toastSuccess && (
+        <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-3 rounded-xl bg-emerald-500 text-white shadow-xl transition-all duration-300 ease-out">
+          <Database size={18} />
+          <span className="text-sm font-medium">{toastSuccess}</span>
+        </div>
+      )}
+
+      {/* Ingestion Loading Overlay */}
+      {isIngesting && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className={`flex flex-col items-center gap-4 p-8 rounded-2xl shadow-2xl ${isDark ? 'bg-[#1e1e20]' : 'bg-white'}`}>
+            <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+            <p className={`text-base font-semibold ${isDark ? 'text-zinc-100' : 'text-zinc-800'}`}>Analyzing and Chunking Document...</p>
+            <p className={`text-sm ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>Please wait while we process your PDF.</p>
+          </div>
         </div>
       )}
 
@@ -673,7 +703,9 @@ export default function App() {
                   <h3 className="text-lg font-medium mb-2">Welcome to Your Private Assistant</h3>
                   <p className={`text-sm ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
                     {mode === 'rag'
-                      ? (selectedDocId ? "Ask a question about this document." : "Ingest a PDF from the sidebar and start asking questions about your documents.")
+                      ? (selectedDocId
+                          ? `Ask a question about "${documents.find(d => d.id === selectedDocId)?.name ?? 'this document'}".`
+                          : "Ingest a PDF from the sidebar and start asking questions about your documents.")
                       : "Ask any general question to get started."}
                   </p>
                 </div>
