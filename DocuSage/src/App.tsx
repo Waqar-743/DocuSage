@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Moon, Sun, Settings, Database, Plus, FileText, Send, Paperclip, AlertCircle, Trash2, X, MessageSquare, Square, CheckCircle } from 'lucide-react';
+import { Moon, Sun, Settings, Database, Plus, FileText, Send, Paperclip, AlertCircle, Trash2, X, MessageSquare, Square, CheckCircle, Key } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { chatGeneral, chatRag, ingestDocument, isTauri, loadModel, stopChat, type ChatHistoryMessage, type IngestResult } from './lib/api';
+import { chatGeneral, chatRag, chatGeminiRag, ingestDocument, isTauri, loadModel, stopChat, GEMINI_KEY_STORAGE, type ChatHistoryMessage, type IngestResult } from './lib/api';
 import './App.css';
 
 type Message = {
@@ -134,6 +134,10 @@ export default function App() {
   const [isModelLoading, setIsModelLoading] = useState(false);
   const [isModelReady, setIsModelReady] = useState(!isTauri());
   const [modelStatus, setModelStatus] = useState<string>(isTauri() ? 'Model not loaded' : 'Browser preview mode');
+  const [showSettings, setShowSettings] = useState(false);
+  const [geminiKey, setGeminiKey] = useState<string>(() => {
+    try { return window.localStorage.getItem(GEMINI_KEY_STORAGE) ?? ''; } catch { return ''; }
+  });
 
   // Session State
   const [documents, setDocuments] = useState<Document[]>(persistedState.documents);
@@ -385,8 +389,10 @@ export default function App() {
   const handleSend = async () => {
     if (!inputValue.trim() || isTyping) return;
 
-    if (!isModelReady) {
-      showError('Model is not loaded yet. Click Retry Model Load in the header.');
+    // Allow sending without local model if Gemini key is set in RAG mode
+    const useGemini = mode === 'rag' && !!geminiKey.trim();
+    if (!isModelReady && !useGemini) {
+      showError('Model is not loaded yet. Click Retry Model Load in the header, or set a Gemini API key in Settings.');
       return;
     }
 
@@ -431,9 +437,15 @@ export default function App() {
     }
 
     try {
-      const response = mode === 'general'
-        ? await chatGeneral(userText, conversationHistory, requestId)
-        : await chatRag(userText, conversationHistory, requestId);
+      let response: string;
+      if (mode === 'general') {
+        response = await chatGeneral(userText, conversationHistory, requestId);
+      } else if (geminiKey.trim()) {
+        // Hybrid mode: use Gemini API for RAG when key is set
+        response = await chatGeminiRag(geminiKey.trim(), userText, conversationHistory);
+      } else {
+        response = await chatRag(userText, conversationHistory, requestId);
+      }
 
       // Set final text from the invoke return value for consistency.
       updateMessages(prev => prev.map(msg =>
@@ -532,6 +544,14 @@ export default function App() {
             </button>
           </div>
 
+          <button
+            onClick={() => setShowSettings(true)}
+            className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-400 hover:text-zinc-200 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50'} ${geminiKey.trim() ? (isDark ? 'border-emerald-500/50 text-emerald-400' : 'border-emerald-400 text-emerald-600') : ''}`}
+            title={geminiKey.trim() ? 'Settings (Gemini key set)' : 'Settings'}
+          >
+            <Key size={16} />
+          </button>
+
           {isTauri() && (
             <button
               onClick={ensureModelLoaded}
@@ -548,6 +568,69 @@ export default function App() {
           )}
         </div>
       </header>
+
+      {/* Settings Modal */}
+      {showSettings && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowSettings(false)}>
+          <div
+            className={`w-full max-w-md rounded-2xl shadow-2xl border p-6 ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c]' : 'bg-white border-zinc-200'}`}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-semibold">Settings</h2>
+              <button onClick={() => setShowSettings(false)} className={`p-1.5 rounded-lg transition-colors ${isDark ? 'hover:bg-[#2a2a2c]' : 'hover:bg-zinc-100'}`}><X size={18} /></button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>Gemini API Key</label>
+                <p className={`text-xs mb-2 ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                  When set, RAG document questions use the Gemini API instead of the local LLM for higher quality answers.
+                </p>
+                <input
+                  type="password"
+                  value={geminiKey}
+                  onChange={e => setGeminiKey(e.target.value)}
+                  placeholder="AIzaSy..."
+                  className={`w-full px-3 py-2.5 rounded-xl border text-sm transition-colors focus:outline-none focus:ring-2 ${
+                    isDark
+                      ? 'bg-[#232325] border-[#2a2a2c] text-zinc-100 placeholder:text-zinc-600 focus:ring-white/30'
+                      : 'bg-zinc-50 border-zinc-200 text-zinc-900 placeholder:text-zinc-400 focus:ring-[#0F2854]/30'
+                  }`}
+                />
+              </div>
+
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  onClick={() => {
+                    try { window.localStorage.setItem(GEMINI_KEY_STORAGE, geminiKey.trim()); } catch {}
+                    setShowSettings(false);
+                  }}
+                  className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-colors ${isDark ? 'bg-white text-zinc-900 hover:bg-zinc-200' : 'bg-[#0F2854] text-white hover:bg-[#0a1b38]'}`}
+                >
+                  Save
+                </button>
+                <button
+                  onClick={() => {
+                    setGeminiKey('');
+                    try { window.localStorage.removeItem(GEMINI_KEY_STORAGE); } catch {}
+                    setShowSettings(false);
+                  }}
+                  className={`px-4 py-2.5 rounded-xl text-sm font-medium border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-400 hover:text-zinc-200 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50'}`}
+                >
+                  Clear Key
+                </button>
+              </div>
+
+              {geminiKey.trim() && (
+                <p className="text-xs text-emerald-500 flex items-center gap-1.5">
+                  <CheckCircle size={14} /> Gemini hybrid mode active for RAG questions.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}

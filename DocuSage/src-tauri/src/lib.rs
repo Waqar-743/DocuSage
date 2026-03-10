@@ -155,6 +155,7 @@ pub fn run() {
             commands::load_model,
             commands::chat_general,
             commands::chat_rag,
+            commands::chat_gemini_rag,
             commands::stop_chat,
             commands::ingest_document,
         ])

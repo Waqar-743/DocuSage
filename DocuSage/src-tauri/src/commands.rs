@@ -527,6 +527,121 @@ pub async fn chat_rag(
     Ok(full_reply)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// chat_gemini_rag  –  Hybrid mode: local RAG retrieval + Gemini API for answer
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn chat_gemini_rag(
+    app: tauri::AppHandle,
+    api_key: String,
+    prompt: String,
+    history: Vec<HistoryMessage>,
+) -> Result<String, String> {
+    // ── 1. Resolve DB path ──────────────────────────────────────────────
+    let db_dir = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .map(|p| p.join("lancedb"))
+        .or_else(|| dirs::data_local_dir().map(|p| p.join("DocuSage").join("lancedb")))
+        .ok_or_else(|| "Cannot determine data directory.".to_string())?;
+
+    // ── 2. Retrieve relevant chunks ─────────────────────────────────────
+    println!("[chat_gemini_rag] DB dir: {}", db_dir.display());
+    let chunks = crate::rag::query_similar(&prompt, &db_dir, 5).await?;
+    println!("[chat_gemini_rag] Retrieved {} chunks", chunks.len());
+
+    if chunks.is_empty() {
+        return Err(format!(
+            "RAG Error: 0 matching chunks from '{}'. The documents table may be empty.",
+            db_dir.display()
+        ));
+    }
+
+    // ── 3. Build context ────────────────────────────────────────────────
+    let chunk_count = chunks.len();
+    let mut context = String::new();
+    for (i, (text, source)) in chunks.iter().enumerate() {
+        context.push_str(&format!(
+            "--- Excerpt {} (Source: {}) ---\n{}\n\n",
+            i + 1,
+            source,
+            text
+        ));
+    }
+
+    // Build conversation history for Gemini
+    let mut parts_text = String::new();
+    for msg in &history {
+        let role = if msg.sender == "user" { "User" } else { "Assistant" };
+        parts_text.push_str(&format!("{}: {}\n", role, msg.text));
+    }
+
+    let full_prompt = format!(
+        "You are DocuSage, a helpful AI assistant that answers questions \
+         based STRICTLY on the user's private documents.\n\
+         RULES:\n\
+         - Answer ONLY using the provided document context below.\n\
+         - If the answer is not in the context, say \"The provided documents \
+           do not contain information about this.\"\n\
+         - Cite sources using [Source: filename].\n\
+         - When the user asks for a short answer or specifies a word/line \
+           limit, respect it strictly.\n\
+         - Produce exactly one answer, then stop.\n\n\
+         DOCUMENT CONTEXT ({chunk_count} chunks):\n{context}\n\
+         CONVERSATION HISTORY:\n{parts_text}\n\
+         User Question: {prompt}"
+    );
+    println!(
+        "[chat_gemini_rag] Full prompt length: {} chars",
+        full_prompt.len()
+    );
+
+    // ── 4. Call Gemini API ──────────────────────────────────────────────
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={}",
+        api_key
+    );
+
+    let body = serde_json::json!({
+        "contents": [{
+            "parts": [{ "text": full_prompt }]
+        }]
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Gemini request failed: {e}"))?;
+
+    let status = resp.status();
+    let resp_text = resp
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read Gemini response: {e}"))?;
+
+    if !status.is_success() {
+        println!("[chat_gemini_rag] Gemini error {}: {}", status, resp_text);
+        return Err(format!("Gemini API error ({}): {}", status, resp_text));
+    }
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&resp_text).map_err(|e| format!("Invalid JSON from Gemini: {e}"))?;
+
+    let answer = parsed["candidates"][0]["content"]["parts"][0]["text"]
+        .as_str()
+        .unwrap_or("No response from Gemini.")
+        .to_string();
+
+    println!("[chat_gemini_rag] Answer length: {} chars", answer.len());
+    Ok(answer)
+}
+
 #[tauri::command]
 pub fn stop_chat(
     state: tauri::State<'_, AppState>,

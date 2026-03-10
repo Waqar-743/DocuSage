@@ -90,6 +90,22 @@ export async function chatRag(
   return invoke<string>("chat_rag", { prompt, history, requestId });
 }
 
+/** Storage key for the Gemini API key. */
+export const GEMINI_KEY_STORAGE = 'docusage_gemini_key';
+
+/**
+ * Send a prompt to the Gemini API in hybrid RAG mode.
+ * Rust retrieves chunks from LanceDB, then calls Gemini instead of the local LLM.
+ */
+export async function chatGeminiRag(
+  apiKey: string,
+  prompt: string,
+  history: ChatHistoryMessage[],
+): Promise<string> {
+  if (!isTauri()) { await mockDelay(1200); return "Gemini RAG preview: In the real app, your question would be answered by the Gemini API using your ingested document chunks."; }
+  return invoke<string>("chat_gemini_rag", { apiKey, prompt, history });
+}
+
 export async function stopChat(requestId: string): Promise<void> {
   if (!isTauri()) {
     return;
