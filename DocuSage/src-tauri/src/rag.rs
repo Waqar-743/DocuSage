@@ -360,8 +360,12 @@ pub async fn query_similar(
     db_path: &Path,
     top_k: usize,
 ) -> Result<Vec<(String, String)>, String> {
+    println!("[rag-query] Starting vector search for: {:?}", &query[..query.len().min(100)]);
+    println!("[rag-query] DB path: {}", db_path.display());
+
     // ── 1. Embed the query ──────────────────────────────────────────────
     let model = get_embedding()?;
+    println!("[rag-query] Embedding model ready, generating query vector...");
 
     let embeddings = model
         .embed(vec![query.to_string()], None)
@@ -371,6 +375,7 @@ pub async fn query_similar(
         .into_iter()
         .next()
         .ok_or_else(|| "No embedding produced for query".to_string())?;
+    println!("[rag-query] Query vector generated ({} dimensions)", query_vec.len());
 
     // ── 2. Open DB + table ──────────────────────────────────────────────
     let db_str = db_path.to_str().ok_or_else(|| {
@@ -387,9 +392,15 @@ pub async fn query_similar(
         .execute()
         .await
         .map_err(|e| format!("Failed to list tables: {e}"))?;
+    println!("[rag-query] Tables found in DB: {:?}", tables);
 
     if !tables.iter().any(|t| t == TABLE_NAME) {
-        return Ok(Vec::new()); // no documents ingested yet
+        println!("[rag-query] ERROR: '{}' table does NOT exist in DB!", TABLE_NAME);
+        return Err(format!(
+            "RAG Error: The '{}' table does not exist in the database at {}. \
+             Have you ingested a document?",
+            TABLE_NAME, db_path.display()
+        ));
     }
 
     let table = db
@@ -397,6 +408,12 @@ pub async fn query_similar(
         .execute()
         .await
         .map_err(|e| format!("Failed to open table: {e}"))?;
+
+    let total_rows = table
+        .count_rows(None)
+        .await
+        .map_err(|e| format!("Failed to count rows: {e}"))?;
+    println!("[rag-query] Table '{}' opened, total rows: {}", TABLE_NAME, total_rows);
 
     // ── 3. Vector search ────────────────────────────────────────────────
     use lancedb::query::{ExecutableQuery, QueryBase};
@@ -446,6 +463,11 @@ pub async fn query_similar(
                 .to_string();
             output.push((text, filename));
         }
+    }
+
+    println!("[rag-query] Vector search returned {} chunks", output.len());
+    if !output.is_empty() {
+        println!("[rag-query] First chunk preview: {:?}", &output[0].0[..output[0].0.len().min(150)]);
     }
 
     Ok(output)

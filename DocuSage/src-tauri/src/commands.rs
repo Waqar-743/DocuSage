@@ -402,9 +402,19 @@ pub async fn chat_rag(
         .ok_or_else(|| "Cannot determine data directory.".to_string())?;
 
     // ── 2. Retrieve relevant chunks BEFORE acquiring the model lock ─────
-    //   This is the key optimisation: embedding + vector search runs while
-    //   the model mutex is free, allowing other requests to proceed.
+    println!("[chat_rag] DB dir for retrieval: {}", db_dir.display());
     let chunks = crate::rag::query_similar(&prompt, &db_dir, 5).await?;
+    println!("[chat_rag] Retrieved {} chunks from vector search", chunks.len());
+
+    // ── STRICT: fail loudly if no chunks found ──────────────────────────
+    if chunks.is_empty() {
+        finish_request(&state, &request_id)?;
+        return Err(format!(
+            "RAG Error: LanceDB searched the database at '{}' but retrieved 0 matching chunks. \
+             The documents table may be empty or the db_path may be incorrect.",
+            db_dir.display()
+        ));
+    }
 
     // ── 3. Acquire model lock ───────────────────────────────────────────
     let model_guard = state.model.lock().await;
@@ -413,20 +423,16 @@ pub async fn chat_rag(
         .ok_or_else(|| "No model loaded. Call load_model first.".to_string())?;
 
     // ── 4. Build augmented prompt ───────────────────────────────────────
-    let context = if chunks.is_empty() {
-        "No relevant documents found. Answer to the best of your knowledge \
-         and state that no supporting documents were retrieved."
-            .to_string()
-    } else {
-        let mut ctx = String::from("Use the following document excerpts to answer the user's question. Cite sources using [Source: filename].\n\n");
-        for (i, (text, source)) in chunks.iter().enumerate() {
-            ctx.push_str(&format!("--- Excerpt {} (Source: {}) ---\n{}\n\n", i + 1, source, text));
-        }
-        ctx
-    };
+    let chunk_count = chunks.len();
+    let mut context = String::from("Use the following document excerpts to answer the user's question. Cite sources using [Source: filename].\n\n");
+    for (i, (text, source)) in chunks.iter().enumerate() {
+        context.push_str(&format!("--- Excerpt {} (Source: {}) ---\n{}\n\n", i + 1, source, text));
+    }
 
     let system_prompt = format!(
-        "You are DocuSage, a helpful AI assistant that answers questions \
+        "System Instruction: You must begin your response by saying exactly: \
+         'I received {chunk_count} document chunks.' Then, answer the user's question.\n\n\
+         You are DocuSage, a helpful AI assistant that answers questions \
          based STRICTLY on the user's private documents. You are running \
          locally and no data leaves this machine.\n\
          IMPORTANT RULES:\n\
@@ -440,6 +446,7 @@ pub async fn chat_rag(
          - Produce exactly one answer, then STOP.\n\n\
          DOCUMENT CONTEXT:\n{context}"
     );
+    println!("[chat_rag] System prompt length: {} chars, injected {} chunks", system_prompt.len(), chunk_count);
 
     let request = build_request(&system_prompt, &history, &prompt);
 
