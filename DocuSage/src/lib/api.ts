@@ -8,6 +8,7 @@ export type ChatHistoryMessage = {
 export type IngestResult = {
   fileName: string;
   chunkCount: number;
+  charCount: number;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -107,7 +108,7 @@ export async function ingestDocument(filePath: string): Promise<IngestResult> {
   if (!isTauri()) {
     await mockDelay(1500);
     const name = filePath.split(/[\\/]/).pop() ?? filePath;
-    return { fileName: name, chunkCount: 42 };
+    return { fileName: name, chunkCount: 42, charCount: 12500 };
   }
   // Send ONLY the path string — never read or transmit file content via IPC.
   return invoke<IngestResult>("ingest_document", { filePath: String(filePath) });

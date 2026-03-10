@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Moon, Sun, Settings, Database, Plus, FileText, Send, Paperclip, AlertCircle, Trash2, X, MessageSquare, Square } from 'lucide-react';
+import { Moon, Sun, Settings, Database, Plus, FileText, Send, Paperclip, AlertCircle, Trash2, X, MessageSquare, Square, CheckCircle } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { chatGeneral, chatRag, ingestDocument, isTauri, loadModel, stopChat, type ChatHistoryMessage, type IngestResult } from './lib/api';
@@ -127,8 +127,10 @@ export default function App() {
   const [isStopping, setIsStopping] = useState(false);
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
   const [toastError, setToastError] = useState<string | null>(null);
-  const [toastSuccess, setToastSuccess] = useState<string | null>(null);
-  const [isIngesting, setIsIngesting] = useState(false);
+  const [toastSuccess] = useState<string | null>(null);
+  const [, setIsIngesting] = useState(false);
+  const [, setIngestFileName] = useState<string>('');
+  const [ingestWidget, setIngestWidget] = useState<{ type: 'loading' | 'success'; fileName: string; chunkCount: number } | null>(null);
   const [isModelLoading, setIsModelLoading] = useState(false);
   const [isModelReady, setIsModelReady] = useState(!isTauri());
   const [modelStatus, setModelStatus] = useState<string>(isTauri() ? 'Model not loaded' : 'Browser preview mode');
@@ -210,11 +212,6 @@ export default function App() {
   const showError = (msg: string) => {
     setToastError(msg);
     setTimeout(() => setToastError(null), 5000);
-  };
-
-  const showSuccess = (msg: string) => {
-    setToastSuccess(msg);
-    setTimeout(() => setToastSuccess(null), 4000);
   };
 
   // Load the local GGUF model once on startup in desktop mode.
@@ -309,19 +306,24 @@ export default function App() {
     setMode('rag');
 
     setIsIngesting(true);
+    setIngestFileName(fileName);
+    setIngestWidget({ type: 'loading', fileName, chunkCount: 0 });
     try {
       const result: IngestResult = await ingestDocument(filePath);
       setDocuments(prev => prev.map(d =>
         d.id === newDoc.id ? { ...d, status: 'ready' } : d
       ));
-      showSuccess(`Successfully vectorized ${result.chunkCount} chunks from "${result.fileName}".`);
+      setIngestWidget({ type: 'success', fileName: result.fileName, chunkCount: result.chunkCount });
+      setTimeout(() => setIngestWidget(null), 4000);
     } catch (err) {
       setDocuments(prev => prev.map(d =>
         d.id === newDoc.id ? { ...d, status: 'error' } : d
       ));
+      setIngestWidget(null);
       showError(`Failed to ingest ${fileName}: ${String(err)}`);
     } finally {
       setIsIngesting(false);
+      setIngestFileName('');
     }
   };
 
@@ -487,10 +489,19 @@ export default function App() {
       )}
 
       {/* Ingestion Status Widget (right side) */}
-      {isIngesting && (
-        <div className={`fixed right-6 top-1/2 -translate-y-1/2 z-40 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg border ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c]' : 'bg-white border-zinc-200'}`}>
-          <div className="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin shrink-0" />
-          <p className={`text-sm font-medium ${isDark ? 'text-zinc-200' : 'text-zinc-700'}`}>Chunking &amp; Embedding...</p>
+      {ingestWidget && (
+        <div className={`fixed right-6 top-1/2 -translate-y-1/2 z-40 flex items-center gap-3 px-5 py-3.5 rounded-xl shadow-lg border transition-all duration-300 ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c]' : 'bg-white border-zinc-200'}`}>
+          {ingestWidget.type === 'loading' ? (
+            <>
+              <div className="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin shrink-0" />
+              <p className={`text-sm font-medium ${isDark ? 'text-zinc-200' : 'text-zinc-700'}`}>Chunking &amp; Embedding "{ingestWidget.fileName}"...</p>
+            </>
+          ) : (
+            <>
+              <CheckCircle size={20} className="text-emerald-500 shrink-0" />
+              <p className={`text-sm font-medium ${isDark ? 'text-zinc-200' : 'text-zinc-700'}`}>Successfully vectorized {ingestWidget.chunkCount} chunks!</p>
+            </>
+          )}
         </div>
       )}
 
@@ -697,14 +708,18 @@ export default function App() {
                   <div className={`inline-flex items-center justify-center w-12 h-12 rounded-full mb-4 ${isDark ? 'bg-[#232325]' : 'bg-zinc-100'}`}>
                     {mode === 'rag' ? <Database size={24} className={isDark ? 'text-white' : 'text-[#0F2854]'} /> : <MessageSquare size={24} className={isDark ? 'text-white' : 'text-[#0F2854]'} />}
                   </div>
-                  <h3 className="text-lg font-medium mb-2">Welcome to Your Private Assistant</h3>
-                  <p className={`text-sm ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-                    {mode === 'rag'
-                      ? (selectedDocId
-                          ? `Ask a question about "${documents.find(d => d.id === selectedDocId)?.name ?? 'this document'}".`
-                          : "Ingest a PDF from the sidebar and start asking questions about your documents.")
-                      : "Ask any general question to get started."}
-                  </p>
+                  <h3 className="text-lg font-medium mb-2">Welcome to Your Private Assistant.</h3>
+                  {mode === 'rag' && selectedDocId ? (
+                    <p className={`text-sm ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                      Ask a question about <span className="font-semibold">{documents.find(d => d.id === selectedDocId)?.name ?? 'this document'}</span>
+                    </p>
+                  ) : (
+                    <p className={`text-sm ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                      {mode === 'rag'
+                        ? "Ingest a PDF from the sidebar and start asking questions about your documents."
+                        : "Ask any general question to get started."}
+                    </p>
+                  )}
                 </div>
               </div>
             ) : (

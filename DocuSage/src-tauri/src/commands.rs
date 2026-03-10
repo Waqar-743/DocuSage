@@ -30,6 +30,7 @@ const STOP_SEQUENCES: &[&str] = &[
 pub struct IngestResult {
     pub file_name: String,
     pub chunk_count: usize,
+    pub char_count: usize,
 }
 
 #[derive(serde::Deserialize)]
@@ -610,7 +611,7 @@ pub async fn ingest_document(
     println!("[ingest] Starting ingestion for: {}", pdf_display);
     println!("[ingest] DB directory: {}", db_dir.display());
 
-    let result: Result<usize, String> = tauri::async_runtime::spawn_blocking(move || {
+    let result: Result<(usize, usize), String> = tauri::async_runtime::spawn_blocking(move || {
         // 3a. Extract text
         println!("[ingest] Extracting text from PDF...");
         let text = crate::rag::extract_text_from_pdf(&pdf_path)?;
@@ -618,12 +619,13 @@ pub async fn ingest_document(
         let trimmed_len = text.trim().len();
         println!("[ingest] Extracted text: {} chars total, {} chars trimmed", char_count, trimmed_len);
         if trimmed_len == 0 {
+            println!("[ingest] FAILURE: Extraction failed — 0 characters found.");
             return Err(format!(
-                "No extractable text found in {} (raw len={}, trimmed len=0). \
-                 The PDF may be a scanned image without an OCR text layer.",
-                pdf_path.display(), char_count
+                "Extraction failed: 0 characters found in {}. Is this a scanned image?",
+                pdf_path.display()
             ));
         }
+        println!("SUCCESS: Extracted {} characters from {}", char_count, pdf_path.display());
         // Log first 200 chars as preview
         println!("[ingest] Text preview: {:?}", &text[..text.len().min(200)]);
 
@@ -637,9 +639,6 @@ pub async fn ingest_document(
         let chunk_count = chunks.len();
 
         // 3c–d. Init DB + embed & store (async inside blocking via a one-shot runtime)
-        //   `init_lancedb` and `embed_and_store` are async (LanceDB operations).
-        //   We create a small Tokio runtime here because we are already on a
-        //   blocking thread and cannot `.await` directly.
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -661,18 +660,19 @@ pub async fn ingest_document(
             Ok::<(), String>(())
         })?;
 
-        println!("[ingest] Ingestion complete: {} chunks stored successfully", chunk_count);
-        Ok(chunk_count)
+        println!("SUCCESS: Vectorized and saved {} chunks to LanceDB", chunk_count);
+        Ok((chunk_count, char_count))
     })
     .await
     .map_err(|e| format!("Ingestion task panicked: {e}"))?;
 
-    let chunk_count = result?;
+    let (chunk_count, char_count) = result?;
 
     let file_name = PathBuf::from(&pdf_display)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or(pdf_display);
 
-    Ok(IngestResult { file_name, chunk_count })
+    println!("[ingest] Returning to frontend: file='{}', chunks={}, chars={}", file_name, chunk_count, char_count);
+    Ok(IngestResult { file_name, chunk_count, char_count })
 }
