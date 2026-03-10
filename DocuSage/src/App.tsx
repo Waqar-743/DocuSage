@@ -486,14 +486,11 @@ export default function App() {
         </div>
       )}
 
-      {/* Ingestion Loading Overlay */}
+      {/* Ingestion Status Widget (right side) */}
       {isIngesting && (
-        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className={`flex flex-col items-center gap-4 p-8 rounded-2xl shadow-2xl ${isDark ? 'bg-[#1e1e20]' : 'bg-white'}`}>
-            <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-            <p className={`text-base font-semibold ${isDark ? 'text-zinc-100' : 'text-zinc-800'}`}>Analyzing and Chunking Document...</p>
-            <p className={`text-sm ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>Please wait while we process your PDF.</p>
-          </div>
+        <div className={`fixed right-6 top-1/2 -translate-y-1/2 z-40 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg border ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c]' : 'bg-white border-zinc-200'}`}>
+          <div className="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin shrink-0" />
+          <p className={`text-sm font-medium ${isDark ? 'text-zinc-200' : 'text-zinc-700'}`}>Chunking &amp; Embedding...</p>
         </div>
       )}
 

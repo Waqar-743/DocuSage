@@ -607,18 +607,29 @@ pub async fn ingest_document(
     let db_dir_clone = db_dir.clone();
     let pdf_display = pdf_path.display().to_string();
 
+    println!("[ingest] Starting ingestion for: {}", pdf_display);
+    println!("[ingest] DB directory: {}", db_dir.display());
+
     let result: Result<usize, String> = tauri::async_runtime::spawn_blocking(move || {
         // 3a. Extract text
+        println!("[ingest] Extracting text from PDF...");
         let text = crate::rag::extract_text_from_pdf(&pdf_path)?;
-        if text.trim().is_empty() {
+        let char_count = text.len();
+        let trimmed_len = text.trim().len();
+        println!("[ingest] Extracted text: {} chars total, {} chars trimmed", char_count, trimmed_len);
+        if trimmed_len == 0 {
             return Err(format!(
-                "No extractable text found in {}",
-                pdf_path.display()
+                "No extractable text found in {} (raw len={}, trimmed len=0). \
+                 The PDF may be a scanned image without an OCR text layer.",
+                pdf_path.display(), char_count
             ));
         }
+        // Log first 200 chars as preview
+        println!("[ingest] Text preview: {:?}", &text[..text.len().min(200)]);
 
         // 3b. Chunk (500 chars, 50 overlap — plan defaults)
         let chunks = crate::rag::chunk_text(&text, 500, 50);
+        println!("[ingest] Chunking produced {} chunks", chunks.len());
         if chunks.is_empty() {
             return Err("Chunking produced zero chunks.".to_string());
         }
@@ -635,15 +646,22 @@ pub async fn ingest_document(
             .map_err(|e| format!("Failed to create async runtime: {e}"))?;
 
         rt.block_on(async {
+            println!("[ingest] Initializing LanceDB at: {}", db_dir_clone.display());
             let db_conn = crate::rag::init_lancedb(&db_dir_clone).await?;
+            println!("[ingest] LanceDB initialized, embedding and storing {} chunks...", chunk_count);
             crate::rag::embed_and_store(
                 chunks,
                 &pdf_path.display().to_string(),
                 &db_conn,
             )
-            .await
+            .await?;
+            // Verify rows were written
+            let row_count = crate::rag::verify_row_count(&db_conn).await?;
+            println!("[ingest] Verification: {} total rows in '{}' table after insertion", row_count, "documents");
+            Ok::<(), String>(())
         })?;
 
+        println!("[ingest] Ingestion complete: {} chunks stored successfully", chunk_count);
         Ok(chunk_count)
     })
     .await

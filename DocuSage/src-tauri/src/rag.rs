@@ -331,11 +331,18 @@ pub async fn embed_and_store(
     // ── 4. Append to the table ──────────────────────────────────────────
     let batches = RecordBatchIterator::new(vec![Ok(batch)], schema);
 
+    println!("[rag] Appending {} chunks to '{}' table (existing rows: {})...", num_chunks, TABLE_NAME, existing_rows);
     table
         .add(Box::new(batches))
         .execute()
         .await
         .map_err(|e| format!("LanceDB insert failed: {e}"))?;
+
+    let new_total = table
+        .count_rows(None)
+        .await
+        .map_err(|e| format!("Failed to count rows after insert: {e}"))? as i32;
+    println!("[rag] Insert complete. Row count: {} -> {} (expected {})", existing_rows, new_total, existing_rows + num_chunks);
 
     Ok(())
 }
@@ -442,4 +449,29 @@ pub async fn query_similar(
     }
 
     Ok(output)
+}
+
+/// Count the total number of rows in the `documents` table.
+/// Used for post-insertion verification.
+pub async fn verify_row_count(db_conn: &lancedb::Connection) -> Result<usize, String> {
+    let tables = db_conn
+        .table_names()
+        .execute()
+        .await
+        .map_err(|e| format!("Failed to list tables: {e}"))?;
+
+    if !tables.iter().any(|t| t == TABLE_NAME) {
+        return Ok(0);
+    }
+
+    let table = db_conn
+        .open_table(TABLE_NAME)
+        .execute()
+        .await
+        .map_err(|e| format!("Failed to open '{TABLE_NAME}': {e}"))?;
+
+    table
+        .count_rows(None)
+        .await
+        .map_err(|e| format!("Failed to count rows: {e}"))
 }
