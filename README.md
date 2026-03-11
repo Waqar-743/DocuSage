@@ -201,11 +201,7 @@ DocuSage/
 
 ---
 
-## Recruiter Q&A
 
-See `RECRUITER_QA.md` for a concise recruiter-facing set of technical questions and answers about architecture, tradeoffs, privacy, and engineering challenges.
-
----
 
 ## License
 
