@@ -5,76 +5,110 @@
 <h1 align="center">DocuSage</h1>
 
 <p align="center">
-  <strong>100 % offline, privacy-first desktop AI assistant</strong><br/>
-  Chat with a local LLM or ask questions about your private documents — no internet, no cloud, no data leaves your machine.
+  <strong>Local-first desktop AI for private document intelligence</strong><br/>
+  Chat with a local GGUF model, ingest PDFs into a local vector database, and optionally switch on Gemini hybrid mode for stronger document-grounded answers.
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Tauri-v2-blue?logo=tauri" alt="Tauri v2" />
   <img src="https://img.shields.io/badge/React-19-61dafb?logo=react" alt="React 19" />
   <img src="https://img.shields.io/badge/Rust-2021-orange?logo=rust" alt="Rust" />
+  <img src="https://img.shields.io/badge/Release-v0.3.10-brightgreen" alt="Release v0.3.10" />
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
 </p>
 
 ---
 
+## Why I Built It
+
+Most AI note and document tools force a bad tradeoff: either everything goes to the cloud, or the local experience is too weak to be dependable. DocuSage was built to close that gap.
+
+The app keeps ingestion, embeddings, retrieval, and storage on-device. Then, for users who want stronger reasoning quality on private documents, it adds an optional Gemini hybrid layer. That means the core knowledge pipeline remains local, while answer generation can scale up when it is actually needed.
+
+---
+
 ## Features
 
-- **General Chat** — Have free-form conversations with a local LLM powered by [mistral.rs](https://github.com/EricLBuehler/mistral.rs).
-- **RAG Chat** — Ingest PDF documents and ask questions. DocuSage retrieves relevant passages and generates answers with source citations.
-- **Fully Offline** — Everything runs on your machine: inference, embeddings, vector search. Zero network calls.
-- **Privacy First** — Your files and conversations never leave your device.
-- **Dark / Light Mode** — Clean, modern UI with one-click theme toggle.
-- **Multi-Session** — Create and manage multiple independent chat sessions.
-- **Document Management** — Upload, ingest, and manage PDFs through the sidebar.
+- **Local general chat** with a GGUF model powered by [mistral.rs](https://github.com/EricLBuehler/mistral.rs)
+- **Local RAG pipeline** for PDF ingestion, chunking, embeddings, and retrieval
+- **Hybrid Gemini mode** using the `gemini-2.5-flash` endpoint for stronger document Q&A
+- **Grounded answers with sources** based on retrieved document excerpts
+- **Settings panel for Gemini API key** stored locally in the app
+- **Streaming responses and stop generation controls**
+- **Multi-session chat persistence** for separate conversations
+- **Desktop release workflow** for Windows installer generation
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                     React 19 Frontend                    │
-│  (Tailwind CSS · Vite · TypeScript · lucide-react)       │
-│                                                          │
-│   ┌───────────┐   ┌───────────┐   ┌────────────────┐    │
-│   │ General   │   │ RAG Chat  │   │ Document Mgmt  │    │
-│   │ Chat UI   │   │ UI        │   │ Sidebar        │    │
-│   └─────┬─────┘   └─────┬─────┘   └───────┬────────┘    │
-│         │               │                  │             │
-│         └───────────┬───┘──────────────────┘             │
-│                     │  Tauri IPC (invoke)                 │
-└─────────────────────┼────────────────────────────────────┘
-                      │
-┌─────────────────────┼────────────────────────────────────┐
-│                     ▼  Rust Backend (Tauri v2)           │
-│                                                          │
-│   ┌─────────────────────────────────────────────────┐    │
-│   │              commands.rs                        │    │
-│   │  load_model · chat_general · chat_rag           │    │
-│   │  ingest_document                                │    │
-│   └──────────┬───────────────────┬──────────────────┘    │
-│              │                   │                        │
-│   ┌──────────▼──────┐  ┌────────▼───────────────────┐    │
-│   │  mistral.rs     │  │       rag.rs               │    │
-│   │  (LLM Engine)   │  │  PDF extract → chunk →     │    │
-│   │  GGUF models    │  │  embed (fastembed) →        │    │
-│   │  CPU / GPU      │  │  store & search (LanceDB)  │    │
-│   └─────────────────┘  └────────────────────────────┘    │
-│                                                          │
-└──────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                        React 19 Frontend                        │
+│                 Vite · TypeScript · Tailwind CSS                │
+│                                                                  │
+│  General Chat UI   RAG Chat UI   Settings UI   Session Manager   │
+└──────────────────────────────┬───────────────────────────────────┘
+                               │ Tauri invoke
+┌──────────────────────────────▼───────────────────────────────────┐
+│                       Rust Backend (Tauri)                       │
+│                                                                  │
+│  commands.rs                                                     │
+│  - load_model                                                    │
+│  - chat_general                                                  │
+│  - chat_rag                                                      │
+│  - chat_gemini_rag                                               │
+│  - ingest_document                                               │
+└───────────────┬───────────────────────────────┬──────────────────┘
+                │                               │
+        ┌───────▼────────┐              ┌──────▼─────────────────┐
+        │ Local LLM Path │              │ Local RAG Path         │
+        │ mistral.rs     │              │ pdf-extract            │
+        │ GGUF inference │              │ fastembed              │
+        │ general chat   │              │ LanceDB                │
+        └────────────────┘              └──────────┬─────────────┘
+                                                   │
+                                  ┌────────────────▼────────────────┐
+                                  │ Optional Hybrid Answer Engine   │
+                                  │ Gemini 2.5 Flash generateContent│
+                                  │ sends only retrieved excerpts   │
+                                  └─────────────────────────────────┘
 ```
 
-### Key Components
+### Key Technical Decisions
 
-| Layer | Technology | Role |
-|-------|-----------|------|
-| **UI** | React 19, Tailwind CSS v4, Vite 7 | Chat interface, document sidebar, theme toggle |
-| **Desktop Shell** | Tauri v2 | Secure IPC bridge, native file dialogs, windowing |
-| **LLM Inference** | mistral.rs 0.7 (GGUF) | Local model loading and chat completion |
-| **Embeddings** | fastembed 4 (BAAI/bge-small-en-v1.5) | 384-dim vectors for document chunks |
-| **Vector Store** | LanceDB 0.26 + Apache Arrow | Persistent vector search for RAG retrieval |
-| **PDF Parsing** | pdf-extract 0.10 | Text extraction from PDF documents |
+| Area | Choice | Reason |
+|------|--------|--------|
+| Desktop shell | Tauri v2 | Native desktop UX with lower memory footprint than Electron |
+| Local model runtime | mistral.rs | Direct GGUF inference in Rust |
+| Embeddings | fastembed + BAAI/bge-small-en-v1.5 | Fast local vector generation |
+| Vector store | LanceDB | Persistent retrieval for document search |
+| Hybrid answering | Gemini 2.5 Flash | Better synthesis quality for RAG answers |
+| Frontend | React 19 + Vite | Fast iteration and responsive UI |
+
+---
+
+## How It Works
+
+### General Chat
+
+1. The user sends a message from the UI.
+2. The frontend invokes `chat_general` through Tauri.
+3. The Rust backend builds the prompt and streams tokens from the local GGUF model.
+4. The UI renders the answer progressively.
+
+### Document Q&A
+
+1. A PDF is parsed locally.
+2. Text is chunked, embedded, and stored in LanceDB.
+3. A question is embedded and matched against the local vector store.
+4. The top chunks become the grounded context.
+5. The answer is generated by the local model or, when enabled, by `chat_gemini_rag` using Gemini 2.5 Flash.
+
+### Privacy Model
+
+- Local mode: documents, embeddings, retrieval, and generation remain on-device.
+- Hybrid mode: retrieval stays local; only the retrieved excerpts and the user question are sent to Gemini.
 
 ---
 
@@ -82,50 +116,41 @@
 
 ### Prerequisites
 
-- **Node.js** 18+ and **npm**
-- **Rust** toolchain (rustup) — stable channel
-- **System dependencies** for Tauri v2 — see [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
+- Node.js 18+
+- npm
+- Rust stable toolchain
+- Tauri v2 system prerequisites
 
-### Install Dependencies
+### Install and Run
 
 ```bash
 cd DocuSage
 npm install
+npm run tauri dev
 ```
 
-### Download a GGUF Model
+### GGUF Model Location
 
-DocuSage needs a GGUF model file. Place it in one of these locations:
+Place a `.gguf` model file in one of these directories:
 
 | Platform | Default Path |
-|----------|-------------|
-| **Windows** | `Documents\DocuSage\models\` |
-| **macOS** | `~/Documents/DocuSage/models/` |
-| **Linux** | `~/Documents/DocuSage/models/` |
+|----------|--------------|
+| Windows | `Documents\DocuSage\models\` |
+| macOS | `~/Documents/DocuSage/models/` |
+| Linux | `~/Documents/DocuSage/models/` |
 
-Or set the `MODEL_PATH` environment variable (or add it to `src-tauri/.env`):
+Or configure `MODEL_PATH` in `src-tauri/.env`:
 
 ```env
 MODEL_PATH=D:\DocuSage\models
 ```
 
-Any GGUF model works. Small recommended models:
-- [Mistral-7B-Instruct GGUF (Q4_K_M)](https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF)
-- [Phi-3-mini GGUF](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf)
+### Optional Gemini Hybrid Setup
 
-### Run in Development
-
-```bash
-npm run tauri dev
-```
-
-### Browser Preview (no Tauri needed)
-
-```bash
-npm run dev
-```
-
-Opens at `http://localhost:1420` with mock AI responses — useful for UI development.
+1. Open the app.
+2. Click the Settings button in the header.
+3. Save your Gemini API key.
+4. Use document mode to route final answers through Gemini 2.5 Flash.
 
 ### Build for Production
 
@@ -133,46 +158,28 @@ Opens at `http://localhost:1420` with mock AI responses — useful for UI develo
 npm run tauri build
 ```
 
-The installer is generated in `src-tauri/target/release/bundle/`.
-
 ---
 
 ## Project Structure
 
 ```
 DocuSage/
-├── src/                    # React frontend
-│   ├── App.tsx             # Main app with chat UI, sidebar, themes
-│   ├── lib/api.ts          # Tauri IPC wrappers + browser mock mode
-│   └── main.tsx            # Entry point
-├── src-tauri/              # Rust backend
+├── src/
+│   ├── App.tsx
+│   ├── lib/api.ts
+│   └── main.tsx
+├── src-tauri/
 │   ├── src/
-│   │   ├── lib.rs          # AppState, Tauri builder, command registration
-│   │   ├── commands.rs     # load_model, chat_general, chat_rag, ingest_document
-│   │   ├── rag.rs          # PDF extraction, chunking, embedding, vector search
-│   │   └── main.rs         # Binary entry point
-│   ├── Cargo.toml          # Rust dependencies
-│   ├── tauri.conf.json     # Tauri app configuration
-│   └── icons/              # App icons (all sizes)
+│   │   ├── lib.rs
+│   │   ├── commands.rs
+│   │   ├── rag.rs
+│   │   └── main.rs
+│   ├── Cargo.toml
+│   ├── tauri.conf.json
+│   └── icons/
 ├── public/
-│   ├── logo-light.svg      # Light mode logo
-│   └── logo-dark.svg       # Dark mode logo
 └── package.json
 ```
-
----
-
-## How It Works
-
-### General Chat
-1. User types a message →  frontend calls `chat_general` via Tauri IPC
-2. Rust backend builds a conversation with system prompt + chat history
-3. mistral.rs runs inference on the local GGUF model
-4. Response streams back to the UI
-
-### RAG Chat
-1. **Ingest**: Upload a PDF → extract text → split into chunks → embed with fastembed → store in LanceDB
-2. **Query**: User asks a question → embed the query → vector search for top-5 similar chunks → build augmented prompt with document excerpts → run inference → return answer with citations
 
 ---
 
@@ -180,33 +187,71 @@ DocuSage/
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MODEL_PATH` | `~/Documents/DocuSage/models` | Directory containing `.gguf` model files |
-| `USE_GPU` | `0` | Set to `1` to enable GPU acceleration |
-| `CHAT_TEMPLATE` | *(auto-detected)* | Explicit Jinja chat template path or literal |
-| `TOK_MODEL_ID` | *(auto-detected)* | HuggingFace tokenizer model ID |
-
----
-
-## App Icon
-
-<p align="center">
-  <img src="public/logo-dark.svg" alt="DocuSage Dark Mode Icon" width="120" />
-</p>
-
----
-
-## Tech Stack
-
-- [Tauri v2](https://v2.tauri.app/) — Lightweight desktop framework
-- [React 19](https://react.dev/) — UI library
-- [Tailwind CSS v4](https://tailwindcss.com/) — Utility-first CSS
-- [mistral.rs](https://github.com/EricLBuehler/mistral.rs) — Fast local LLM inference
-- [LanceDB](https://lancedb.com/) — Embedded vector database
-- [fastembed](https://github.com/Anush008/fastembed-rs) — Local embedding generation
-- [Vite 7](https://vite.dev/) — Lightning-fast frontend build tool
+| `MODEL_PATH` | `~/Documents/DocuSage/models` | Directory containing `.gguf` files |
+| `USE_GPU` | `0` | Enables GPU acceleration where supported |
+| `CHAT_TEMPLATE` | auto-detected | Custom chat template override |
+| `TOK_MODEL_ID` | auto-detected | Tokenizer model id override |
 
 ---
 
 ## License
 
 MIT
+*** Add File: /workspaces/DocuSage/RECRUITER_QA.md
+# Recruiter Questions and Answers for DocuSage
+
+## 1. What problem does DocuSage solve?
+
+DocuSage helps users chat with their own documents from a desktop app without forcing them into a cloud-first workflow. It combines local document ingestion, semantic retrieval, and AI-generated answers so private files become searchable and conversational.
+
+## 2. What makes this project technically interesting?
+
+The project is interesting because it is not just a chat UI. It combines a React frontend, a Rust desktop backend with Tauri, local GGUF model inference, local embeddings, a vector database, PDF parsing, and an optional hybrid cloud answer path. The main challenge is getting all of those parts to work together reliably on a user machine.
+
+## 3. Why did you choose Tauri instead of Electron?
+
+I chose Tauri because I wanted a smaller desktop footprint and tighter integration with a Rust backend. Since the retrieval, ingestion, and model orchestration logic already fit well in Rust, Tauri was a better architectural match than adding a separate Node-based desktop runtime.
+
+## 4. Why is the backend written in Rust?
+
+Rust gave me strong control over performance, error handling, and native integration. It was a good fit for model orchestration, file-system access, PDF ingestion, vector search plumbing, and streaming response handling in a desktop app.
+
+## 5. How does the RAG pipeline work?
+
+The pipeline is: parse PDF text, split it into chunks, generate embeddings locally with `fastembed`, store vectors in LanceDB, embed the user question, retrieve the top matching chunks, and then build a grounded prompt from those chunks before answer generation.
+
+## 6. What is the hybrid Gemini mode?
+
+Hybrid mode keeps ingestion, embeddings, and retrieval local, but sends the retrieved excerpts plus the user question to Gemini 2.5 Flash for final answer generation. I added this because local smaller models were retrieving the right context but still underperforming on synthesis quality.
+
+## 7. How do you protect user privacy?
+
+The privacy boundary is explicit. In local mode, everything stays on-device. In hybrid mode, the app still indexes and searches documents locally, and only the retrieved excerpts needed for the answer are sent to Gemini. That is a more defensible design than uploading whole documents by default.
+
+## 8. What was the hardest engineering challenge?
+
+One of the hardest problems was separating retrieval quality from generation quality. Initially, it looked like the RAG system was failing, but deeper debugging showed retrieval was actually working and the local model was the weaker link. That led to the hybrid architecture and better observability in the retrieval path.
+
+## 9. How did you debug hallucination issues?
+
+I made the retrieval path loud instead of silent. I added stronger logging around chunk retrieval, forced the prompt to confirm how many chunks were received, and removed silent fallback behavior when zero chunks were returned. That made it clear whether the problem was retrieval, prompt construction, or model behavior.
+
+## 10. What are the strongest product decisions in this project?
+
+The strongest decisions are the local-first architecture, the optional hybrid fallback instead of a full cloud dependency, and the desktop-first UX. Those choices make the product more practical for users who care about privacy but still want high-quality answers when local models are not enough.
+
+## 11. What would you improve next?
+
+I would improve evaluation and observability further, add structured tests around retrieval quality, support more document types, and make prompt assembly more configurable. I would also improve release automation so installer versioning and release assets stay perfectly aligned.
+
+## 12. What does this project say about your engineering style?
+
+It shows that I like to build end-to-end systems, not isolated demos. I am comfortable moving across product thinking, UX, frontend work, Rust backend logic, debugging model behavior, release engineering, and making tradeoffs between privacy, cost, and answer quality.
+
+## 13. How would you explain this project in one sentence?
+
+DocuSage is a local-first desktop AI assistant that turns private PDFs into a searchable, conversational knowledge base with an optional hybrid reasoning layer for better answer quality.
+
+## 14. What is a good recruiter summary for this project?
+
+This project demonstrates full-stack product engineering across React, Rust, desktop delivery, retrieval-augmented generation, local model inference, API integration, and release automation. It is a strong example of building a real AI product with technical tradeoffs, not just calling an LLM from a web page.
