@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Moon, Sun, Settings, Database, Plus, FileText, Send, Paperclip, AlertCircle, Trash2, X, MessageSquare, Square, CheckCircle, Key } from 'lucide-react';
+import { Moon, Sun, Settings, Database, Plus, FileText, Send, Paperclip, AlertCircle, Trash2, X, MessageSquare, Square, CheckCircle, Key, Download, Cpu } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { chatGeneral, chatRag, chatGeminiRag, ingestDocument, isTauri, loadModel, stopChat, GEMINI_KEY_STORAGE, type ChatHistoryMessage, type IngestResult } from './lib/api';
 import './App.css';
@@ -38,6 +39,77 @@ type PersistedAppState = {
 
 const STORAGE_KEY = 'docusage:app-state:v1';
 const DEFAULT_CHAT_ID = 'default';
+
+type ModelCatalogEntry = {
+  id: string;
+  name: string;
+  size: string;
+  description: string;
+  downloadUrl: string;
+  recommended?: boolean;
+};
+
+// Each entry links to a known-good GGUF (Q4_K_M where available) on
+// HuggingFace. Sizes are the on-disk size of that quantization.
+const MODEL_CATALOG: ModelCatalogEntry[] = [
+  {
+    id: 'qwen2.5-0.5b',
+    name: 'Qwen 2.5 0.5B',
+    size: '~380 MB',
+    description: 'Ultra-fast model for basic tasks. Great for low-end hardware and quick lookups when speed matters more than depth.',
+    downloadUrl: 'https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF',
+  },
+  {
+    id: 'llama-3.2-1b',
+    name: 'Llama 3.2 1B',
+    size: '~700 MB',
+    description: "Compact model great for quick tasks and chat. One of Meta's smallest instruction-tuned models with fast responses and reasonable quality.",
+    downloadUrl: 'https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF',
+    recommended: true,
+  },
+  {
+    id: 'qwen2.5-1.5b',
+    name: 'Qwen 2.5 1.5B',
+    size: '~940 MB',
+    description: "Strong multilingual support and reasoning ability for its size. A solid balance of speed and capability across many languages.",
+    downloadUrl: 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF',
+  },
+  {
+    id: 'smollm2-1.7b',
+    name: 'SmolLM2 1.7B',
+    size: '~1.0 GB',
+    description: "HuggingFace's own small language model, designed for efficiency. Punches above its weight with strong general knowledge and fast inference on mobile devices.",
+    downloadUrl: 'https://huggingface.co/HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF',
+  },
+  {
+    id: 'gemma-2-2b',
+    name: 'Gemma 2 2B',
+    size: '~1.5 GB',
+    description: "Google's lightweight model optimized specifically for on-device deployment. Excellent balance of quality and speed, built with mobile-first design.",
+    downloadUrl: 'https://huggingface.co/bartowski/gemma-2-2b-it-GGUF',
+  },
+  {
+    id: 'qwen2.5-3b',
+    name: 'Qwen 2.5 3B',
+    size: '~1.8 GB',
+    description: 'Capable model for complex tasks. Better reasoning, longer-context understanding, and improved multi-turn dialogue.',
+    downloadUrl: 'https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF',
+  },
+  {
+    id: 'llama-3.2-3b',
+    name: 'Llama 3.2 3B',
+    size: '~2.0 GB',
+    description: "Meta's best small model for mobile. Strong reasoning, creative writing, and conversational ability. Recommended for most users with a modern laptop.",
+    downloadUrl: 'https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF',
+  },
+  {
+    id: 'phi-3.5-mini',
+    name: 'Phi-3.5 Mini',
+    size: '~2.2 GB',
+    description: "Microsoft's compact powerhouse, trained on high-quality data including code. Exceptional at programming tasks, debugging, and technical explanations.",
+    downloadUrl: 'https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF',
+  },
+];
 
 const createEmptyChat = (id = DEFAULT_CHAT_ID): GeneralChat => ({
   id,
@@ -135,6 +207,7 @@ export default function App() {
   const [isModelReady, setIsModelReady] = useState(!isTauri());
   const [modelStatus, setModelStatus] = useState<string>(isTauri() ? 'Model not loaded' : 'Browser preview mode');
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<'models' | 'apiKey'>('models');
   const [geminiKey, setGeminiKey] = useState<string>(() => {
     try { return window.localStorage.getItem(GEMINI_KEY_STORAGE) ?? ''; } catch { return ''; }
   });
@@ -545,11 +618,11 @@ export default function App() {
           </div>
 
           <button
-            onClick={() => setShowSettings(true)}
+            onClick={() => { setSettingsTab('models'); setShowSettings(true); }}
             className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-400 hover:text-zinc-200 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50'} ${geminiKey.trim() ? (isDark ? 'border-emerald-500/50 text-emerald-400' : 'border-emerald-400 text-emerald-600') : ''}`}
-            title={geminiKey.trim() ? 'Settings (Gemini key set)' : 'Settings'}
+            title={geminiKey.trim() ? 'Settings (Gemini key set)' : 'Settings — models & API key'}
           >
-            <Key size={16} />
+            <Settings size={16} />
           </button>
 
           {isTauri() && (
@@ -571,61 +644,129 @@ export default function App() {
 
       {/* Settings Modal */}
       {showSettings && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowSettings(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => setShowSettings(false)}>
           <div
-            className={`w-full max-w-md rounded-2xl shadow-2xl border p-6 ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c]' : 'bg-white border-zinc-200'}`}
+            className={`w-full max-w-2xl max-h-[85vh] flex flex-col rounded-2xl shadow-2xl border ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c]' : 'bg-white border-zinc-200'}`}
             onClick={e => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between mb-5">
+            <div className={`flex items-center justify-between px-6 py-4 border-b ${isDark ? 'border-[#2a2a2c]' : 'border-zinc-200'}`}>
               <h2 className="text-lg font-semibold">Settings</h2>
               <button onClick={() => setShowSettings(false)} className={`p-1.5 rounded-lg transition-colors ${isDark ? 'hover:bg-[#2a2a2c]' : 'hover:bg-zinc-100'}`}><X size={18} /></button>
             </div>
 
-            <div className="space-y-4">
-              <div>
-                <label className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>Gemini API Key</label>
-                <p className={`text-xs mb-2 ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                  When set, RAG document questions use the Gemini API instead of the local LLM for higher quality answers.
-                </p>
-                <input
-                  type="password"
-                  value={geminiKey}
-                  onChange={e => setGeminiKey(e.target.value)}
-                  placeholder="AIzaSy..."
-                  className={`w-full px-3 py-2.5 rounded-xl border text-sm transition-colors focus:outline-none focus:ring-2 ${
-                    isDark
-                      ? 'bg-[#232325] border-[#2a2a2c] text-zinc-100 placeholder:text-zinc-600 focus:ring-white/30'
-                      : 'bg-zinc-50 border-zinc-200 text-zinc-900 placeholder:text-zinc-400 focus:ring-[#0F2854]/30'
-                  }`}
-                />
-              </div>
+            {/* Tabs */}
+            <div className={`flex gap-1 px-6 pt-3 border-b ${isDark ? 'border-[#2a2a2c]' : 'border-zinc-200'}`}>
+              <button
+                onClick={() => setSettingsTab('models')}
+                className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${settingsTab === 'models' ? (isDark ? 'border-emerald-500 text-emerald-400' : 'border-[#0F2854] text-[#0F2854]') : 'border-transparent text-zinc-500 hover:text-zinc-300'}`}
+              >
+                <Cpu size={14} /> Models
+              </button>
+              <button
+                onClick={() => setSettingsTab('apiKey')}
+                className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${settingsTab === 'apiKey' ? (isDark ? 'border-emerald-500 text-emerald-400' : 'border-[#0F2854] text-[#0F2854]') : 'border-transparent text-zinc-500 hover:text-zinc-300'}`}
+              >
+                <Key size={14} /> API Key
+              </button>
+            </div>
 
-              <div className="flex items-center gap-3 pt-2">
-                <button
-                  onClick={() => {
-                    try { window.localStorage.setItem(GEMINI_KEY_STORAGE, geminiKey.trim()); } catch {}
-                    setShowSettings(false);
-                  }}
-                  className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-colors ${isDark ? 'bg-white text-zinc-900 hover:bg-zinc-200' : 'bg-[#0F2854] text-white hover:bg-[#0a1b38]'}`}
-                >
-                  Save
-                </button>
-                <button
-                  onClick={() => {
-                    setGeminiKey('');
-                    try { window.localStorage.removeItem(GEMINI_KEY_STORAGE); } catch {}
-                    setShowSettings(false);
-                  }}
-                  className={`px-4 py-2.5 rounded-xl text-sm font-medium border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-400 hover:text-zinc-200 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50'}`}
-                >
-                  Clear Key
-                </button>
-              </div>
+            <div className="overflow-y-auto p-6">
+              {settingsTab === 'models' && (
+                <div>
+                  <p className={`text-xs mb-4 ${isDark ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                    Choose a local model to download. Click the download icon to open the model's HuggingFace page in your browser, then place the GGUF file in your DocuSage models folder and click <span className="font-medium">Retry Model Load</span>.
+                  </p>
+                  <div className="space-y-3">
+                    {MODEL_CATALOG.map((m) => (
+                      <div
+                        key={m.id}
+                        className={`flex items-start justify-between gap-4 p-4 rounded-xl border transition-colors ${isDark ? 'bg-[#232325] border-[#2a2a2c] hover:border-[#3a3a3c]' : 'bg-zinc-50 border-zinc-200 hover:border-zinc-300'}`}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap mb-1">
+                            <h3 className={`font-semibold ${isDark ? 'text-zinc-100' : 'text-zinc-900'}`}>{m.name}</h3>
+                            {m.recommended && (
+                              <span className={`text-[10px] font-bold tracking-wider px-1.5 py-0.5 rounded ${isDark ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-emerald-100 text-emerald-700 border border-emerald-300'}`}>
+                                RECOMMENDED
+                              </span>
+                            )}
+                          </div>
+                          <p className={`text-xs leading-relaxed ${isDark ? 'text-zinc-400' : 'text-zinc-600'}`}>{m.description}</p>
+                        </div>
+                        <div className="flex flex-col items-end gap-2 shrink-0">
+                          <span className={`text-xs font-medium ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>{m.size}</span>
+                          <button
+                            onClick={async () => {
+                              try {
+                                if (isTauri()) {
+                                  await openUrl(m.downloadUrl);
+                                } else {
+                                  window.open(m.downloadUrl, '_blank', 'noopener,noreferrer');
+                                }
+                              } catch (err) {
+                                showError(`Could not open browser: ${err}`);
+                              }
+                            }}
+                            title={`Download ${m.name} from HuggingFace`}
+                            className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-[#3a3a3c] text-emerald-400 hover:bg-emerald-500/10 hover:border-emerald-500/50' : 'border-zinc-300 text-emerald-600 hover:bg-emerald-50 hover:border-emerald-400'}`}
+                          >
+                            <Download size={16} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
-              {geminiKey.trim() && (
-                <p className="text-xs text-emerald-500 flex items-center gap-1.5">
-                  <CheckCircle size={14} /> Gemini hybrid mode active for RAG questions.
-                </p>
+              {settingsTab === 'apiKey' && (
+                <div className="space-y-4">
+                  <div>
+                    <label className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>Gemini API Key</label>
+                    <p className={`text-xs mb-2 ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                      When set, RAG document questions use the Gemini API instead of the local LLM for higher quality answers.
+                    </p>
+                    <input
+                      type="password"
+                      value={geminiKey}
+                      onChange={e => setGeminiKey(e.target.value)}
+                      placeholder="AIzaSy..."
+                      className={`w-full px-3 py-2.5 rounded-xl border text-sm transition-colors focus:outline-none focus:ring-2 ${
+                        isDark
+                          ? 'bg-[#232325] border-[#2a2a2c] text-zinc-100 placeholder:text-zinc-600 focus:ring-white/30'
+                          : 'bg-zinc-50 border-zinc-200 text-zinc-900 placeholder:text-zinc-400 focus:ring-[#0F2854]/30'
+                      }`}
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-3 pt-2">
+                    <button
+                      onClick={() => {
+                        try { window.localStorage.setItem(GEMINI_KEY_STORAGE, geminiKey.trim()); } catch {}
+                        setShowSettings(false);
+                      }}
+                      className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-colors ${isDark ? 'bg-white text-zinc-900 hover:bg-zinc-200' : 'bg-[#0F2854] text-white hover:bg-[#0a1b38]'}`}
+                    >
+                      Save
+                    </button>
+                    <button
+                      onClick={() => {
+                        setGeminiKey('');
+                        try { window.localStorage.removeItem(GEMINI_KEY_STORAGE); } catch {}
+                        setShowSettings(false);
+                      }}
+                      className={`px-4 py-2.5 rounded-xl text-sm font-medium border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-400 hover:text-zinc-200 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50'}`}
+                    >
+                      Clear Key
+                    </button>
+                  </div>
+
+                  {geminiKey.trim() && (
+                    <p className="text-xs text-emerald-500 flex items-center gap-1.5">
+                      <CheckCircle size={14} /> Gemini hybrid mode active for RAG questions.
+                    </p>
+                  )}
+                </div>
               )}
             </div>
           </div>

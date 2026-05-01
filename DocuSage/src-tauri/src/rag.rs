@@ -108,49 +108,138 @@ pub fn extract_text_from_pdf(file_path: &Path) -> Result<String, String> {
 // 2. Text chunking
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Split `text` into overlapping chunks of approximately `chunk_size` characters.
+/// Split `text` into overlapping, sentence-aware chunks of roughly
+/// `chunk_size` characters with `overlap` characters of overlap between
+/// neighbouring chunks.
 ///
 /// # Strategy
-/// A simple sliding-window approach:
-/// - Normalize whitespace (collapse runs of whitespace into single spaces).
-/// - Advance by `chunk_size - overlap` characters per iteration.
-/// - Each chunk is exactly `chunk_size` characters (except possibly the last).
+/// Recursive-character splitting along natural boundaries (paragraph →
+/// sentence → word → char). This keeps semantic units intact, which
+/// dramatically improves retrieval quality compared to a fixed char window
+/// that splits mid-sentence.
 ///
-/// # Panics / edge cases
-/// - If `chunk_size == 0` or `overlap >= chunk_size`, returns a single chunk
-///   containing the full (trimmed) text to avoid infinite loops.
-/// - Empty input produces an empty `Vec`.
+/// 1. Normalize whitespace within paragraphs but preserve paragraph breaks.
+/// 2. Greedily pack paragraphs/sentences into chunks up to ~`chunk_size`
+///    characters.
+/// 3. Carry a tail of `overlap` characters (snapped to a sentence boundary
+///    where possible) into the next chunk so context isn't lost at boundaries.
 pub fn chunk_text(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
-    // Normalize whitespace: collapse runs of \n, \t, spaces into one space.
-    let normalized: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
-
-    if normalized.is_empty() {
+    if text.trim().is_empty() {
         return Vec::new();
     }
+    if chunk_size == 0 {
+        return vec![text.trim().to_string()];
+    }
+    let overlap = overlap.min(chunk_size.saturating_sub(1));
 
-    // Guard against degenerate parameters.
-    if chunk_size == 0 || overlap >= chunk_size {
-        return vec![normalized];
+    // Split on blank lines first to preserve paragraph structure, then
+    // collapse internal whitespace within each paragraph.
+    let paragraphs: Vec<String> = text
+        .split("\n\n")
+        .map(|p| p.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|p| !p.is_empty())
+        .collect();
+
+    // Break paragraphs that exceed chunk_size into sentences.
+    let mut units: Vec<String> = Vec::new();
+    for para in paragraphs {
+        if para.chars().count() <= chunk_size {
+            units.push(para);
+        } else {
+            units.extend(split_into_sentences(&para, chunk_size));
+        }
     }
 
-    let step = chunk_size - overlap;
-    let chars: Vec<char> = normalized.chars().collect();
-    let mut chunks = Vec::new();
-    let mut start = 0;
+    // Greedy pack units into chunks, with a sentence-aligned overlap tail.
+    let mut chunks: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut current_len = 0usize;
 
-    while start < chars.len() {
-        let end = (start + chunk_size).min(chars.len());
-        let chunk: String = chars[start..end].iter().collect();
-        chunks.push(chunk);
+    for unit in units {
+        let unit_len = unit.chars().count();
+        let sep_len = if current.is_empty() { 0 } else { 1 };
 
-        // Advance; if end already reached the tail, stop.
-        if end == chars.len() {
-            break;
+        if current_len + sep_len + unit_len > chunk_size && !current.is_empty() {
+            chunks.push(std::mem::take(&mut current));
+            // Seed the next chunk with the overlap tail of the previous one.
+            if overlap > 0 {
+                let last = chunks.last().unwrap();
+                let tail = take_tail(last, overlap);
+                current.push_str(&tail);
+                current_len = current.chars().count();
+            } else {
+                current_len = 0;
+            }
         }
-        start += step;
+
+        if !current.is_empty() {
+            current.push(' ');
+            current_len += 1;
+        }
+        current.push_str(&unit);
+        current_len += unit_len;
+    }
+
+    if !current.trim().is_empty() {
+        chunks.push(current);
     }
 
     chunks
+}
+
+/// Split a long paragraph into sentence-sized fragments, falling back to a
+/// hard char-window split for any sentence that itself exceeds `max_len`.
+fn split_into_sentences(paragraph: &str, max_len: usize) -> Vec<String> {
+    let mut sentences: Vec<String> = Vec::new();
+    let mut buf = String::new();
+    for ch in paragraph.chars() {
+        buf.push(ch);
+        if matches!(ch, '.' | '!' | '?') {
+            let trimmed = buf.trim().to_string();
+            if !trimmed.is_empty() {
+                sentences.push(trimmed);
+            }
+            buf.clear();
+        }
+    }
+    let tail = buf.trim().to_string();
+    if !tail.is_empty() {
+        sentences.push(tail);
+    }
+
+    let mut out = Vec::new();
+    for s in sentences {
+        if s.chars().count() <= max_len {
+            out.push(s);
+        } else {
+            // Hard-split overlong sentences as a last resort.
+            let chars: Vec<char> = s.chars().collect();
+            for window in chars.chunks(max_len) {
+                out.push(window.iter().collect());
+            }
+        }
+    }
+    out
+}
+
+/// Take the last `n` characters of `s`, snapping to a sentence boundary
+/// when one falls within the tail so the overlap reads cleanly.
+fn take_tail(s: &str, n: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let total = chars.len();
+    if total <= n {
+        return s.to_string();
+    }
+    let start = total - n;
+    let tail: String = chars[start..].iter().collect();
+    if let Some(idx) = tail.find(['.', '!', '?']) {
+        let after: String = tail.chars().skip(idx + 1).collect();
+        let trimmed = after.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    tail
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -364,11 +453,18 @@ pub async fn query_similar(
     println!("[rag-query] DB path: {}", db_path.display());
 
     // ── 1. Embed the query ──────────────────────────────────────────────
+    // BGE retrieval models are trained with an asymmetric instruction: the
+    // query is prefixed, the passages are not. Skipping this prefix is a
+    // common silent quality regression — relevance scores drop ~5-10 %.
     let model = get_embedding()?;
     println!("[rag-query] Embedding model ready, generating query vector...");
 
+    let prefixed_query = format!(
+        "Represent this sentence for searching relevant passages: {}",
+        query
+    );
     let embeddings = model
-        .embed(vec![query.to_string()], None)
+        .embed(vec![prefixed_query], None)
         .map_err(|e| format!("Query embedding failed: {e}"))?;
 
     let query_vec: Vec<f32> = embeddings
@@ -419,10 +515,14 @@ pub async fn query_similar(
     use lancedb::query::{ExecutableQuery, QueryBase};
     use futures_util::TryStreamExt;
 
+    // Over-fetch so we can dedup near-duplicate chunks (common when the
+    // same paragraph appears multiple times due to overlap or boilerplate)
+    // before returning the final top_k.
+    let fetch_k = (top_k * 3).max(top_k + 5);
     let stream = table
         .vector_search(query_vec)
         .map_err(|e| format!("Vector search setup failed: {e}"))?
-        .limit(top_k)
+        .limit(fetch_k)
         .execute()
         .await
         .map_err(|e| format!("Vector search execution failed: {e}"))?;
@@ -465,12 +565,48 @@ pub async fn query_similar(
         }
     }
 
+    // Dedup near-duplicate chunks (Jaccard on the first ~80 tokens) — keeps
+    // the LLM context diverse so we don't waste budget on copies of the
+    // same paragraph from overlapping windows or repeated boilerplate.
+    output = dedup_chunks(output, top_k);
+
     println!("[rag-query] Vector search returned {} chunks", output.len());
     if !output.is_empty() {
         println!("[rag-query] First chunk preview: {:?}", &output[0].0[..output[0].0.len().min(150)]);
     }
 
     Ok(output)
+}
+
+/// Drop chunks that are near-duplicates of an already-selected chunk so the
+/// final context window contains diverse evidence rather than copies of the
+/// same paragraph. Order is preserved (highest similarity first).
+fn dedup_chunks(
+    chunks: Vec<(String, String)>,
+    keep: usize,
+) -> Vec<(String, String)> {
+    let mut selected_tokens: Vec<std::collections::HashSet<String>> = Vec::new();
+    let mut out: Vec<(String, String)> = Vec::new();
+    for (text, src) in chunks {
+        let toks: std::collections::HashSet<String> = text
+            .split_whitespace()
+            .take(80)
+            .map(|t| t.to_lowercase())
+            .collect();
+        let dup = selected_tokens.iter().any(|prev| {
+            let inter = toks.intersection(prev).count() as f32;
+            let union = toks.union(prev).count().max(1) as f32;
+            (inter / union) > 0.7
+        });
+        if !dup {
+            selected_tokens.push(toks);
+            out.push((text, src));
+            if out.len() >= keep {
+                break;
+            }
+        }
+    }
+    out
 }
 
 /// Count the total number of rows in the `documents` table.

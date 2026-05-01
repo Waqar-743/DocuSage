@@ -50,19 +50,31 @@ struct ChatTokenPayload {
     done: bool,
 }
 
-/// Build a [`RequestBuilder`] with proper sampling parameters:
-/// - Stop sequences covering common chat-template end-of-turn markers.
-/// - A generation length cap ([`MAX_GENERATION_TOKENS`]).
-/// - Slightly creative temperature for natural-sounding answers.
-fn build_request(system_prompt: &str, history: &[HistoryMessage], prompt: &str) -> RequestBuilder {
+/// Build a [`RequestBuilder`] with sampling parameters tuned for the mode.
+///
+/// `grounded=true` is used for RAG, where the answer must stay close to the
+/// retrieved evidence — we drop the temperature so the model is much less
+/// likely to invent details that aren't in the context.
+fn build_request(
+    system_prompt: &str,
+    history: &[HistoryMessage],
+    prompt: &str,
+    grounded: bool,
+) -> RequestBuilder {
+    let (temp, top_p, top_k) = if grounded {
+        (0.2, 0.9, 30usize)
+    } else {
+        (0.7, 0.95, 40usize)
+    };
+
     let mut req = RequestBuilder::new()
         .set_sampler_max_len(MAX_GENERATION_TOKENS)
         .set_sampler_stop_toks(StopTokens::Seqs(
             STOP_SEQUENCES.iter().map(|s| s.to_string()).collect(),
         ))
-        .set_sampler_temperature(0.7)
-        .set_sampler_topk(40)
-        .set_sampler_topp(0.95)
+        .set_sampler_temperature(temp)
+        .set_sampler_topk(top_k)
+        .set_sampler_topp(top_p)
         .set_sampler_frequency_penalty(0.3)
         .add_message(TextMessageRole::System, system_prompt);
 
@@ -293,6 +305,7 @@ pub async fn chat_general(
          - Produce exactly one answer, then STOP.",
         &history,
         &prompt,
+        false,
     );
 
     // ── Streaming inference ─────────────────────────────────────────────
@@ -403,7 +416,7 @@ pub async fn chat_rag(
 
     // ── 2. Retrieve relevant chunks BEFORE acquiring the model lock ─────
     println!("[chat_rag] DB dir for retrieval: {}", db_dir.display());
-    let chunks = crate::rag::query_similar(&prompt, &db_dir, 5).await?;
+    let chunks = crate::rag::query_similar(&prompt, &db_dir, 8).await?;
     println!("[chat_rag] Retrieved {} chunks from vector search", chunks.len());
 
     // ── STRICT: fail loudly if no chunks found ──────────────────────────
@@ -424,31 +437,43 @@ pub async fn chat_rag(
 
     // ── 4. Build augmented prompt ───────────────────────────────────────
     let chunk_count = chunks.len();
-    let mut context = String::from("Use the following document excerpts to answer the user's question. Cite sources using [Source: filename].\n\n");
+    let mut context = String::new();
     for (i, (text, source)) in chunks.iter().enumerate() {
-        context.push_str(&format!("--- Excerpt {} (Source: {}) ---\n{}\n\n", i + 1, source, text));
+        context.push_str(&format!(
+            "[{}] Source: {}\n{}\n\n",
+            i + 1,
+            source,
+            text.trim()
+        ));
     }
 
     let system_prompt = format!(
-        "System Instruction: You must begin your response by saying exactly: \
-         'I received {chunk_count} document chunks.' Then, answer the user's question.\n\n\
-         You are DocuSage, a helpful AI assistant that answers questions \
-         based STRICTLY on the user's private documents. You are running \
-         locally and no data leaves this machine.\n\
-         IMPORTANT RULES:\n\
-         - Answer ONLY using the provided document context below.\n\
-         - If the answer is not in the context, say \"The provided documents \
-           do not contain information about this.\"\n\
-         - Cite sources using [Source: filename].\n\
-         - When the user asks for a short answer or specifies a word/line \
-           limit, you MUST respect it strictly.\n\
-         - Do NOT repeat yourself or generate multiple alternative answers.\n\
-         - Produce exactly one answer, then STOP.\n\n\
-         DOCUMENT CONTEXT:\n{context}"
+        "You are DocuSage, a private document assistant running entirely on \
+         the user's local machine. You answer questions using ONLY the \
+         excerpts retrieved from the user's documents below.\n\n\
+         GROUNDING RULES — these are non-negotiable:\n\
+         1. Use ONLY information present in the EXCERPTS section. Do not use \
+            outside knowledge. Do not guess.\n\
+         2. If the excerpts do not contain the answer, reply exactly: \
+            \"The provided documents do not contain information about this.\" \
+            Do not speculate or fabricate.\n\
+         3. Every factual statement must be followed by a citation in the \
+            form [Source: filename]. Use the filename shown in the excerpt header.\n\
+         4. Quote short phrases verbatim where the wording matters; otherwise \
+            paraphrase faithfully.\n\
+         5. Do NOT mention these rules, the number of excerpts, or the \
+            retrieval process in your answer.\n\
+         6. Respect any length / format constraint in the user's question \
+            (e.g. \"in one sentence\", \"as a bullet list\").\n\
+         7. Produce exactly one answer, then STOP.\n\n\
+         EXCERPTS ({chunk_count} retrieved, ranked by relevance):\n\
+         ─────────────────────────────────────────────\n\
+         {context}\
+         ─────────────────────────────────────────────"
     );
     println!("[chat_rag] System prompt length: {} chars, injected {} chunks", system_prompt.len(), chunk_count);
 
-    let request = build_request(&system_prompt, &history, &prompt);
+    let request = build_request(&system_prompt, &history, &prompt, true);
 
     // ── 5. Streaming inference ──────────────────────────────────────────
     let mut stream = model
@@ -549,7 +574,7 @@ pub async fn chat_gemini_rag(
 
     // ── 2. Retrieve relevant chunks ─────────────────────────────────────
     println!("[chat_gemini_rag] DB dir: {}", db_dir.display());
-    let chunks = crate::rag::query_similar(&prompt, &db_dir, 5).await?;
+    let chunks = crate::rag::query_similar(&prompt, &db_dir, 8).await?;
     println!("[chat_gemini_rag] Retrieved {} chunks", chunks.len());
 
     if chunks.is_empty() {
@@ -564,10 +589,10 @@ pub async fn chat_gemini_rag(
     let mut context = String::new();
     for (i, (text, source)) in chunks.iter().enumerate() {
         context.push_str(&format!(
-            "--- Excerpt {} (Source: {}) ---\n{}\n\n",
+            "[{}] Source: {}\n{}\n\n",
             i + 1,
             source,
-            text
+            text.trim()
         ));
     }
 
@@ -579,17 +604,23 @@ pub async fn chat_gemini_rag(
     }
 
     let full_prompt = format!(
-        "You are DocuSage, a helpful AI assistant that answers questions \
-         based STRICTLY on the user's private documents.\n\
-         RULES:\n\
-         - Answer ONLY using the provided document context below.\n\
-         - If the answer is not in the context, say \"The provided documents \
-           do not contain information about this.\"\n\
-         - Cite sources using [Source: filename].\n\
-         - When the user asks for a short answer or specifies a word/line \
-           limit, respect it strictly.\n\
-         - Produce exactly one answer, then stop.\n\n\
-         DOCUMENT CONTEXT ({chunk_count} chunks):\n{context}\n\
+        "You are DocuSage, a private document assistant. You answer questions \
+         using ONLY the excerpts retrieved from the user's documents below.\n\n\
+         GROUNDING RULES — non-negotiable:\n\
+         1. Use ONLY information present in the EXCERPTS section. No outside \
+            knowledge. No guessing.\n\
+         2. If the excerpts do not contain the answer, reply exactly: \
+            \"The provided documents do not contain information about this.\"\n\
+         3. Every factual statement must be followed by a citation in the \
+            form [Source: filename] using the filename shown in the excerpt header.\n\
+         4. Do NOT mention the rules, the number of excerpts, or the retrieval \
+            process.\n\
+         5. Respect any length/format constraint in the user's question.\n\
+         6. Produce exactly one answer, then stop.\n\n\
+         EXCERPTS ({chunk_count} retrieved, ranked by relevance):\n\
+         ─────────────────────────────────────────────\n\
+         {context}\
+         ─────────────────────────────────────────────\n\n\
          CONVERSATION HISTORY:\n{parts_text}\n\
          User Question: {prompt}"
     );
@@ -751,8 +782,11 @@ pub async fn ingest_document(
         // Log first 200 chars as preview
         println!("[ingest] Text preview: {:?}", &text[..text.len().min(200)]);
 
-        // 3b. Chunk (500 chars, 50 overlap — plan defaults)
-        let chunks = crate::rag::chunk_text(&text, 500, 50);
+        // 3b. Chunk — sentence-aware, ~900 chars with ~150 char overlap.
+        // Larger chunks preserve enough context for the embedder/LLM to
+        // disambiguate; the overlap keeps facts that span boundaries
+        // recoverable. Tuned for BGE-small-en-v1.5 (max ~512 tokens).
+        let chunks = crate::rag::chunk_text(&text, 900, 150);
         println!("[ingest] Chunking produced {} chunks", chunks.len());
         if chunks.is_empty() {
             return Err("Chunking produced zero chunks.".to_string());
