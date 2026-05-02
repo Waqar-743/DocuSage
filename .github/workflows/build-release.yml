@@ -6,9 +6,6 @@ on:
       tag:
         description: Release tag to build and upload assets for
         required: true
-        default: v0.3.1
-  release:
-    types: [created]
 
 permissions:
   contents: write
@@ -50,8 +47,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: DocuSage
-          tagName: ${{ inputs.tag || github.event.release.tag_name }}
-          releaseName: "DocuSage ${{ inputs.tag || github.event.release.tag_name }}"
+          tagName: ${{ inputs.tag }}
+          releaseName: "DocuSage ${{ inputs.tag }}"
           releaseBody: ""
           releaseDraft: false
           prerelease: false

@@ -10,22 +10,8 @@ permissions:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: ubuntu-22.04
-            label: Linux
-            args: ''
-          - platform: windows-latest
-            label: Windows
-            args: ''
-          - platform: macos-latest
-            label: macOS (Apple Silicon)
-            args: ''
-
-    name: Build (${{ matrix.label }})
-    runs-on: ${{ matrix.platform }}
+    name: Build (Windows)
+    runs-on: windows-latest
 
     steps:
       - name: Checkout
@@ -41,28 +27,16 @@ jobs:
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install Protobuf compiler
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "28.x"
+
       - name: Cache Rust build artifacts
         uses: swatinem/rust-cache@v2
         with:
           workspaces: DocuSage/src-tauri -> target
           cache-all-crates: true
-
-      # ── Linux only: install webkit2gtk and other native deps ───────────
-      - name: Install Linux system dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            libssl-dev \
-            pkg-config \
-            libxdo-dev \
-            libxcb1-dev \
-            libxrandr-dev \
-            libdbus-1-dev
 
       - name: Install frontend dependencies
         working-directory: DocuSage
@@ -101,11 +75,8 @@ jobs:
             | Platform | File |
             |----------|------|
             | Windows | `.msi` or `.exe` installer |
-            | Linux | `.deb` package or `.AppImage` |
-            | macOS (Apple Silicon) | `.dmg` |
 
             > **First run:** place a GGUF model in Settings → Model Catalog → Download, then go to Settings → Downloaded → Connect Now.
           releaseDraft: false
           prerelease: false
           projectPath: DocuSage
-          args: ${{ matrix.args }}
