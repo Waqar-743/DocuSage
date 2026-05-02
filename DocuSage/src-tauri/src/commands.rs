@@ -758,8 +758,7 @@ pub fn stop_chat(
 ///
 /// # Arguments
 /// * `app`       — Tauri `AppHandle`, used to resolve `app_data_dir` for the DB.
-/// * `state`     — Managed `AppState` (reserved for future use, e.g. caching the
-///                 embedding model).
+/// * `state`     — Managed `AppState` used to read current RAG chunk settings.
 /// * `file_path` — Absolute or relative path to the PDF file to ingest.
 ///
 /// # Returns
@@ -775,7 +774,7 @@ pub fn stop_chat(
 #[tauri::command]
 pub async fn ingest_document(
     app: tauri::AppHandle,
-    _state: tauri::State<'_, AppState>,
+    state: tauri::State<'_, AppState>,
     file_path: String,
 ) -> Result<IngestResult, String> {
     // ── 1. Validate and canonicalize the input path ─────────────────────
