@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 
+use futures_util::StreamExt as _;
 use mistralrs::{
     ChatCompletionChunkResponse, ChunkChoice, Delta, GgufModelBuilder,
     RequestBuilder, Response, StopTokens, TextMessageRole,
@@ -8,6 +9,29 @@ use mistralrs::{
 use tauri::{Emitter, Manager};
 
 use crate::AppState;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Model management types
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct DownloadProgressPayload {
+    filename: String,
+    downloaded: u64,
+    total: u64,
+    percent: f32,
+    done: bool,
+    error: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadedModel {
+    pub filename: String,
+    pub path: String,
+    pub size_bytes: u64,
+}
 
 /// Maximum number of tokens the model may generate per response.
 /// This prevents runaway generation when the model fails to produce a stop token.
@@ -263,6 +287,13 @@ pub async fn load_model(
         *guard = Some(model);
     }
 
+    // Track which file is connected so the UI can highlight it.
+    if let Some(first) = gguf_files.first() {
+        if let Ok(mut cf) = state.connected_model_file.write() {
+            *cf = Some(first.clone());
+        }
+    }
+
     Ok(format!(
         "Model loaded from: {} (files: {})",
         resolved.display(),
@@ -414,9 +445,16 @@ pub async fn chat_rag(
         .or_else(|| dirs::data_local_dir().map(|p| p.join("DocuSage").join("lancedb")))
         .ok_or_else(|| "Cannot determine data directory.".to_string())?;
 
+    // ── 1b. Read RAG config ─────────────────────────────────────────────
+    let (top_k, show_context) = {
+        let cfg = state.rag_config.read()
+            .map_err(|e| format!("rag_config lock: {e}"))?;
+        (cfg.top_k, cfg.show_context)
+    };
+
     // ── 2. Retrieve relevant chunks BEFORE acquiring the model lock ─────
     println!("[chat_rag] DB dir for retrieval: {}", db_dir.display());
-    let chunks = crate::rag::query_similar(&prompt, &db_dir, 8).await?;
+    let chunks = crate::rag::query_similar(&prompt, &db_dir, top_k).await?;
     println!("[chat_rag] Retrieved {} chunks from vector search", chunks.len());
 
     // ── STRICT: fail loudly if no chunks found ──────────────────────────
@@ -539,7 +577,7 @@ pub async fn chat_rag(
 
     finish_request(&state, &request_id)?;
 
-    let full_reply = full_reply.trim().to_string();
+    let mut full_reply = full_reply.trim().to_string();
 
     if full_reply.is_empty() {
         return Ok(if stopped {
@@ -547,6 +585,21 @@ pub async fn chat_rag(
         } else {
             "No response generated.".to_string()
         });
+    }
+
+    // Optionally append the retrieved chunks for transparency / auditing.
+    if show_context && !stopped {
+        let mut ctx_block = String::from("\n\n---\n📚 Retrieved Context\n");
+        for (i, (text, source)) in chunks.iter().enumerate() {
+            let preview_len = text.len().min(300);
+            let preview = &text[..preview_len];
+            let ellipsis = if text.len() > 300 { "…" } else { "" };
+            ctx_block.push_str(&format!(
+                "\n[{}] {}\n{}{}\n",
+                i + 1, source, preview, ellipsis
+            ));
+        }
+        full_reply.push_str(&ctx_block);
     }
 
     Ok(full_reply)
@@ -559,6 +612,7 @@ pub async fn chat_rag(
 #[tauri::command]
 pub async fn chat_gemini_rag(
     app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
     api_key: String,
     prompt: String,
     history: Vec<HistoryMessage>,
@@ -572,9 +626,13 @@ pub async fn chat_gemini_rag(
         .or_else(|| dirs::data_local_dir().map(|p| p.join("DocuSage").join("lancedb")))
         .ok_or_else(|| "Cannot determine data directory.".to_string())?;
 
+    let top_k = state.rag_config.read()
+        .map_err(|e| format!("rag_config lock: {e}"))?
+        .top_k;
+
     // ── 2. Retrieve relevant chunks ─────────────────────────────────────
     println!("[chat_gemini_rag] DB dir: {}", db_dir.display());
-    let chunks = crate::rag::query_similar(&prompt, &db_dir, 8).await?;
+    let chunks = crate::rag::query_similar(&prompt, &db_dir, top_k).await?;
     println!("[chat_gemini_rag] Retrieved {} chunks", chunks.len());
 
     if chunks.is_empty() {
@@ -754,7 +812,14 @@ pub async fn ingest_document(
                 .to_string()
         })?;
 
-    // ── 3. Offload heavy work to a blocking thread ──────────────────────
+    // ── 3. Read chunk params from RAG config ────────────────────────────
+    let (chunk_size, chunk_overlap) = {
+        let cfg = state.rag_config.read()
+            .map_err(|e| format!("rag_config lock: {e}"))?;
+        (cfg.chunk_size, cfg.chunk_overlap)
+    };
+
+    // ── 4. Offload heavy work to a blocking thread ──────────────────────
     //   PDF parsing and embedding are CPU-bound; running them on the async
     //   executor would starve other Tauri commands.  `spawn_blocking` moves
     //   the closure onto a dedicated thread-pool thread.
@@ -763,6 +828,7 @@ pub async fn ingest_document(
 
     println!("[ingest] Starting ingestion for: {}", pdf_display);
     println!("[ingest] DB directory: {}", db_dir.display());
+    println!("[ingest] Chunk params: size={chunk_size}, overlap={chunk_overlap}");
 
     let result: Result<(usize, usize), String> = tauri::async_runtime::spawn_blocking(move || {
         // 3a. Extract text
@@ -782,11 +848,8 @@ pub async fn ingest_document(
         // Log first 200 chars as preview
         println!("[ingest] Text preview: {:?}", &text[..text.len().min(200)]);
 
-        // 3b. Chunk — sentence-aware, ~900 chars with ~150 char overlap.
-        // Larger chunks preserve enough context for the embedder/LLM to
-        // disambiguate; the overlap keeps facts that span boundaries
-        // recoverable. Tuned for BGE-small-en-v1.5 (max ~512 tokens).
-        let chunks = crate::rag::chunk_text(&text, 900, 150);
+        // 3b. Chunk — sentence-aware with configurable size and overlap.
+        let chunks = crate::rag::chunk_text(&text, chunk_size, chunk_overlap);
         println!("[ingest] Chunking produced {} chunks", chunks.len());
         if chunks.is_empty() {
             return Err("Chunking produced zero chunks.".to_string());
@@ -831,4 +894,384 @@ pub async fn ingest_document(
 
     println!("[ingest] Returning to frontend: file='{}', chunks={}, chars={}", file_name, chunk_count, char_count);
     Ok(IngestResult { file_name, chunk_count, char_count })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// download_model — in-app streaming model downloader
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Download a GGUF model file directly into the app's models directory,
+/// emitting `download-progress` events so the UI can show a live progress bar.
+#[tauri::command]
+pub async fn download_model(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    url: String,
+    filename: String,
+) -> Result<String, String> {
+    // Always download into the Tauri app-data models directory so the path is
+    // deterministic across sessions and the loader can find the file on startup.
+    let models_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Cannot resolve app data directory: {e}"))?
+        .join("models");
+
+    std::fs::create_dir_all(&models_dir)
+        .map_err(|e| format!("Cannot create models directory: {e}"))?;
+
+    // Keep model_path in sync so load_model / list_downloaded_models see it.
+    {
+        let mut mp = state
+            .model_path
+            .write()
+            .map_err(|e| format!("model_path lock: {e}"))?;
+        *mp = models_dir.clone();
+    }
+
+    let dest = models_dir.join(&filename);
+
+    // Helper to emit error progress event and return early.
+    let emit_error = |msg: String| -> Result<String, String> {
+        let _ = app.emit(
+            "download-progress",
+            DownloadProgressPayload {
+                filename: filename.clone(),
+                downloaded: 0,
+                total: 0,
+                percent: 0.0,
+                done: true,
+                error: Some(msg.clone()),
+            },
+        );
+        Err(msg)
+    };
+
+    let client = reqwest::Client::builder()
+        .build()
+        .map_err(|e| emit_error(format!("HTTP client error: {e}")).unwrap_err())?;
+
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| emit_error(format!("Request failed: {e}")).unwrap_err())?;
+
+    if !resp.status().is_success() {
+        return emit_error(format!("HTTP {} from server", resp.status()));
+    }
+
+    let total = resp.content_length().unwrap_or(0);
+
+    let mut file = tokio::fs::File::create(&dest)
+        .await
+        .map_err(|e| emit_error(format!("Cannot create file: {e}")).unwrap_err())?;
+
+    let mut downloaded = 0u64;
+    let mut byte_stream = resp.bytes_stream();
+
+    use tokio::io::AsyncWriteExt as _;
+    while let Some(chunk_result) = byte_stream.next().await {
+        let chunk = chunk_result
+            .map_err(|e| emit_error(format!("Download stream error: {e}")).unwrap_err())?;
+
+        file.write_all(&chunk)
+            .await
+            .map_err(|e| emit_error(format!("File write error: {e}")).unwrap_err())?;
+
+        downloaded += chunk.len() as u64;
+        let percent = if total > 0 {
+            downloaded as f32 / total as f32 * 100.0
+        } else {
+            0.0
+        };
+
+        let _ = app.emit(
+            "download-progress",
+            DownloadProgressPayload {
+                filename: filename.clone(),
+                downloaded,
+                total,
+                percent,
+                done: false,
+                error: None,
+            },
+        );
+    }
+
+    file.flush()
+        .await
+        .map_err(|e| emit_error(format!("Flush error: {e}")).unwrap_err())?;
+
+    let final_path = dest.to_string_lossy().to_string();
+
+    let _ = app.emit(
+        "download-progress",
+        DownloadProgressPayload {
+            filename: filename.clone(),
+            downloaded,
+            total,
+            percent: 100.0,
+            done: true,
+            error: None,
+        },
+    );
+
+    println!("[download_model] Saved to: {final_path}");
+    Ok(final_path)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// list_downloaded_models — enumerate all local .gguf files
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn list_downloaded_models(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<DownloadedModel>, String> {
+    let state_dir = state
+        .model_path
+        .read()
+        .map_err(|e| format!("Lock error: {e}"))?
+        .clone();
+
+    let app_dir = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .map(|p| p.join("models"));
+
+    let mut dirs_to_scan: Vec<PathBuf> = vec![state_dir.clone()];
+    if let Some(ref ad) = app_dir {
+        if *ad != state_dir {
+            dirs_to_scan.push(ad.clone());
+        }
+    }
+
+    let mut models: Vec<DownloadedModel> = Vec::new();
+    let mut seen = std::collections::HashSet::<String>::new();
+
+    for dir in &dirs_to_scan {
+        if !dir.is_dir() {
+            continue;
+        }
+        let entries = std::fs::read_dir(dir).map_err(|e| format!("Cannot read dir: {e}"))?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            if ext != "gguf" {
+                continue;
+            }
+            let filename = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if seen.contains(&filename) {
+                continue;
+            }
+            seen.insert(filename.clone());
+            let size_bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            models.push(DownloadedModel {
+                filename,
+                path: path.to_string_lossy().to_string(),
+                size_bytes,
+            });
+        }
+    }
+
+    models.sort_by(|a, b| a.filename.cmp(&b.filename));
+    Ok(models)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// connect_model — load a specific .gguf file by absolute path
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn connect_model(
+    state: tauri::State<'_, AppState>,
+    file_path: String,
+) -> Result<String, String> {
+    let path = PathBuf::from(&file_path);
+
+    if !path.exists() {
+        return Err(format!("Model file not found: {}", path.display()));
+    }
+
+    let dir = path
+        .parent()
+        .ok_or("Cannot get parent directory of model file")?
+        .to_path_buf();
+
+    let filename = path
+        .file_name()
+        .ok_or("Invalid model filename")?
+        .to_string_lossy()
+        .to_string();
+
+    // Point model_path at this directory.
+    {
+        let mut mp = state
+            .model_path
+            .write()
+            .map_err(|e| format!("model_path lock: {e}"))?;
+        *mp = dir.clone();
+    }
+
+    let model_id = dir.to_string_lossy().to_string();
+    let mut builder =
+        GgufModelBuilder::new(model_id, vec![filename.clone()]).with_logging();
+
+    if std::env::var("USE_GPU").unwrap_or_default() != "1" {
+        builder = builder.with_force_cpu();
+    }
+    if let Ok(t) = std::env::var("CHAT_TEMPLATE") {
+        if !t.is_empty() {
+            builder = builder.with_chat_template(t);
+        }
+    }
+    if let Ok(tok) = std::env::var("TOK_MODEL_ID") {
+        if !tok.is_empty() {
+            builder = builder.with_tok_model_id(tok);
+        }
+    }
+
+    let model = builder
+        .build()
+        .await
+        .map_err(|e| format!("Failed to load model: {e}"))?;
+
+    {
+        let mut guard = state.model.lock().await;
+        *guard = Some(model);
+    }
+
+    {
+        let mut cf = state
+            .connected_model_file
+            .write()
+            .map_err(|e| format!("connected_model_file lock: {e}"))?;
+        *cf = Some(filename.clone());
+    }
+
+    println!("[connect_model] Connected: {filename}");
+    Ok(format!("Connected to: {filename}"))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// disconnect_model — unload the current model
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn disconnect_model(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    {
+        let mut guard = state.model.lock().await;
+        *guard = None;
+    }
+    {
+        let mut cf = state
+            .connected_model_file
+            .write()
+            .map_err(|e| format!("Lock error: {e}"))?;
+        *cf = None;
+    }
+    println!("[disconnect_model] Model unloaded");
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// delete_model — remove a .gguf file from disk
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn delete_model(
+    state: tauri::State<'_, AppState>,
+    file_path: String,
+) -> Result<(), String> {
+    let path = PathBuf::from(&file_path);
+
+    let filename = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+
+    // Refuse to delete the currently loaded model.
+    let connected = state
+        .connected_model_file
+        .read()
+        .map_err(|e| format!("Lock error: {e}"))?
+        .clone();
+
+    if connected.as_deref() == Some(filename.as_str()) {
+        return Err(
+            "Cannot delete the currently connected model. Click Disconnect first.".to_string(),
+        );
+    }
+
+    if !path.exists() {
+        return Err(format!("File not found: {}", path.display()));
+    }
+
+    std::fs::remove_file(&path).map_err(|e| format!("Failed to delete: {e}"))?;
+    println!("[delete_model] Deleted: {}", path.display());
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// get_models_dir / get_connected_model — status queries
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn get_models_dir(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    Ok(state
+        .model_path
+        .read()
+        .map_err(|e| format!("Lock error: {e}"))?
+        .to_string_lossy()
+        .to_string())
+}
+
+#[tauri::command]
+pub fn get_connected_model(state: tauri::State<'_, AppState>) -> Result<Option<String>, String> {
+    Ok(state
+        .connected_model_file
+        .read()
+        .map_err(|e| format!("Lock error: {e}"))?
+        .clone())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// get_rag_config / save_rag_config — RAG pipeline tuning
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn get_rag_config(state: tauri::State<'_, AppState>) -> Result<crate::RagConfig, String> {
+    Ok(state
+        .rag_config
+        .read()
+        .map_err(|e| format!("Lock error: {e}"))?
+        .clone())
+}
+
+#[tauri::command]
+pub fn save_rag_config(
+    state: tauri::State<'_, AppState>,
+    config: crate::RagConfig,
+) -> Result<(), String> {
+    let mut cfg = state
+        .rag_config
+        .write()
+        .map_err(|e| format!("Lock error: {e}"))?;
+    *cfg = config;
+    println!(
+        "[save_rag_config] chunk_size={}, overlap={}, top_k={}, show_context={}",
+        cfg.chunk_size, cfg.chunk_overlap, cfg.top_k, cfg.show_context
+    );
+    Ok(())
 }

@@ -7,6 +7,27 @@ use std::sync::{Mutex, RwLock};
 
 use mistralrs::Model;
 
+/// RAG pipeline tuning parameters, editable at runtime from the Settings UI.
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RagConfig {
+    pub chunk_size: usize,
+    pub chunk_overlap: usize,
+    pub top_k: usize,
+    pub show_context: bool,
+}
+
+impl Default for RagConfig {
+    fn default() -> Self {
+        RagConfig {
+            chunk_size: 900,
+            chunk_overlap: 150,
+            top_k: 8,
+            show_context: false,
+        }
+    }
+}
+
 /// Global application state shared across all Tauri commands.
 ///
 /// ## Locking strategy
@@ -19,6 +40,9 @@ use mistralrs::Model;
 ///   cancelled from the UI.
 /// - `cancel_current_response` → `AtomicBool` — low-cost cancellation flag
 ///   checked between streamed model chunks.
+/// - `rag_config` → `RwLock` — RAG pipeline parameters, updated from the UI.
+/// - `connected_model_file` → `RwLock` — filename of the currently loaded
+///   GGUF model, or `None` if no model is loaded.
 pub struct AppState {
     /// Resolved directory that contains GGUF model files.
     pub model_path: RwLock<PathBuf>,
@@ -28,6 +52,10 @@ pub struct AppState {
     pub active_request_id: Mutex<Option<String>>,
     /// Cancellation flag toggled by the stop button.
     pub cancel_current_response: AtomicBool,
+    /// Live RAG configuration, updated from the Settings UI.
+    pub rag_config: RwLock<RagConfig>,
+    /// Filename of the currently connected GGUF model (just the filename, not the full path).
+    pub connected_model_file: RwLock<Option<String>>,
 }
 
 fn normalize_env_path(raw: &str) -> Option<PathBuf> {
@@ -144,6 +172,8 @@ pub fn run() {
         model: tokio::sync::Mutex::new(None),
         active_request_id: Mutex::new(None),
         cancel_current_response: AtomicBool::new(false),
+        rag_config: RwLock::new(RagConfig::default()),
+        connected_model_file: RwLock::new(None),
     };
 
     tauri::Builder::default()
@@ -158,6 +188,15 @@ pub fn run() {
             commands::chat_gemini_rag,
             commands::stop_chat,
             commands::ingest_document,
+            commands::download_model,
+            commands::list_downloaded_models,
+            commands::connect_model,
+            commands::disconnect_model,
+            commands::delete_model,
+            commands::get_models_dir,
+            commands::get_connected_model,
+            commands::get_rag_config,
+            commands::save_rag_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

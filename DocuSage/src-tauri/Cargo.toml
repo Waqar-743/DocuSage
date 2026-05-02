@@ -1,6 +1,6 @@
 [package]
 name = "docusage"
-version = "0.4.0"
+version = "0.5.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -36,7 +36,7 @@ arrow-schema = "57"
 arrow-cast = "57"
 futures-util = "0.3"
 
-reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"], default-features = false }
 
 # Static linking for lzma-sys (transitive dep from lancedb) to avoid
 # dynamic linking issues on Windows and in CI environments.

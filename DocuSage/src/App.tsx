@@ -1,9 +1,14 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Moon, Sun, Settings, Database, Plus, FileText, Send, Paperclip, AlertCircle, Trash2, X, MessageSquare, Square, CheckCircle, Key, Download, Cpu } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Moon, Sun, Settings, Database, Plus, FileText, Send, Paperclip, AlertCircle, Trash2, X, MessageSquare, Square, CheckCircle, Key, Download, Cpu, HardDrive, Sliders, Link, Link2Off, FolderOpen, RotateCcw } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { openUrl } from '@tauri-apps/plugin-opener';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { chatGeneral, chatRag, chatGeminiRag, ingestDocument, isTauri, loadModel, stopChat, GEMINI_KEY_STORAGE, type ChatHistoryMessage, type IngestResult } from './lib/api';
+import {
+  chatGeneral, chatRag, chatGeminiRag, ingestDocument, isTauri, loadModel, stopChat,
+  downloadModel, listDownloadedModels, connectModel, disconnectModel, deleteModel,
+  getConnectedModel, getRagConfig, saveRagConfig,
+  GEMINI_KEY_STORAGE, RAG_CONFIG_DEFAULTS,
+  type ChatHistoryMessage, type IngestResult, type DownloadedModel, type RagConfig,
+} from './lib/api';
 import './App.css';
 
 type Message = {
@@ -37,6 +42,17 @@ type PersistedAppState = {
   selectedGeneralChatId: string;
 };
 
+type DownloadProgress = {
+  filename: string;
+  downloaded: number;
+  total: number;
+  percent: number;
+  done: boolean;
+  error?: string;
+};
+
+type SettingsTab = 'models' | 'downloaded' | 'ragTuning' | 'apiKey';
+
 const STORAGE_KEY = 'docusage:app-state:v1';
 const DEFAULT_CHAT_ID = 'default';
 
@@ -46,11 +62,20 @@ type ModelCatalogEntry = {
   size: string;
   description: string;
   downloadUrl: string;
+  directDownloadUrl: string;
+  filename: string;
   recommended?: boolean;
 };
 
-// Each entry links to a known-good GGUF (Q4_K_M where available) on
-// HuggingFace. Sizes are the on-disk size of that quantization.
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
+}
+
+// Each entry links to a known-good Q4_K_M GGUF on HuggingFace.
+// directDownloadUrl points to the specific file for in-app downloading.
 const MODEL_CATALOG: ModelCatalogEntry[] = [
   {
     id: 'qwen2.5-0.5b',
@@ -58,6 +83,8 @@ const MODEL_CATALOG: ModelCatalogEntry[] = [
     size: '~380 MB',
     description: 'Ultra-fast model for basic tasks. Great for low-end hardware and quick lookups when speed matters more than depth.',
     downloadUrl: 'https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF',
+    directDownloadUrl: 'https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf',
+    filename: 'qwen2.5-0.5b-instruct-q4_k_m.gguf',
   },
   {
     id: 'llama-3.2-1b',
@@ -65,6 +92,8 @@ const MODEL_CATALOG: ModelCatalogEntry[] = [
     size: '~700 MB',
     description: "Compact model great for quick tasks and chat. One of Meta's smallest instruction-tuned models with fast responses and reasonable quality.",
     downloadUrl: 'https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF',
+    directDownloadUrl: 'https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf',
+    filename: 'Llama-3.2-1B-Instruct-Q4_K_M.gguf',
     recommended: true,
   },
   {
@@ -73,6 +102,8 @@ const MODEL_CATALOG: ModelCatalogEntry[] = [
     size: '~940 MB',
     description: "Strong multilingual support and reasoning ability for its size. A solid balance of speed and capability across many languages.",
     downloadUrl: 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF',
+    directDownloadUrl: 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf',
+    filename: 'qwen2.5-1.5b-instruct-q4_k_m.gguf',
   },
   {
     id: 'smollm2-1.7b',
@@ -80,6 +111,8 @@ const MODEL_CATALOG: ModelCatalogEntry[] = [
     size: '~1.0 GB',
     description: "HuggingFace's own small language model, designed for efficiency. Punches above its weight with strong general knowledge and fast inference on mobile devices.",
     downloadUrl: 'https://huggingface.co/HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF',
+    directDownloadUrl: 'https://huggingface.co/HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF/resolve/main/smollm2-1.7b-instruct-q4_k_m.gguf',
+    filename: 'smollm2-1.7b-instruct-q4_k_m.gguf',
   },
   {
     id: 'gemma-2-2b',
@@ -87,6 +120,8 @@ const MODEL_CATALOG: ModelCatalogEntry[] = [
     size: '~1.5 GB',
     description: "Google's lightweight model optimized specifically for on-device deployment. Excellent balance of quality and speed, built with mobile-first design.",
     downloadUrl: 'https://huggingface.co/bartowski/gemma-2-2b-it-GGUF',
+    directDownloadUrl: 'https://huggingface.co/bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf',
+    filename: 'gemma-2-2b-it-Q4_K_M.gguf',
   },
   {
     id: 'qwen2.5-3b',
@@ -94,6 +129,8 @@ const MODEL_CATALOG: ModelCatalogEntry[] = [
     size: '~1.8 GB',
     description: 'Capable model for complex tasks. Better reasoning, longer-context understanding, and improved multi-turn dialogue.',
     downloadUrl: 'https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF',
+    directDownloadUrl: 'https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf',
+    filename: 'qwen2.5-3b-instruct-q4_k_m.gguf',
   },
   {
     id: 'llama-3.2-3b',
@@ -101,6 +138,8 @@ const MODEL_CATALOG: ModelCatalogEntry[] = [
     size: '~2.0 GB',
     description: "Meta's best small model for mobile. Strong reasoning, creative writing, and conversational ability. Recommended for most users with a modern laptop.",
     downloadUrl: 'https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF',
+    directDownloadUrl: 'https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf',
+    filename: 'Llama-3.2-3B-Instruct-Q4_K_M.gguf',
   },
   {
     id: 'phi-3.5-mini',
@@ -108,6 +147,8 @@ const MODEL_CATALOG: ModelCatalogEntry[] = [
     size: '~2.2 GB',
     description: "Microsoft's compact powerhouse, trained on high-quality data including code. Exceptional at programming tasks, debugging, and technical explanations.",
     downloadUrl: 'https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF',
+    directDownloadUrl: 'https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf',
+    filename: 'Phi-3.5-mini-instruct-Q4_K_M.gguf',
   },
 ];
 
@@ -199,7 +240,7 @@ export default function App() {
   const [isStopping, setIsStopping] = useState(false);
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
   const [toastError, setToastError] = useState<string | null>(null);
-  const [toastSuccess] = useState<string | null>(null);
+  const [toastSuccess, setToastSuccess] = useState<string | null>(null);
   const [, setIsIngesting] = useState(false);
   const [, setIngestFileName] = useState<string>('');
   const [ingestWidget, setIngestWidget] = useState<{ type: 'loading' | 'success'; fileName: string; chunkCount: number } | null>(null);
@@ -207,10 +248,19 @@ export default function App() {
   const [isModelReady, setIsModelReady] = useState(!isTauri());
   const [modelStatus, setModelStatus] = useState<string>(isTauri() ? 'Model not loaded' : 'Browser preview mode');
   const [showSettings, setShowSettings] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<'models' | 'apiKey'>('models');
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('models');
   const [geminiKey, setGeminiKey] = useState<string>(() => {
     try { return window.localStorage.getItem(GEMINI_KEY_STORAGE) ?? ''; } catch { return ''; }
   });
+
+  // Model manager state
+  const [downloadedModels, setDownloadedModels] = useState<DownloadedModel[]>([]);
+  const [downloadProgress, setDownloadProgress] = useState<Record<string, DownloadProgress>>({});
+  const [connectedModelFile, setConnectedModelFile] = useState<string | null>(null);
+  const [isConnecting, setIsConnecting] = useState<string | null>(null);
+
+  // RAG tuning state
+  const [ragConfig, setRagConfig] = useState<RagConfig>({ ...RAG_CONFIG_DEFAULTS });
 
   // Session State
   const [documents, setDocuments] = useState<Document[]>(persistedState.documents);
@@ -291,6 +341,20 @@ export default function App() {
     setTimeout(() => setToastError(null), 5000);
   };
 
+  const showSuccess = (msg: string) => {
+    setToastSuccess(msg);
+    setTimeout(() => setToastSuccess(null), 3000);
+  };
+
+  const refreshDownloadedModels = useCallback(async () => {
+    try {
+      const models = await listDownloadedModels();
+      setDownloadedModels(models);
+    } catch {
+      // Non-fatal — models dir may not exist yet
+    }
+  }, []);
+
   // Load the local GGUF model once on startup in desktop mode.
   // Browser preview mode uses mocked chat responses and does not need this.
   const ensureModelLoaded = async () => {
@@ -303,6 +367,9 @@ export default function App() {
       const msg = await loadModel();
       setIsModelReady(true);
       setModelStatus(msg || 'Model loaded');
+      // Sync which model is currently active
+      const connected = await getConnectedModel();
+      setConnectedModelFile(connected);
     } catch (err) {
       setIsModelReady(false);
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -316,9 +383,43 @@ export default function App() {
   useEffect(() => {
     if (isTauri()) {
       ensureModelLoaded();
+      refreshDownloadedModels();
+      // Hydrate RAG config from backend
+      getRagConfig().then(setRagConfig).catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Listen for download-progress events emitted by the Rust download_model command.
+  useEffect(() => {
+    if (!isTauri()) return;
+    let unlisten: (() => void) | null = null;
+
+    listen<DownloadProgress>('download-progress', (event) => {
+      const p = event.payload;
+      setDownloadProgress(prev => ({ ...prev, [p.filename]: p }));
+
+      if (p.done && !p.error) {
+        refreshDownloadedModels();
+        // Clear progress indicator after a short delay so the user sees 100%.
+        setTimeout(() => {
+          setDownloadProgress(prev => {
+            const { [p.filename]: _, ...rest } = prev;
+            return rest;
+          });
+        }, 2500);
+      }
+    }).then(fn => { unlisten = fn; });
+
+    return () => { unlisten?.(); };
+  }, [refreshDownloadedModels]);
+
+  // Refresh downloaded models list whenever the Downloaded tab is opened.
+  useEffect(() => {
+    if (showSettings && settingsTab === 'downloaded') {
+      refreshDownloadedModels();
+    }
+  }, [showSettings, settingsTab, refreshDownloadedModels]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -646,79 +747,363 @@ export default function App() {
       {showSettings && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => setShowSettings(false)}>
           <div
-            className={`w-full max-w-2xl max-h-[85vh] flex flex-col rounded-2xl shadow-2xl border ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c]' : 'bg-white border-zinc-200'}`}
+            className={`w-full max-w-2xl max-h-[88vh] flex flex-col rounded-2xl shadow-2xl border ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c]' : 'bg-white border-zinc-200'}`}
             onClick={e => e.stopPropagation()}
           >
-            <div className={`flex items-center justify-between px-6 py-4 border-b ${isDark ? 'border-[#2a2a2c]' : 'border-zinc-200'}`}>
+            {/* Header */}
+            <div className={`flex items-center justify-between px-6 py-4 border-b shrink-0 ${isDark ? 'border-[#2a2a2c]' : 'border-zinc-200'}`}>
               <h2 className="text-lg font-semibold">Settings</h2>
               <button onClick={() => setShowSettings(false)} className={`p-1.5 rounded-lg transition-colors ${isDark ? 'hover:bg-[#2a2a2c]' : 'hover:bg-zinc-100'}`}><X size={18} /></button>
             </div>
 
             {/* Tabs */}
-            <div className={`flex gap-1 px-6 pt-3 border-b ${isDark ? 'border-[#2a2a2c]' : 'border-zinc-200'}`}>
-              <button
-                onClick={() => setSettingsTab('models')}
-                className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${settingsTab === 'models' ? (isDark ? 'border-emerald-500 text-emerald-400' : 'border-[#0F2854] text-[#0F2854]') : 'border-transparent text-zinc-500 hover:text-zinc-300'}`}
-              >
-                <Cpu size={14} /> Models
-              </button>
-              <button
-                onClick={() => setSettingsTab('apiKey')}
-                className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${settingsTab === 'apiKey' ? (isDark ? 'border-emerald-500 text-emerald-400' : 'border-[#0F2854] text-[#0F2854]') : 'border-transparent text-zinc-500 hover:text-zinc-300'}`}
-              >
-                <Key size={14} /> API Key
-              </button>
+            <div className={`flex gap-0.5 px-4 pt-2 border-b shrink-0 overflow-x-auto ${isDark ? 'border-[#2a2a2c]' : 'border-zinc-200'}`}>
+              {(
+                [
+                  { key: 'models', icon: <Cpu size={13} />, label: 'Model Catalog' },
+                  { key: 'downloaded', icon: <HardDrive size={13} />, label: 'Downloaded' },
+                  { key: 'ragTuning', icon: <Sliders size={13} />, label: 'RAG Tuning' },
+                  { key: 'apiKey', icon: <Key size={13} />, label: 'API Key' },
+                ] as const
+              ).map(tab => (
+                <button
+                  key={tab.key}
+                  onClick={() => setSettingsTab(tab.key)}
+                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 -mb-px whitespace-nowrap transition-colors ${
+                    settingsTab === tab.key
+                      ? isDark ? 'border-emerald-500 text-emerald-400' : 'border-[#0F2854] text-[#0F2854]'
+                      : isDark ? 'border-transparent text-zinc-500 hover:text-zinc-300' : 'border-transparent text-zinc-500 hover:text-zinc-700'
+                  }`}
+                >
+                  {tab.icon} {tab.label}
+                  {tab.key === 'downloaded' && downloadedModels.length > 0 && (
+                    <span className={`ml-0.5 text-[10px] px-1.5 py-0.5 rounded-full font-bold ${isDark ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-100 text-emerald-700'}`}>
+                      {downloadedModels.length}
+                    </span>
+                  )}
+                </button>
+              ))}
             </div>
 
-            <div className="overflow-y-auto p-6">
+            {/* Tab Content */}
+            <div className="overflow-y-auto p-6 flex-1">
+
+              {/* ── Model Catalog ── */}
               {settingsTab === 'models' && (
                 <div>
-                  <p className={`text-xs mb-4 ${isDark ? 'text-zinc-500' : 'text-zinc-500'}`}>
-                    Choose a local model to download. Click the download icon to open the model's HuggingFace page in your browser, then place the GGUF file in your DocuSage models folder and click <span className="font-medium">Retry Model Load</span>.
+                  <p className={`text-xs mb-4 leading-relaxed ${isDark ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                    Click <strong>Download</strong> to fetch a model directly into DocuSage — no manual file management needed.
+                    After downloading, go to the <strong>Downloaded</strong> tab and click <strong>Connect Now</strong>.
                   </p>
                   <div className="space-y-3">
-                    {MODEL_CATALOG.map((m) => (
-                      <div
-                        key={m.id}
-                        className={`flex items-start justify-between gap-4 p-4 rounded-xl border transition-colors ${isDark ? 'bg-[#232325] border-[#2a2a2c] hover:border-[#3a3a3c]' : 'bg-zinc-50 border-zinc-200 hover:border-zinc-300'}`}
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 flex-wrap mb-1">
-                            <h3 className={`font-semibold ${isDark ? 'text-zinc-100' : 'text-zinc-900'}`}>{m.name}</h3>
-                            {m.recommended && (
-                              <span className={`text-[10px] font-bold tracking-wider px-1.5 py-0.5 rounded ${isDark ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-emerald-100 text-emerald-700 border border-emerald-300'}`}>
-                                RECOMMENDED
-                              </span>
+                    {MODEL_CATALOG.map((m) => {
+                      const progress = downloadProgress[m.filename];
+                      const isDownloading = !!progress && !progress.done;
+                      const isAlreadyDownloaded = downloadedModels.some(d => d.filename === m.filename);
+
+                      return (
+                        <div
+                          key={m.id}
+                          className={`flex items-start justify-between gap-4 p-4 rounded-xl border transition-colors ${isDark ? 'bg-[#232325] border-[#2a2a2c] hover:border-[#3a3a3c]' : 'bg-zinc-50 border-zinc-200 hover:border-zinc-300'}`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap mb-1">
+                              <h3 className={`font-semibold text-sm ${isDark ? 'text-zinc-100' : 'text-zinc-900'}`}>{m.name}</h3>
+                              {m.recommended && (
+                                <span className={`text-[10px] font-bold tracking-wider px-1.5 py-0.5 rounded ${isDark ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-emerald-100 text-emerald-700 border border-emerald-300'}`}>
+                                  RECOMMENDED
+                                </span>
+                              )}
+                              {isAlreadyDownloaded && (
+                                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded flex items-center gap-1 ${isDark ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'bg-blue-50 text-blue-600 border border-blue-200'}`}>
+                                  <CheckCircle size={10} /> On disk
+                                </span>
+                              )}
+                            </div>
+                            <p className={`text-xs leading-relaxed ${isDark ? 'text-zinc-400' : 'text-zinc-600'}`}>{m.description}</p>
+
+                            {/* Download progress bar */}
+                            {isDownloading && (
+                              <div className="mt-2">
+                                <div className={`w-full h-1.5 rounded-full overflow-hidden ${isDark ? 'bg-[#3a3a3c]' : 'bg-zinc-200'}`}>
+                                  <div
+                                    className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                                    style={{ width: `${progress.percent}%` }}
+                                  />
+                                </div>
+                                <p className={`text-[10px] mt-1 ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                                  {formatBytes(progress.downloaded)}{progress.total > 0 ? ` / ${formatBytes(progress.total)}` : ''} — {Math.round(progress.percent)}%
+                                </p>
+                              </div>
+                            )}
+                            {progress?.error && (
+                              <p className="text-[10px] mt-1.5 text-red-400">{progress.error}</p>
                             )}
                           </div>
-                          <p className={`text-xs leading-relaxed ${isDark ? 'text-zinc-400' : 'text-zinc-600'}`}>{m.description}</p>
-                        </div>
-                        <div className="flex flex-col items-end gap-2 shrink-0">
-                          <span className={`text-xs font-medium ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>{m.size}</span>
-                          <button
-                            onClick={async () => {
-                              try {
+
+                          <div className="flex flex-col items-end gap-2 shrink-0">
+                            <span className={`text-xs font-medium ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>{m.size}</span>
+                            <button
+                              disabled={isDownloading}
+                              onClick={async () => {
+                                if (isDownloading) return;
                                 if (isTauri()) {
-                                  await openUrl(m.downloadUrl);
+                                  try {
+                                    await downloadModel(m.directDownloadUrl, m.filename);
+                                  } catch (err) {
+                                    showError(`Download failed: ${err}`);
+                                  }
                                 } else {
-                                  window.open(m.downloadUrl, '_blank', 'noopener,noreferrer');
+                                  try { window.open(m.downloadUrl, '_blank', 'noopener,noreferrer'); } catch {}
                                 }
-                              } catch (err) {
-                                showError(`Could not open browser: ${err}`);
-                              }
-                            }}
-                            title={`Download ${m.name} from HuggingFace`}
-                            className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-[#3a3a3c] text-emerald-400 hover:bg-emerald-500/10 hover:border-emerald-500/50' : 'border-zinc-300 text-emerald-600 hover:bg-emerald-50 hover:border-emerald-400'}`}
-                          >
-                            <Download size={16} />
-                          </button>
+                              }}
+                              title={isDownloading ? 'Downloading…' : `Download ${m.name}`}
+                              className={`p-2 rounded-lg border transition-colors disabled:cursor-not-allowed ${
+                                isDownloading
+                                  ? isDark ? 'border-[#3a3a3c] text-zinc-600' : 'border-zinc-200 text-zinc-300'
+                                  : isDark ? 'border-[#3a3a3c] text-emerald-400 hover:bg-emerald-500/10 hover:border-emerald-500/50' : 'border-zinc-300 text-emerald-600 hover:bg-emerald-50 hover:border-emerald-400'
+                              }`}
+                            >
+                              {isDownloading
+                                ? <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                                : <Download size={16} />}
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
 
+              {/* ── Downloaded Models ── */}
+              {settingsTab === 'downloaded' && (
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <p className={`text-xs ${isDark ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                      Models stored on your machine. Use <strong>Connect Now</strong> to load a model into the active chat session.
+                    </p>
+                    <button
+                      onClick={refreshDownloadedModels}
+                      className={`p-1.5 rounded-lg transition-colors shrink-0 ${isDark ? 'text-zinc-400 hover:text-zinc-200 hover:bg-[#2a2a2c]' : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100'}`}
+                      title="Refresh list"
+                    >
+                      <RotateCcw size={14} />
+                    </button>
+                  </div>
+
+                  {downloadedModels.length === 0 ? (
+                    <div className={`flex flex-col items-center justify-center py-12 gap-3 ${isDark ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                      <FolderOpen size={36} />
+                      <p className="text-sm">No models downloaded yet.</p>
+                      <p className="text-xs">Go to Model Catalog to download one.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {downloadedModels.map(model => {
+                        const isConnected = connectedModelFile === model.filename;
+                        const isThisConnecting = isConnecting === model.filename;
+                        const otherConnecting = !!isConnecting && !isThisConnecting;
+
+                        return (
+                          <div
+                            key={model.filename}
+                            className={`flex items-center justify-between gap-4 p-4 rounded-xl border transition-colors ${
+                              isConnected
+                                ? isDark ? 'bg-emerald-500/5 border-emerald-500/30' : 'bg-emerald-50 border-emerald-200'
+                                : isDark ? 'bg-[#232325] border-[#2a2a2c]' : 'bg-zinc-50 border-zinc-200'
+                            }`}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 mb-0.5">
+                                {isConnected && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />}
+                                <p className={`text-sm font-medium truncate ${isDark ? 'text-zinc-100' : 'text-zinc-900'}`}>{model.filename}</p>
+                              </div>
+                              <p className={`text-xs ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>{formatBytes(model.sizeBytes)}</p>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              {/* Connect / Disconnect */}
+                              <button
+                                disabled={otherConnecting || isThisConnecting}
+                                onClick={async () => {
+                                  if (isConnected) {
+                                    try {
+                                      await disconnectModel();
+                                      setConnectedModelFile(null);
+                                      setIsModelReady(false);
+                                      setModelStatus('Model disconnected');
+                                    } catch (err) {
+                                      showError(`Disconnect failed: ${err}`);
+                                    }
+                                  } else {
+                                    setIsConnecting(model.filename);
+                                    try {
+                                      const msg = await connectModel(model.path);
+                                      setConnectedModelFile(model.filename);
+                                      setIsModelReady(true);
+                                      setModelStatus(msg);
+                                      showSuccess(`Connected: ${model.filename}`);
+                                    } catch (err) {
+                                      showError(`Failed to connect: ${err}`);
+                                    } finally {
+                                      setIsConnecting(null);
+                                    }
+                                  }
+                                }}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                                  isConnected
+                                    ? isDark ? 'border-emerald-500/40 text-emerald-400 hover:bg-red-500/10 hover:border-red-500/40 hover:text-red-400' : 'border-emerald-300 text-emerald-700 hover:bg-red-50 hover:border-red-300 hover:text-red-600'
+                                    : isDark ? 'border-[#3a3a3c] text-zinc-300 hover:bg-[#2a2a2c]' : 'border-zinc-300 text-zinc-700 hover:bg-zinc-100'
+                                }`}
+                              >
+                                {isThisConnecting ? (
+                                  <>
+                                    <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                                    Connecting…
+                                  </>
+                                ) : isConnected ? (
+                                  <><Link2Off size={12} /> Disconnect</>
+                                ) : (
+                                  <><Link size={12} /> Connect Now</>
+                                )}
+                              </button>
+
+                              {/* Delete */}
+                              <button
+                                disabled={isConnected}
+                                onClick={async () => {
+                                  if (!confirm(`Delete ${model.filename}? This cannot be undone.`)) return;
+                                  try {
+                                    await deleteModel(model.path);
+                                    setDownloadedModels(prev => prev.filter(m => m.filename !== model.filename));
+                                    showSuccess(`Deleted ${model.filename}`);
+                                  } catch (err) {
+                                    showError(`Delete failed: ${err}`);
+                                  }
+                                }}
+                                title={isConnected ? 'Disconnect first to delete' : 'Delete model file'}
+                                className={`p-1.5 rounded-lg border transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${isDark ? 'border-[#3a3a3c] text-zinc-500 hover:text-red-400 hover:border-red-500/40 hover:bg-red-500/10' : 'border-zinc-200 text-zinc-400 hover:text-red-500 hover:border-red-300 hover:bg-red-50'}`}
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── RAG Diagnostics & Tuning ── */}
+              {settingsTab === 'ragTuning' && (
+                <div className="space-y-6">
+                  <p className={`text-xs leading-relaxed ${isDark ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                    Tune the RAG retrieval pipeline. <strong>Chunk Size / Overlap</strong> affect new document ingestions.
+                    <strong> Top-K</strong> and <strong>Show Context</strong> take effect on the next query.
+                  </p>
+
+                  {/* Chunk Size */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className={`text-sm font-medium ${isDark ? 'text-zinc-200' : 'text-zinc-800'}`}>Chunk Size</label>
+                      <span className={`text-sm font-mono tabular-nums ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>{ragConfig.chunkSize} chars</span>
+                    </div>
+                    <input
+                      type="range" min={200} max={2000} step={50}
+                      value={ragConfig.chunkSize}
+                      onChange={e => setRagConfig(prev => ({ ...prev, chunkSize: +e.target.value }))}
+                      className="w-full accent-emerald-500"
+                    />
+                    <p className={`text-xs mt-1 ${isDark ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                      Characters per chunk when ingesting PDFs. Larger = richer context per retrieved chunk, but fewer chunks retrieved at the same token budget.
+                    </p>
+                  </div>
+
+                  {/* Chunk Overlap */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className={`text-sm font-medium ${isDark ? 'text-zinc-200' : 'text-zinc-800'}`}>Chunk Overlap</label>
+                      <span className={`text-sm font-mono tabular-nums ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>{ragConfig.chunkOverlap} chars</span>
+                    </div>
+                    <input
+                      type="range" min={0} max={500} step={25}
+                      value={ragConfig.chunkOverlap}
+                      onChange={e => setRagConfig(prev => ({ ...prev, chunkOverlap: +e.target.value }))}
+                      className="w-full accent-emerald-500"
+                    />
+                    <p className={`text-xs mt-1 ${isDark ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                      Characters repeated between adjacent chunks. Higher overlap ensures facts spanning chunk boundaries are never split irretrievably.
+                    </p>
+                  </div>
+
+                  {/* Top-K */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className={`text-sm font-medium ${isDark ? 'text-zinc-200' : 'text-zinc-800'}`}>Top-K Retrieval</label>
+                      <span className={`text-sm font-mono tabular-nums ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>{ragConfig.topK} chunks</span>
+                    </div>
+                    <input
+                      type="range" min={1} max={20} step={1}
+                      value={ragConfig.topK}
+                      onChange={e => setRagConfig(prev => ({ ...prev, topK: +e.target.value }))}
+                      className="w-full accent-emerald-500"
+                    />
+                    <p className={`text-xs mt-1 ${isDark ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                      Number of document chunks injected into each prompt. More chunks = more context, but increases prompt length and inference time.
+                    </p>
+                  </div>
+
+                  {/* Show Retrieved Context */}
+                  <div className={`flex items-start gap-3 p-3 rounded-xl border ${isDark ? 'bg-[#232325] border-[#2a2a2c]' : 'bg-zinc-50 border-zinc-200'}`}>
+                    <input
+                      type="checkbox"
+                      id="showContext"
+                      checked={ragConfig.showContext}
+                      onChange={e => setRagConfig(prev => ({ ...prev, showContext: e.target.checked }))}
+                      className="mt-0.5 accent-emerald-500 w-4 h-4 shrink-0"
+                    />
+                    <div>
+                      <label htmlFor="showContext" className={`text-sm font-medium cursor-pointer ${isDark ? 'text-zinc-200' : 'text-zinc-800'}`}>
+                        Show Retrieved Context in Chat
+                      </label>
+                      <p className={`text-xs mt-0.5 ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                        Appends the raw retrieved document chunks after each RAG answer, so you can audit exactly what the model was given.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Save / Reset buttons */}
+                  <div className="flex items-center gap-3 pt-1">
+                    <button
+                      onClick={async () => {
+                        try {
+                          await saveRagConfig(ragConfig);
+                          showSuccess('RAG configuration saved');
+                        } catch (err) {
+                          showError(`Failed to save: ${err}`);
+                        }
+                      }}
+                      className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-colors ${isDark ? 'bg-white text-zinc-900 hover:bg-zinc-200' : 'bg-[#0F2854] text-white hover:bg-[#0a1b38]'}`}
+                    >
+                      Save Configuration
+                    </button>
+                    <button
+                      onClick={async () => {
+                        setRagConfig({ ...RAG_CONFIG_DEFAULTS });
+                        try { await saveRagConfig({ ...RAG_CONFIG_DEFAULTS }); } catch {}
+                        showSuccess('Reset to defaults');
+                      }}
+                      className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-medium border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-400 hover:text-zinc-200 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50'}`}
+                    >
+                      <RotateCcw size={14} /> Reset
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* ── API Key ── */}
               {settingsTab === 'apiKey' && (
                 <div className="space-y-4">
                   <div>
