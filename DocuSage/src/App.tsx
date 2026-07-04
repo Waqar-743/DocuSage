@@ -16,6 +16,7 @@ import {
   type AssistantSettings, type AssistantStatus, type AssistantWindowMode,
   type AiProviderConfig, type AiProviderConfigInput, type AiProviderKind, type ProviderList,
 } from './lib/api';
+import MarketingSite from './MarketingSite';
 import './App.css';
 
 type Message = {
@@ -536,6 +537,10 @@ const MarkdownMessage = ({ text, isDark }: { text: string; isDark: boolean }) =>
 };
 
 export default function App() {
+  if (!isTauri() && import.meta.env.PROD) {
+    return <MarketingSite />;
+  }
+
   const initialStateRef = useRef<PersistedAppState>(loadPersistedState());
   const persistedState = initialStateRef.current;
 
