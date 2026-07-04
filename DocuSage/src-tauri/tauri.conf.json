@@ -14,7 +14,11 @@
       {
         "title": "DocuSage",
         "width": 1100,
-        "height": 750
+        "height": 750,
+        "minWidth": 360,
+        "minHeight": 420,
+        "visible": false,
+        "skipTaskbar": true
       }
     ],
     "security": {

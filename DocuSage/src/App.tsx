@@ -1,13 +1,20 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Moon, Sun, Settings, Database, Plus, FileText, Send, Paperclip, AlertCircle, Trash2, X, MessageSquare, Square, CheckCircle, Key, Download, Cpu, HardDrive, Sliders, Link, Link2Off, FolderOpen, RotateCcw } from 'lucide-react';
+import { Moon, Sun, Settings, Database, Plus, FileText, Send, Paperclip, AlertCircle, Trash2, X, MessageSquare, Square, CheckCircle, Key, Download, Cpu, HardDrive, Sliders, Link, Link2Off, FolderOpen, RotateCcw, Maximize2, Cloud, Keyboard, ShieldCheck, Eye, EyeOff, Monitor, Power, RefreshCw } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import {
   chatGeneral, chatRag, chatGeminiRag, ingestDocument, isTauri, loadModel, stopChat,
   downloadModel, listDownloadedModels, connectModel, disconnectModel, deleteModel,
   getConnectedModel, getRagConfig, saveRagConfig,
+  chatCloud, chatCloudRag, restartAiEngine,
+  getAssistantStatus, saveAssistantSettings, hideAssistantWindow, setAssistantWindowMode, cycleAssistantWindowMode,
+  checkForUpdates, listAiProviderConfigs, saveAiProviderConfig, deleteAiProviderConfig,
+  setActiveAiProvider, testAiProviderConnection,
   GEMINI_KEY_STORAGE, RAG_CONFIG_DEFAULTS,
+  ASSISTANT_SETTINGS_DEFAULTS,
   type ChatHistoryMessage, type IngestResult, type DownloadedModel, type RagConfig,
+  type AssistantSettings, type AssistantStatus, type AssistantWindowMode,
+  type AiProviderConfig, type AiProviderConfigInput, type AiProviderKind, type ProviderList,
 } from './lib/api';
 import './App.css';
 
@@ -40,6 +47,9 @@ type PersistedAppState = {
   generalChats: GeneralChat[];
   selectedDocId: string | null;
   selectedGeneralChatId: string;
+  drafts: Record<string, string>;
+  scrollPositions: Record<string, number>;
+  assistantWindowMode: AssistantWindowMode;
 };
 
 type DownloadProgress = {
@@ -51,7 +61,23 @@ type DownloadProgress = {
   error?: string;
 };
 
-type SettingsTab = 'models' | 'downloaded' | 'ragTuning' | 'apiKey';
+type SettingsTab = 'assistant' | 'models' | 'downloaded' | 'ragTuning' | 'providers';
+
+type ProviderDraft = {
+  id?: string;
+  name: string;
+  provider: AiProviderKind;
+  enabled: boolean;
+  baseUrl: string;
+  model: string;
+  organization: string;
+  project: string;
+  timeoutSecs: number;
+  temperature: number;
+  apiKey: string;
+  deleteApiKey: boolean;
+  options: Record<string, unknown>;
+};
 
 const STORAGE_KEY = 'docusage:app-state:v1';
 const DEFAULT_CHAT_ID = 'default';
@@ -152,6 +178,86 @@ const MODEL_CATALOG: ModelCatalogEntry[] = [
   },
 ];
 
+const PROVIDER_LABELS: Record<AiProviderKind, string> = {
+  local: 'Local',
+  openAi: 'OpenAI',
+  anthropic: 'Anthropic',
+  googleGemini: 'Google Gemini',
+  openRouter: 'OpenRouter',
+  ollamaRemote: 'Ollama remote',
+  lmStudioRemote: 'LM Studio remote',
+  customOpenAiCompatible: 'Custom OpenAI-compatible',
+};
+
+const PROVIDER_DEFAULTS: Record<AiProviderKind, { baseUrl: string; model: string; needsKey: boolean }> = {
+  local: { baseUrl: '', model: '', needsKey: false },
+  openAi: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4.1-mini', needsKey: true },
+  anthropic: { baseUrl: 'https://api.anthropic.com/v1', model: 'claude-3-5-haiku-latest', needsKey: true },
+  googleGemini: { baseUrl: 'https://generativelanguage.googleapis.com/v1beta', model: 'gemini-2.5-flash', needsKey: true },
+  openRouter: { baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4.1-mini', needsKey: true },
+  ollamaRemote: { baseUrl: 'http://localhost:11434', model: 'llama3.2', needsKey: false },
+  lmStudioRemote: { baseUrl: 'http://localhost:1234/v1', model: 'local-model', needsKey: false },
+  customOpenAiCompatible: { baseUrl: 'https://example.com/v1', model: '', needsKey: true },
+};
+
+const createProviderDraft = (provider: AiProviderKind = 'openAi'): ProviderDraft => {
+  const defaults = PROVIDER_DEFAULTS[provider];
+  return {
+    name: PROVIDER_LABELS[provider],
+    provider,
+    enabled: true,
+    baseUrl: defaults.baseUrl,
+    model: defaults.model,
+    organization: '',
+    project: '',
+    timeoutSecs: 60,
+    temperature: 0.2,
+    apiKey: '',
+    deleteApiKey: false,
+    options: {},
+  };
+};
+
+const providerToDraft = (provider: AiProviderConfig): ProviderDraft => ({
+  id: provider.id,
+  name: provider.name,
+  provider: provider.provider,
+  enabled: provider.enabled,
+  baseUrl: provider.baseUrl ?? PROVIDER_DEFAULTS[provider.provider].baseUrl,
+  model: provider.model ?? PROVIDER_DEFAULTS[provider.provider].model,
+  organization: provider.organization ?? '',
+  project: provider.project ?? '',
+  timeoutSecs: provider.timeoutSecs,
+  temperature: provider.temperature,
+  apiKey: '',
+  deleteApiKey: false,
+  options: provider.options ?? {},
+});
+
+const draftToInput = (draft: ProviderDraft): AiProviderConfigInput => ({
+  id: draft.id,
+  name: draft.name,
+  provider: draft.provider,
+  enabled: draft.enabled,
+  baseUrl: draft.baseUrl.trim() || null,
+  model: draft.model.trim() || null,
+  organization: draft.organization.trim() || null,
+  project: draft.project.trim() || null,
+  timeoutSecs: draft.timeoutSecs,
+  temperature: draft.temperature,
+  apiKey: draft.apiKey,
+  deleteApiKey: draft.deleteApiKey,
+  options: draft.options,
+});
+
+const conversationKeyFor = (
+  currentMode: 'general' | 'rag',
+  currentDocId: string | null,
+  currentChatId: string,
+) => currentMode === 'rag'
+  ? `rag:${currentDocId ?? 'none'}`
+  : `general:${currentChatId}`;
+
 const createEmptyChat = (id = DEFAULT_CHAT_ID): GeneralChat => ({
   id,
   name: 'New Chat',
@@ -168,6 +274,9 @@ const loadPersistedState = (): PersistedAppState => {
     generalChats: [createEmptyChat()],
     selectedDocId: null,
     selectedGeneralChatId: DEFAULT_CHAT_ID,
+    drafts: {},
+    scrollPositions: {},
+    assistantWindowMode: 'medium',
   };
 
   if (typeof window === 'undefined') {
@@ -204,6 +313,13 @@ const loadPersistedState = (): PersistedAppState => {
       selectedGeneralChatId: typeof parsed.selectedGeneralChatId === 'string'
         ? parsed.selectedGeneralChatId
         : generalChats[0].id,
+      drafts: parsed.drafts && typeof parsed.drafts === 'object' ? parsed.drafts : {},
+      scrollPositions: parsed.scrollPositions && typeof parsed.scrollPositions === 'object'
+        ? parsed.scrollPositions
+        : {},
+      assistantWindowMode: parsed.assistantWindowMode === 'compact' || parsed.assistantWindowMode === 'full'
+        ? parsed.assistantWindowMode
+        : 'medium',
     };
   } catch {
     return fallback;
@@ -248,10 +364,17 @@ export default function App() {
   const [isModelReady, setIsModelReady] = useState(!isTauri());
   const [modelStatus, setModelStatus] = useState<string>(isTauri() ? 'Model not loaded' : 'Browser preview mode');
   const [showSettings, setShowSettings] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>('models');
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('assistant');
   const [geminiKey, setGeminiKey] = useState<string>(() => {
     try { return window.localStorage.getItem(GEMINI_KEY_STORAGE) ?? ''; } catch { return ''; }
   });
+  const [assistantSettings, setAssistantSettings] = useState<AssistantSettings>({
+    ...ASSISTANT_SETTINGS_DEFAULTS,
+    windowMode: persistedState.assistantWindowMode,
+  });
+  const [assistantStatus, setAssistantStatus] = useState<AssistantStatus | null>(null);
+  const [assistantShortcutDraft, setAssistantShortcutDraft] = useState(ASSISTANT_SETTINGS_DEFAULTS.globalShortcut);
+  const [isCompactUi, setIsCompactUi] = useState(() => typeof window !== 'undefined' ? window.innerWidth < 620 : false);
 
   // Model manager state
   const [downloadedModels, setDownloadedModels] = useState<DownloadedModel[]>([]);
@@ -261,14 +384,24 @@ export default function App() {
 
   // RAG tuning state
   const [ragConfig, setRagConfig] = useState<RagConfig>({ ...RAG_CONFIG_DEFAULTS });
+  const [providerConfigs, setProviderConfigs] = useState<AiProviderConfig[]>([]);
+  const [activeProviderId, setActiveProviderId] = useState('local');
+  const [secureStorageAvailable, setSecureStorageAvailable] = useState(false);
+  const [providerDraft, setProviderDraft] = useState<ProviderDraft>(() => createProviderDraft('openAi'));
+  const [showProviderKey, setShowProviderKey] = useState(false);
+  const [providerTestStatus, setProviderTestStatus] = useState<{ ok: boolean; message: string } | null>(null);
+  const [isProviderBusy, setIsProviderBusy] = useState(false);
 
   // Session State
   const [documents, setDocuments] = useState<Document[]>(persistedState.documents);
   const [generalChats, setGeneralChats] = useState<GeneralChat[]>(persistedState.generalChats);
   const [selectedDocId, setSelectedDocId] = useState<string | null>(persistedState.selectedDocId);
   const [selectedGeneralChatId, setSelectedGeneralChatId] = useState<string>(persistedState.selectedGeneralChatId);
+  const [drafts, setDrafts] = useState<Record<string, string>>(persistedState.drafts);
+  const [scrollPositions, setScrollPositions] = useState<Record<string, number>>(persistedState.scrollPositions);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isDark = theme === 'dark';
 
@@ -281,6 +414,11 @@ export default function App() {
   const activeMessages = mode === 'rag'
     ? documents.find(d => d.id === selectedDocId)?.messages || []
     : generalChats.find(c => c.id === selectedGeneralChatId)?.messages || [];
+  const activeConversationKey = conversationKeyFor(mode, selectedDocId, selectedGeneralChatId);
+  const activeProvider = providerConfigs.find(provider => provider.id === activeProviderId)
+    ?? providerConfigs.find(provider => provider.id === 'local')
+    ?? null;
+  const isCloudMode = !!activeProvider && activeProvider.provider !== 'local';
 
   const updateMessages = (updater: Message[] | ((prev: Message[]) => Message[])) => {
     const { mode: currentMode, selectedDocId: currentDocId, selectedGeneralChatId: currentChatId } = contextRef.current;
@@ -313,7 +451,23 @@ export default function App() {
   };
 
   useEffect(() => {
-    scrollToBottom();
+    setInputValue(drafts[activeConversationKey] ?? '');
+    requestAnimationFrame(() => {
+      const el = chatScrollRef.current;
+      if (!el) return;
+      const saved = scrollPositions[activeConversationKey];
+      el.scrollTop = typeof saved === 'number' ? saved : el.scrollHeight;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeConversationKey]);
+
+  useEffect(() => {
+    const el = chatScrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanceFromBottom < 180 || activeMessages.some(message => message.isStreaming)) {
+      scrollToBottom();
+    }
   }, [activeMessages]);
 
   // Auto-resize textarea
@@ -330,10 +484,29 @@ export default function App() {
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'c') {
         e.preventDefault();
         updateMessages([]);
+      } else if (e.key === 'Escape' && !showSettings) {
+        if (isTauri()) {
+          e.preventDefault();
+          hideAssistantWindow().catch(() => {});
+        }
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        handleNewChat();
+      } else if ((e.metaKey || e.ctrlKey) && e.key === ',') {
+        e.preventDefault();
+        setSettingsTab('assistant');
+        setShowSettings(true);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showSettings]);
+
+  useEffect(() => {
+    const onResize = () => setIsCompactUi(window.innerWidth < 620);
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
   }, []);
 
   const showError = (msg: string) => {
@@ -346,12 +519,32 @@ export default function App() {
     setTimeout(() => setToastSuccess(null), 3000);
   };
 
+  const updateInputValue = (value: string) => {
+    setInputValue(value);
+    setDrafts(prev => ({ ...prev, [activeConversationKey]: value }));
+  };
+
   const refreshDownloadedModels = useCallback(async () => {
     try {
       const models = await listDownloadedModels();
       setDownloadedModels(models);
     } catch {
       // Non-fatal — models dir may not exist yet
+    }
+  }, []);
+
+  const refreshProviderConfigs = useCallback(async () => {
+    try {
+      const list: ProviderList = await listAiProviderConfigs();
+      setProviderConfigs(list.providers);
+      setActiveProviderId(list.activeProviderId);
+      setSecureStorageAvailable(list.secureStorageAvailable);
+      const editable = list.providers.find(provider => provider.id !== 'local') ?? list.providers[0];
+      if (editable) {
+        setProviderDraft(providerToDraft(editable));
+      }
+    } catch (err) {
+      showError(`Failed to load AI providers: ${String(err)}`);
     }
   }, []);
 
@@ -384,8 +577,27 @@ export default function App() {
     if (isTauri()) {
       ensureModelLoaded();
       refreshDownloadedModels();
+      refreshProviderConfigs();
+      getAssistantStatus().then(status => {
+        setAssistantStatus(status);
+        setAssistantSettings(status.settings);
+        setAssistantShortcutDraft(status.settings.globalShortcut);
+      }).catch(() => {});
       // Hydrate RAG config from backend
       getRagConfig().then(setRagConfig).catch(() => {});
+      if (geminiKey.trim()) {
+        const migrated = createProviderDraft('googleGemini');
+        migrated.name = 'Gemini';
+        migrated.apiKey = geminiKey.trim();
+        saveAiProviderConfig(draftToInput(migrated))
+          .then(provider => setActiveAiProvider(provider.id))
+          .then(() => {
+            try { window.localStorage.removeItem(GEMINI_KEY_STORAGE); } catch {}
+            setGeminiKey('');
+            refreshProviderConfigs();
+          })
+          .catch(() => {});
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -414,6 +626,60 @@ export default function App() {
     return () => { unlisten?.(); };
   }, [refreshDownloadedModels]);
 
+  useEffect(() => {
+    if (!isTauri()) return;
+    const unlisteners: UnlistenFn[] = [];
+
+    listen('assistant-focus-prompt', () => {
+      setTimeout(() => textareaRef.current?.focus(), 50);
+    }).then(fn => unlisteners.push(fn));
+
+    listen('assistant-open-settings', () => {
+      setSettingsTab('assistant');
+      setShowSettings(true);
+      setTimeout(() => textareaRef.current?.focus(), 50);
+    }).then(fn => unlisteners.push(fn));
+
+    listen('assistant-check-updates', async () => {
+      try {
+        const msg = await checkForUpdates();
+        showSuccess(msg);
+      } catch (err) {
+        showError(`Update check failed: ${String(err)}`);
+      }
+    }).then(fn => unlisteners.push(fn));
+
+    listen('assistant-restart-ai-engine', async () => {
+      try {
+        setIsModelLoading(true);
+        const msg = await restartAiEngine();
+        setIsModelReady(true);
+        setModelStatus(msg);
+        const connected = await getConnectedModel();
+        setConnectedModelFile(connected);
+        showSuccess('AI engine restarted');
+      } catch (err) {
+        setIsModelReady(false);
+        showError(`AI engine restart failed: ${String(err)}`);
+      } finally {
+        setIsModelLoading(false);
+      }
+    }).then(fn => unlisteners.push(fn));
+
+    listen<{ message: string }>('assistant-shortcut-error', (event) => {
+      showError(event.payload.message);
+    }).then(fn => unlisteners.push(fn));
+
+    listen<AssistantWindowMode>('assistant-window-mode', (event) => {
+      setAssistantSettings(prev => ({ ...prev, windowMode: event.payload }));
+    }).then(fn => unlisteners.push(fn));
+
+    return () => {
+      unlisteners.forEach(unlisten => unlisten());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Refresh downloaded models list whenever the Downloaded tab is opened.
   useEffect(() => {
     if (showSettings && settingsTab === 'downloaded') {
@@ -433,8 +699,11 @@ export default function App() {
       generalChats,
       selectedDocId,
       selectedGeneralChatId,
+      drafts,
+      scrollPositions,
+      assistantWindowMode: assistantSettings.windowMode,
     } satisfies PersistedAppState));
-  }, [theme, mode, documents, generalChats, selectedDocId, selectedGeneralChatId]);
+  }, [theme, mode, documents, generalChats, selectedDocId, selectedGeneralChatId, drafts, scrollPositions, assistantSettings.windowMode]);
 
   const handlePickFile = async () => {
     let filePath: string;
@@ -533,6 +802,7 @@ export default function App() {
     setGeneralChats(prev => [createEmptyChat(newChatId), ...prev]);
     setSelectedGeneralChatId(newChatId);
     setInputValue('');
+    setDrafts(prev => ({ ...prev, [conversationKeyFor('general', null, newChatId)]: '' }));
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
@@ -563,17 +833,18 @@ export default function App() {
   const handleSend = async () => {
     if (!inputValue.trim() || isTyping) return;
 
-    // Allow sending without local model if Gemini key is set in RAG mode
-    const useGemini = mode === 'rag' && !!geminiKey.trim();
-    if (!isModelReady && !useGemini) {
-      showError('Model is not loaded yet. Click Retry Model Load in the header, or set a Gemini API key in Settings.');
+    // Cloud mode does not require a local GGUF model, but local RAG still
+    // requires an indexed document selection.
+    const useLegacyGemini = mode === 'rag' && !!geminiKey.trim() && !isCloudMode;
+    if (!isModelReady && !isCloudMode && !useLegacyGemini) {
+      showError('Model is not loaded yet. Click Retry Model Load in the header, or choose a cloud provider in Settings.');
       return;
     }
 
     const userText = inputValue.trim();
     const requestId = createRequestId();
     const conversationHistory = getConversationHistory();
-    setInputValue('');
+    updateInputValue('');
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
@@ -612,7 +883,11 @@ export default function App() {
 
     try {
       let response: string;
-      if (mode === 'general') {
+      if (isCloudMode && mode === 'general') {
+        response = await chatCloud(userText, conversationHistory, requestId);
+      } else if (isCloudMode && mode === 'rag') {
+        response = await chatCloudRag(userText, conversationHistory, requestId);
+      } else if (mode === 'general') {
         response = await chatGeneral(userText, conversationHistory, requestId);
       } else if (geminiKey.trim()) {
         // Hybrid mode: use Gemini API for RAG when key is set
@@ -645,7 +920,7 @@ export default function App() {
   };
 
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && (!e.shiftKey || e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       if (mode === 'rag' && !selectedDocId) {
         showError("Please select or ingest a document first to use RAG mode.");
@@ -719,9 +994,36 @@ export default function App() {
           </div>
 
           <button
-            onClick={() => { setSettingsTab('models'); setShowSettings(true); }}
-            className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-400 hover:text-zinc-200 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50'} ${geminiKey.trim() ? (isDark ? 'border-emerald-500/50 text-emerald-400' : 'border-emerald-400 text-emerald-600') : ''}`}
-            title={geminiKey.trim() ? 'Settings (Gemini key set)' : 'Settings — models & API key'}
+            onClick={async () => {
+              try {
+                const windowMode = await cycleAssistantWindowMode();
+                setAssistantSettings(prev => ({ ...prev, windowMode }));
+              } catch (err) {
+                showError(`Window resize failed: ${String(err)}`);
+              }
+            }}
+            className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-400 hover:text-zinc-200 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50'}`}
+            title={`Cycle assistant size (${assistantSettings.windowMode})`}
+          >
+            <Maximize2 size={16} />
+          </button>
+
+          <button
+            onClick={() => { setSettingsTab('providers'); setShowSettings(true); }}
+            className={`hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border transition-colors ${
+              isCloudMode
+                ? isDark ? 'border-emerald-500/50 text-emerald-300 bg-emerald-500/10' : 'border-emerald-300 text-emerald-700 bg-emerald-50'
+                : isDark ? 'border-[#2a2a2c] text-zinc-400 hover:text-zinc-200 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50'
+            }`}
+            title="AI provider"
+          >
+            <Cloud size={14} /> {activeProvider?.name ?? 'Local'}
+          </button>
+
+          <button
+            onClick={() => { setSettingsTab('assistant'); setShowSettings(true); }}
+            className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-400 hover:text-zinc-200 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50'} ${isCloudMode ? (isDark ? 'border-emerald-500/50 text-emerald-400' : 'border-emerald-400 text-emerald-600') : ''}`}
+            title={isCloudMode ? `Settings (${activeProvider?.name})` : 'Settings'}
           >
             <Settings size={16} />
           </button>
@@ -760,10 +1062,11 @@ export default function App() {
             <div className={`flex gap-0.5 px-4 pt-2 border-b shrink-0 overflow-x-auto ${isDark ? 'border-[#2a2a2c]' : 'border-zinc-200'}`}>
               {(
                 [
+                  { key: 'assistant', icon: <Keyboard size={13} />, label: 'Assistant' },
                   { key: 'models', icon: <Cpu size={13} />, label: 'Model Catalog' },
                   { key: 'downloaded', icon: <HardDrive size={13} />, label: 'Downloaded' },
                   { key: 'ragTuning', icon: <Sliders size={13} />, label: 'RAG Tuning' },
-                  { key: 'apiKey', icon: <Key size={13} />, label: 'API Key' },
+                  { key: 'providers', icon: <Cloud size={13} />, label: 'AI Providers' },
                 ] as const
               ).map(tab => (
                 <button
@@ -787,6 +1090,159 @@ export default function App() {
 
             {/* Tab Content */}
             <div className="overflow-y-auto p-6 flex-1">
+
+              {/* ── Hidden Assistant ── */}
+              {settingsTab === 'assistant' && (
+                <div className="space-y-5">
+                  <div className={`p-4 rounded-xl border ${isDark ? 'bg-[#232325] border-[#2a2a2c]' : 'bg-zinc-50 border-zinc-200'}`}>
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <h3 className={`text-sm font-semibold ${isDark ? 'text-zinc-100' : 'text-zinc-900'}`}>Hidden Desktop Assistant</h3>
+                        <p className={`text-xs mt-1 leading-relaxed ${isDark ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                          DocuSage stays loaded in the background and toggles with {assistantSettings.globalShortcut}.
+                        </p>
+                      </div>
+                      <span className={`text-[10px] px-2 py-1 rounded-full font-bold uppercase ${isDark ? 'bg-emerald-500/15 text-emerald-400' : 'bg-emerald-100 text-emerald-700'}`}>
+                        {assistantStatus?.isVisible ? 'Visible' : 'Background'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3">
+                    {[
+                      ['launchHidden', 'Launch hidden', 'Start with no visible window and wait for the shortcut or tray.'],
+                      ['hideOnClose', 'Close hides to tray', 'The window close button preserves backend state instead of quitting.'],
+                      ['hideFromTaskbar', 'Hide taskbar entry while hidden', 'Best effort on Windows and Linux; macOS follows Dock activation rules.'],
+                      ['keepModelLoaded', 'Keep local model loaded', 'Preserves instant activation when memory allows.'],
+                    ].map(([key, label, description]) => (
+                      <label
+                        key={key}
+                        className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer ${isDark ? 'bg-[#232325] border-[#2a2a2c]' : 'bg-zinc-50 border-zinc-200'}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={Boolean(assistantSettings[key as keyof AssistantSettings])}
+                          onChange={e => setAssistantSettings(prev => ({ ...prev, [key]: e.target.checked }))}
+                          className="mt-0.5 accent-emerald-500 w-4 h-4 shrink-0"
+                        />
+                        <span>
+                          <span className={`block text-sm font-medium ${isDark ? 'text-zinc-200' : 'text-zinc-800'}`}>{label}</span>
+                          <span className={`block text-xs mt-0.5 ${isDark ? 'text-zinc-500' : 'text-zinc-500'}`}>{description}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+
+                  <div className="grid sm:grid-cols-[1fr_auto] gap-3 items-end">
+                    <div>
+                      <label className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>Global Shortcut</label>
+                      <input
+                        value={assistantShortcutDraft}
+                        onChange={e => setAssistantShortcutDraft(e.target.value)}
+                        placeholder="Alt+Space"
+                        className={`w-full px-3 py-2.5 rounded-xl border text-sm transition-colors focus:outline-none focus:ring-2 ${
+                          isDark ? 'bg-[#232325] border-[#2a2a2c] text-zinc-100 focus:ring-white/30' : 'bg-zinc-50 border-zinc-200 text-zinc-900 focus:ring-[#0F2854]/30'
+                        }`}
+                      />
+                    </div>
+                    <button
+                      onClick={async () => {
+                        try {
+                          const saved = await saveAssistantSettings({ ...assistantSettings, globalShortcut: assistantShortcutDraft.trim() || 'Alt+Space' });
+                          setAssistantSettings(saved);
+                          showSuccess('Assistant settings saved');
+                        } catch (err) {
+                          showError(`Shortcut registration failed: ${String(err)}`);
+                        }
+                      }}
+                      className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-colors ${isDark ? 'bg-white text-zinc-900 hover:bg-zinc-200' : 'bg-[#0F2854] text-white hover:bg-[#0a1b38]'}`}
+                    >
+                      Save
+                    </button>
+                  </div>
+
+                  <div>
+                    <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>Window Mode</label>
+                    <div className={`grid grid-cols-3 gap-1 p-1 rounded-xl border ${isDark ? 'bg-[#232325] border-[#2a2a2c]' : 'bg-zinc-100 border-zinc-200'}`}>
+                      {(['compact', 'medium', 'full'] as AssistantWindowMode[]).map(windowMode => (
+                        <button
+                          key={windowMode}
+                          onClick={async () => {
+                            const next = { ...assistantSettings, windowMode };
+                            setAssistantSettings(next);
+                            try {
+                              await saveAssistantSettings(next);
+                              await setAssistantWindowMode(windowMode);
+                              showSuccess(`Window mode: ${windowMode}`);
+                            } catch (err) {
+                              showError(`Failed to set window mode: ${String(err)}`);
+                            }
+                          }}
+                          className={`px-3 py-2 rounded-lg text-xs font-medium capitalize transition-colors ${
+                            assistantSettings.windowMode === windowMode
+                              ? isDark ? 'bg-white text-zinc-900' : 'bg-[#0F2854] text-white'
+                              : isDark ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-600 hover:text-zinc-900'
+                          }`}
+                        >
+                          {windowMode}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      onClick={async () => {
+                        try {
+                          const mode = await cycleAssistantWindowMode();
+                          setAssistantSettings(prev => ({ ...prev, windowMode: mode }));
+                        } catch (err) {
+                          showError(`Resize failed: ${String(err)}`);
+                        }
+                      }}
+                      className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-medium border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-300 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-700 hover:bg-zinc-50'}`}
+                    >
+                      <Maximize2 size={14} /> Cycle Size
+                    </button>
+                    <button
+                      onClick={async () => {
+                        try {
+                          setIsModelLoading(true);
+                          const msg = await restartAiEngine();
+                          setIsModelReady(true);
+                          setModelStatus(msg);
+                          showSuccess('AI engine restarted');
+                        } catch (err) {
+                          setIsModelReady(false);
+                          showError(`AI engine restart failed: ${String(err)}`);
+                        } finally {
+                          setIsModelLoading(false);
+                        }
+                      }}
+                      className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-medium border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-300 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-700 hover:bg-zinc-50'}`}
+                    >
+                      <Power size={14} /> Restart AI Engine
+                    </button>
+                    <button
+                      onClick={async () => {
+                        try { showSuccess(await checkForUpdates()); } catch (err) { showError(`Update check failed: ${String(err)}`); }
+                      }}
+                      className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-medium border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-300 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-700 hover:bg-zinc-50'}`}
+                    >
+                      <RefreshCw size={14} /> Check Updates
+                    </button>
+                  </div>
+
+                  {assistantStatus && (
+                    <div className={`p-4 rounded-xl border text-xs leading-relaxed space-y-2 ${isDark ? 'bg-[#232325] border-[#2a2a2c] text-zinc-500' : 'bg-zinc-50 border-zinc-200 text-zinc-500'}`}>
+                      <p className="flex items-center gap-2"><Monitor size={14} /> Platform: {assistantStatus.platform.platform}</p>
+                      <p>{assistantStatus.platform.taskbarHidden}</p>
+                      <p>{assistantStatus.platform.altTabHidden}</p>
+                      <p>{assistantStatus.platform.focusNotes}</p>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* ── Model Catalog ── */}
               {settingsTab === 'models' && (
@@ -1103,54 +1559,289 @@ export default function App() {
                 </div>
               )}
 
-              {/* ── API Key ── */}
-              {settingsTab === 'apiKey' && (
-                <div className="space-y-4">
-                  <div>
-                    <label className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>Gemini API Key</label>
-                    <p className={`text-xs mb-2 ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                      When set, RAG document questions use the Gemini API instead of the local LLM for higher quality answers.
-                    </p>
-                    <input
-                      type="password"
-                      value={geminiKey}
-                      onChange={e => setGeminiKey(e.target.value)}
-                      placeholder="AIzaSy..."
-                      className={`w-full px-3 py-2.5 rounded-xl border text-sm transition-colors focus:outline-none focus:ring-2 ${
-                        isDark
-                          ? 'bg-[#232325] border-[#2a2a2c] text-zinc-100 placeholder:text-zinc-600 focus:ring-white/30'
-                          : 'bg-zinc-50 border-zinc-200 text-zinc-900 placeholder:text-zinc-400 focus:ring-[#0F2854]/30'
-                      }`}
-                    />
+              {/* ── AI Providers ── */}
+              {settingsTab === 'providers' && (
+                <div className="space-y-5">
+                  <div className={`flex items-start gap-3 p-4 rounded-xl border ${isDark ? 'bg-[#232325] border-[#2a2a2c]' : 'bg-zinc-50 border-zinc-200'}`}>
+                    <ShieldCheck size={18} className={secureStorageAvailable ? 'text-emerald-500 shrink-0 mt-0.5' : 'text-amber-500 shrink-0 mt-0.5'} />
+                    <div>
+                      <h3 className={`text-sm font-semibold ${isDark ? 'text-zinc-100' : 'text-zinc-900'}`}>AI Provider Mode</h3>
+                      <p className={`text-xs mt-1 leading-relaxed ${isDark ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                        Local mode keeps inference on-device. Cloud mode sends prompts to the selected provider; RAG indexes and vector search remain local.
+                      </p>
+                      <p className={`text-xs mt-1 ${secureStorageAvailable ? 'text-emerald-500' : 'text-amber-500'}`}>
+                        {secureStorageAvailable ? 'API keys are stored with platform secure storage.' : 'Secure storage is not available in this environment.'}
+                      </p>
+                    </div>
                   </div>
 
-                  <div className="flex items-center gap-3 pt-2">
-                    <button
-                      onClick={() => {
-                        try { window.localStorage.setItem(GEMINI_KEY_STORAGE, geminiKey.trim()); } catch {}
-                        setShowSettings(false);
-                      }}
-                      className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-colors ${isDark ? 'bg-white text-zinc-900 hover:bg-zinc-200' : 'bg-[#0F2854] text-white hover:bg-[#0a1b38]'}`}
-                    >
-                      Save
-                    </button>
-                    <button
-                      onClick={() => {
-                        setGeminiKey('');
-                        try { window.localStorage.removeItem(GEMINI_KEY_STORAGE); } catch {}
-                        setShowSettings(false);
-                      }}
-                      className={`px-4 py-2.5 rounded-xl text-sm font-medium border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-400 hover:text-zinc-200 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50'}`}
-                    >
-                      Clear Key
-                    </button>
+                  <div className="grid gap-2">
+                    {providerConfigs.map(provider => {
+                      const isActive = provider.id === activeProviderId;
+                      return (
+                        <div
+                          key={provider.id}
+                          className={`flex items-center justify-between gap-3 p-3 rounded-xl border ${
+                            isActive
+                              ? isDark ? 'bg-emerald-500/5 border-emerald-500/30' : 'bg-emerald-50 border-emerald-200'
+                              : isDark ? 'bg-[#232325] border-[#2a2a2c]' : 'bg-zinc-50 border-zinc-200'
+                          }`}
+                        >
+                          <button
+                            onClick={() => {
+                              setProviderDraft(providerToDraft(provider));
+                              setProviderTestStatus(null);
+                            }}
+                            className="min-w-0 flex-1 text-left"
+                          >
+                            <div className="flex items-center gap-2">
+                              {isActive && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />}
+                              <span className={`text-sm font-medium truncate ${isDark ? 'text-zinc-100' : 'text-zinc-900'}`}>{provider.name}</span>
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded ${isDark ? 'bg-[#2a2a2c] text-zinc-400' : 'bg-white text-zinc-500 border border-zinc-200'}`}>
+                                {PROVIDER_LABELS[provider.provider]}
+                              </span>
+                              {provider.apiKeySet && provider.provider !== 'local' && <Key size={12} className="text-emerald-500" />}
+                            </div>
+                            <p className={`text-xs mt-0.5 truncate ${isDark ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                              {provider.provider === 'local' ? (connectedModelFile ?? 'No local model connected') : `${provider.model ?? 'No model'} · ${provider.baseUrl ?? 'No base URL'}`}
+                            </p>
+                          </button>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await setActiveAiProvider(provider.id);
+                                  setActiveProviderId(provider.id);
+                                  showSuccess(`Active provider: ${provider.name}`);
+                                } catch (err) {
+                                  showError(`Provider switch failed: ${String(err)}`);
+                                }
+                              }}
+                              disabled={isActive}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors disabled:opacity-50 ${isDark ? 'border-[#3a3a3c] text-zinc-300 hover:bg-[#2a2a2c]' : 'border-zinc-300 text-zinc-700 hover:bg-zinc-100'}`}
+                            >
+                              Use
+                            </button>
+                            {provider.id !== 'local' && (
+                              <button
+                                onClick={async () => {
+                                  if (!confirm(`Delete ${provider.name}? Saved credentials will be removed.`)) return;
+                                  try {
+                                    await deleteAiProviderConfig(provider.id);
+                                    await refreshProviderConfigs();
+                                    showSuccess('Provider deleted');
+                                  } catch (err) {
+                                    showError(`Delete failed: ${String(err)}`);
+                                  }
+                                }}
+                                className={`p-1.5 rounded-lg border transition-colors ${isDark ? 'border-[#3a3a3c] text-zinc-500 hover:text-red-400 hover:border-red-500/40 hover:bg-red-500/10' : 'border-zinc-200 text-zinc-400 hover:text-red-500 hover:border-red-300 hover:bg-red-50'}`}
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
 
-                  {geminiKey.trim() && (
-                    <p className="text-xs text-emerald-500 flex items-center gap-1.5">
-                      <CheckCircle size={14} /> Gemini hybrid mode active for RAG questions.
-                    </p>
-                  )}
+                  <div className="flex flex-wrap gap-2">
+                    {(['openAi', 'anthropic', 'googleGemini', 'openRouter', 'ollamaRemote', 'lmStudioRemote', 'customOpenAiCompatible'] as AiProviderKind[]).map(kind => (
+                      <button
+                        key={kind}
+                        onClick={() => {
+                          setProviderDraft(createProviderDraft(kind));
+                          setProviderTestStatus(null);
+                        }}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-400 hover:text-zinc-200 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-50'}`}
+                      >
+                        Add {PROVIDER_LABELS[kind]}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className={`p-4 rounded-xl border space-y-4 ${isDark ? 'bg-[#232325] border-[#2a2a2c]' : 'bg-zinc-50 border-zinc-200'}`}>
+                    <div className="grid sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>Name</label>
+                        <input
+                          value={providerDraft.name}
+                          onChange={e => setProviderDraft(prev => ({ ...prev, name: e.target.value }))}
+                          className={`w-full px-3 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c] text-zinc-100 focus:ring-white/30' : 'bg-white border-zinc-200 text-zinc-900 focus:ring-[#0F2854]/30'}`}
+                        />
+                      </div>
+                      <div>
+                        <label className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>Provider</label>
+                        <select
+                          value={providerDraft.provider}
+                          onChange={e => {
+                            const nextKind = e.target.value as AiProviderKind;
+                            const defaults = PROVIDER_DEFAULTS[nextKind];
+                            setProviderDraft(prev => ({
+                              ...prev,
+                              provider: nextKind,
+                              name: prev.name || PROVIDER_LABELS[nextKind],
+                              baseUrl: defaults.baseUrl,
+                              model: defaults.model,
+                            }));
+                          }}
+                          className={`w-full px-3 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c] text-zinc-100 focus:ring-white/30' : 'bg-white border-zinc-200 text-zinc-900 focus:ring-[#0F2854]/30'}`}
+                        >
+                          {(Object.keys(PROVIDER_LABELS) as AiProviderKind[]).map(kind => (
+                            <option key={kind} value={kind}>{PROVIDER_LABELS[kind]}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {providerDraft.provider !== 'local' && (
+                      <>
+                        <div className="grid sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>Base URL</label>
+                            <input
+                              value={providerDraft.baseUrl}
+                              onChange={e => setProviderDraft(prev => ({ ...prev, baseUrl: e.target.value }))}
+                              className={`w-full px-3 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c] text-zinc-100 focus:ring-white/30' : 'bg-white border-zinc-200 text-zinc-900 focus:ring-[#0F2854]/30'}`}
+                            />
+                          </div>
+                          <div>
+                            <label className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>Model</label>
+                            <input
+                              value={providerDraft.model}
+                              onChange={e => setProviderDraft(prev => ({ ...prev, model: e.target.value }))}
+                              className={`w-full px-3 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c] text-zinc-100 focus:ring-white/30' : 'bg-white border-zinc-200 text-zinc-900 focus:ring-[#0F2854]/30'}`}
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>API Key</label>
+                          <div className="flex gap-2">
+                            <input
+                              type={showProviderKey ? 'text' : 'password'}
+                              value={providerDraft.apiKey}
+                              onChange={e => setProviderDraft(prev => ({ ...prev, apiKey: e.target.value, deleteApiKey: false }))}
+                              placeholder={providerDraft.id ? 'Leave blank to keep saved key' : 'Enter API key'}
+                              className={`flex-1 px-3 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c] text-zinc-100 placeholder:text-zinc-600 focus:ring-white/30' : 'bg-white border-zinc-200 text-zinc-900 placeholder:text-zinc-400 focus:ring-[#0F2854]/30'}`}
+                            />
+                            <button
+                              onClick={() => setShowProviderKey(prev => !prev)}
+                              className={`p-2.5 rounded-xl border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-400 hover:text-zinc-200' : 'border-zinc-200 text-zinc-500 hover:text-zinc-700'}`}
+                              title={showProviderKey ? 'Hide API key' : 'Show API key'}
+                            >
+                              {showProviderKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                            </button>
+                          </div>
+                          {providerDraft.id && providerConfigs.find(provider => provider.id === providerDraft.id)?.apiKeySet && (
+                            <label className={`flex items-center gap-2 mt-2 text-xs ${isDark ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                              <input
+                                type="checkbox"
+                                checked={providerDraft.deleteApiKey}
+                                onChange={e => setProviderDraft(prev => ({ ...prev, deleteApiKey: e.target.checked, apiKey: e.target.checked ? '' : prev.apiKey }))}
+                                className="accent-emerald-500"
+                              />
+                              Delete saved API key on save
+                            </label>
+                          )}
+                        </div>
+
+                        <div className="grid sm:grid-cols-4 gap-3">
+                          <div className="sm:col-span-2">
+                            <label className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>Organization</label>
+                            <input
+                              value={providerDraft.organization}
+                              onChange={e => setProviderDraft(prev => ({ ...prev, organization: e.target.value }))}
+                              className={`w-full px-3 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c] text-zinc-100 focus:ring-white/30' : 'bg-white border-zinc-200 text-zinc-900 focus:ring-[#0F2854]/30'}`}
+                            />
+                          </div>
+                          <div>
+                            <label className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>Timeout</label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={600}
+                              value={providerDraft.timeoutSecs}
+                              onChange={e => setProviderDraft(prev => ({ ...prev, timeoutSecs: Number(e.target.value) || 60 }))}
+                              className={`w-full px-3 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c] text-zinc-100 focus:ring-white/30' : 'bg-white border-zinc-200 text-zinc-900 focus:ring-[#0F2854]/30'}`}
+                            />
+                          </div>
+                          <div>
+                            <label className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>Temperature</label>
+                            <input
+                              type="number"
+                              min={0}
+                              max={2}
+                              step={0.1}
+                              value={providerDraft.temperature}
+                              onChange={e => setProviderDraft(prev => ({ ...prev, temperature: Number(e.target.value) || 0 }))}
+                              className={`w-full px-3 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c] text-zinc-100 focus:ring-white/30' : 'bg-white border-zinc-200 text-zinc-900 focus:ring-[#0F2854]/30'}`}
+                            />
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    <label className={`flex items-center gap-2 text-sm ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>
+                      <input
+                        type="checkbox"
+                        checked={providerDraft.enabled}
+                        onChange={e => setProviderDraft(prev => ({ ...prev, enabled: e.target.checked }))}
+                        className="accent-emerald-500"
+                      />
+                      Enabled
+                    </label>
+
+                    <div className="flex flex-wrap gap-3">
+                      <button
+                        disabled={isProviderBusy}
+                        onClick={async () => {
+                          setIsProviderBusy(true);
+                          try {
+                            const saved = await saveAiProviderConfig(draftToInput(providerDraft));
+                            setProviderDraft(providerToDraft(saved));
+                            await refreshProviderConfigs();
+                            showSuccess('Provider saved');
+                          } catch (err) {
+                            showError(`Save failed: ${String(err)}`);
+                          } finally {
+                            setIsProviderBusy(false);
+                          }
+                        }}
+                        className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-colors disabled:opacity-50 ${isDark ? 'bg-white text-zinc-900 hover:bg-zinc-200' : 'bg-[#0F2854] text-white hover:bg-[#0a1b38]'}`}
+                      >
+                        Save Provider
+                      </button>
+                      {providerDraft.id && (
+                        <button
+                          disabled={isProviderBusy}
+                          onClick={async () => {
+                            setIsProviderBusy(true);
+                            setProviderTestStatus(null);
+                            try {
+                              const result = await testAiProviderConnection(providerDraft.id!);
+                              setProviderTestStatus(result);
+                              if (result.ok) showSuccess(result.message); else showError(result.message);
+                            } catch (err) {
+                              showError(`Connection test failed: ${String(err)}`);
+                            } finally {
+                              setIsProviderBusy(false);
+                            }
+                          }}
+                          className={`px-4 py-2.5 rounded-xl text-sm font-medium border transition-colors disabled:opacity-50 ${isDark ? 'border-[#2a2a2c] text-zinc-300 hover:bg-[#1e1e20]' : 'border-zinc-200 text-zinc-700 hover:bg-white'}`}
+                        >
+                          Test Connection
+                        </button>
+                      )}
+                    </div>
+
+                    {providerTestStatus && (
+                      <p className={`text-xs ${providerTestStatus.ok ? 'text-emerald-500' : 'text-red-500'}`}>
+                        {providerTestStatus.message}
+                      </p>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -1160,7 +1851,7 @@ export default function App() {
 
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}
-        <aside className={`w-[280px] flex flex-col border-r shrink-0 transition-colors duration-200 ${isDark ? 'border-[#2a2a2c]' : 'border-zinc-200'}`}>
+        <aside className={`${isCompactUi ? 'hidden' : 'w-[280px]'} flex flex-col border-r shrink-0 transition-colors duration-200 ${isDark ? 'border-[#2a2a2c]' : 'border-zinc-200'}`}>
           <div className="p-4 flex flex-col shrink-0 gap-3">
             <button
               onClick={handleNewChat}
@@ -1268,8 +1959,8 @@ export default function App() {
         {/* Main Content */}
         <main className="flex-1 flex flex-col relative min-w-0">
           {/* Main Content Header */}
-          <div className={`flex items-center justify-between px-6 py-3 border-b shrink-0 transition-colors duration-200 ${isDark ? 'border-[#2a2a2c]' : 'border-zinc-200'}`}>
-            <div className="flex items-center gap-3">
+          <div className={`flex flex-wrap items-center justify-between gap-2 px-6 py-3 border-b shrink-0 transition-colors duration-200 ${isDark ? 'border-[#2a2a2c]' : 'border-zinc-200'}`}>
+            <div className="flex items-center gap-3 min-w-0">
               <h1 className="text-base font-semibold">
                 <TypewriterEffect key={`${theme}-${mode}`} text="Your Private Assistant" speed={100} />
               </h1>
@@ -1292,6 +1983,49 @@ export default function App() {
               )}
             </div>
 
+            {isCompactUi && (
+              <div className="order-3 w-full grid grid-cols-[auto_auto_1fr_auto] gap-2">
+                <button
+                  onClick={handleNewChat}
+                  className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-300 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
+                  title="New Chat"
+                >
+                  <Plus size={16} />
+                </button>
+                <button
+                  onClick={handlePickFile}
+                  className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-300 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
+                  title="Ingest PDF"
+                >
+                  <Paperclip size={16} />
+                </button>
+                <select
+                  value={mode === 'rag' ? (selectedDocId ?? '') : selectedGeneralChatId}
+                  onChange={e => {
+                    if (mode === 'rag') setSelectedDocId(e.target.value || null);
+                    else setSelectedGeneralChatId(e.target.value);
+                  }}
+                  className={`min-w-0 px-2 py-2 rounded-lg border text-xs focus:outline-none ${isDark ? 'bg-[#232325] border-[#2a2a2c] text-zinc-200' : 'bg-white border-zinc-200 text-zinc-700'}`}
+                >
+                  {mode === 'rag' ? (
+                    <>
+                      <option value="">No document selected</option>
+                      {documents.map(doc => <option key={doc.id} value={doc.id}>{doc.name}</option>)}
+                    </>
+                  ) : (
+                    generalChats.map(chat => <option key={chat.id} value={chat.id}>{chat.name}</option>)
+                  )}
+                </select>
+                <button
+                  onClick={() => { setSettingsTab('providers'); setShowSettings(true); }}
+                  className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-300 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
+                  title="AI Provider"
+                >
+                  <Cloud size={16} />
+                </button>
+              </div>
+            )}
+
             {/* Mode Toggle */}
             <div className={`flex rounded-full p-1 border transition-colors duration-200 ${isDark ? 'bg-[#232325] border-[#2a2a2c]' : 'bg-zinc-100 border-zinc-200'}`}>
               <button
@@ -1310,7 +2044,14 @@ export default function App() {
           </div>
 
           {/* Chat Area */}
-          <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
+          <div
+            ref={chatScrollRef}
+            onScroll={e => {
+              const top = e.currentTarget.scrollTop;
+              setScrollPositions(prev => ({ ...prev, [activeConversationKey]: top }));
+            }}
+            className="flex-1 overflow-y-auto p-6 flex flex-col gap-6"
+          >
             {activeMessages.length === 0 ? (
               <div className="flex flex-1 items-center justify-center">
                 <div className="text-center max-w-md">
@@ -1389,7 +2130,7 @@ export default function App() {
                 <textarea
                   ref={textareaRef}
                   value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
+                  onChange={(e) => updateInputValue(e.target.value)}
                   onKeyDown={handleInputKeyDown}
                   disabled={isTyping || (mode === 'rag' && !selectedDocId)}
                   placeholder={mode === 'rag' ? (selectedDocId ? "Ask about this document..." : "Select or ingest a document first...") : "Ask a general question..."}

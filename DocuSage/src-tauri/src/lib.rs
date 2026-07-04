@@ -1,4 +1,6 @@
 mod commands;
+mod assistant;
+mod providers;
 pub mod rag;
 
 use std::path::{Path, PathBuf};
@@ -177,11 +179,40 @@ pub fn run() {
     };
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            let _ = assistant::show_assistant(app);
+        }))
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        let _ = assistant::toggle_assistant(app);
+                    }
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
+        .setup(|app| assistant::setup(app))
+        .on_window_event(assistant::handle_window_event)
         .invoke_handler(tauri::generate_handler![
+            assistant::get_assistant_status,
+            assistant::save_assistant_settings,
+            assistant::show_assistant_window,
+            assistant::hide_assistant_window,
+            assistant::toggle_assistant_window,
+            assistant::set_assistant_window_mode,
+            assistant::cycle_assistant_window_mode,
+            assistant::check_for_updates,
+            providers::list_ai_provider_configs,
+            providers::save_ai_provider_config,
+            providers::delete_ai_provider_config,
+            providers::set_active_ai_provider,
+            providers::test_ai_provider_connection,
+            providers::chat_cloud,
+            providers::chat_cloud_rag,
             commands::load_model,
             commands::chat_general,
             commands::chat_rag,
@@ -192,6 +223,7 @@ pub fn run() {
             commands::list_downloaded_models,
             commands::connect_model,
             commands::disconnect_model,
+            commands::restart_ai_engine,
             commands::delete_model,
             commands::get_models_dir,
             commands::get_connected_model,

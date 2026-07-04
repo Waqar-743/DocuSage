@@ -1183,6 +1183,32 @@ pub async fn disconnect_model(state: tauri::State<'_, AppState>) -> Result<(), S
     Ok(())
 }
 
+#[tauri::command]
+pub async fn restart_ai_engine(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    state.cancel_current_response.store(true, Ordering::Relaxed);
+    {
+        let mut active_request = state
+            .active_request_id
+            .lock()
+            .map_err(|e| format!("Active request lock failed: {e}"))?;
+        *active_request = None;
+    }
+    {
+        let mut guard = state.model.lock().await;
+        *guard = None;
+    }
+    {
+        let mut cf = state
+            .connected_model_file
+            .write()
+            .map_err(|e| format!("connected_model_file lock: {e}"))?;
+        *cf = None;
+    }
+    state.cancel_current_response.store(false, Ordering::Relaxed);
+
+    load_model(state, None).await
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // delete_model — remove a .gguf file from disk
 // ─────────────────────────────────────────────────────────────────────────────

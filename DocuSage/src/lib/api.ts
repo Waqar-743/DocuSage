@@ -24,6 +24,72 @@ export type RagConfig = {
   showContext: boolean;
 };
 
+export type AssistantWindowMode = "compact" | "medium" | "full";
+
+export type AssistantSettings = {
+  launchHidden: boolean;
+  hideOnClose: boolean;
+  hideFromTaskbar: boolean;
+  keepModelLoaded: boolean;
+  globalShortcut: string;
+  windowMode: AssistantWindowMode;
+  lastMonitorName: string | null;
+};
+
+export type AssistantStatus = {
+  isVisible: boolean;
+  settings: AssistantSettings;
+  platform: {
+    platform: string;
+    startupHidden: string;
+    taskbarHidden: string;
+    altTabHidden: string;
+    focusNotes: string;
+  };
+};
+
+export type AiProviderKind =
+  | "local"
+  | "openAi"
+  | "anthropic"
+  | "googleGemini"
+  | "openRouter"
+  | "ollamaRemote"
+  | "lmStudioRemote"
+  | "customOpenAiCompatible";
+
+export type AiProviderConfig = {
+  id: string;
+  name: string;
+  provider: AiProviderKind;
+  enabled: boolean;
+  baseUrl: string | null;
+  model: string | null;
+  organization: string | null;
+  project: string | null;
+  timeoutSecs: number;
+  temperature: number;
+  apiKeySet: boolean;
+  options: Record<string, unknown>;
+};
+
+export type AiProviderConfigInput = Omit<AiProviderConfig, "id" | "apiKeySet"> & {
+  id?: string;
+  apiKey?: string;
+  deleteApiKey: boolean;
+};
+
+export type ProviderList = {
+  activeProviderId: string;
+  providers: AiProviderConfig[];
+  secureStorageAvailable: boolean;
+};
+
+export type ProviderTestResult = {
+  ok: boolean;
+  message: string;
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Type-safe IPC wrappers for every Tauri command.
 //
@@ -109,6 +175,24 @@ export async function chatGeminiRag(
   return invoke<string>("chat_gemini_rag", { apiKey, prompt, history });
 }
 
+export async function chatCloud(
+  prompt: string,
+  history: ChatHistoryMessage[],
+  requestId: string,
+): Promise<string> {
+  if (!isTauri()) { await mockDelay(1200); return "Cloud preview: the desktop app will send this request to the selected provider."; }
+  return invoke<string>("chat_cloud", { prompt, history, requestId });
+}
+
+export async function chatCloudRag(
+  prompt: string,
+  history: ChatHistoryMessage[],
+  requestId: string,
+): Promise<string> {
+  if (!isTauri()) { await mockDelay(1200); return "Cloud RAG preview: DocuSage will retrieve local document chunks, then send only the prompt context to the selected provider."; }
+  return invoke<string>("chat_cloud_rag", { prompt, history, requestId });
+}
+
 export async function stopChat(requestId: string): Promise<void> {
   if (!isTauri()) return;
   await invoke<void>("stop_chat", { requestId });
@@ -167,6 +251,12 @@ export async function disconnectModel(): Promise<void> {
   return invoke<void>("disconnect_model");
 }
 
+/** Restart the local model engine without restarting the desktop app. */
+export async function restartAiEngine(): Promise<string> {
+  if (!isTauri()) { await mockDelay(500); return "AI engine restarted (browser preview)"; }
+  return invoke<string>("restart_ai_engine");
+}
+
 /** Permanently delete a .gguf file from disk by its absolute path. */
 export async function deleteModel(filePath: string): Promise<void> {
   if (!isTauri()) { await mockDelay(400); return; }
@@ -204,4 +294,125 @@ export async function getRagConfig(): Promise<RagConfig> {
 export async function saveRagConfig(config: RagConfig): Promise<void> {
   if (!isTauri()) { await mockDelay(200); return; }
   return invoke<void>("save_rag_config", { config });
+}
+
+// ── Hidden desktop assistant lifecycle ──────────────────────────────────────
+
+export const ASSISTANT_SETTINGS_DEFAULTS: AssistantSettings = {
+  launchHidden: true,
+  hideOnClose: true,
+  hideFromTaskbar: true,
+  keepModelLoaded: true,
+  globalShortcut: "Alt+Space",
+  windowMode: "medium",
+  lastMonitorName: null,
+};
+
+export async function getAssistantStatus(): Promise<AssistantStatus> {
+  if (!isTauri()) {
+    return {
+      isVisible: true,
+      settings: { ...ASSISTANT_SETTINGS_DEFAULTS },
+      platform: {
+        platform: "browser",
+        startupHidden: "Desktop-only",
+        taskbarHidden: "Desktop-only",
+        altTabHidden: "Desktop-only",
+        focusNotes: "Desktop-only",
+      },
+    };
+  }
+  return invoke<AssistantStatus>("get_assistant_status");
+}
+
+export async function saveAssistantSettings(settings: AssistantSettings): Promise<AssistantSettings> {
+  if (!isTauri()) { await mockDelay(200); return settings; }
+  return invoke<AssistantSettings>("save_assistant_settings", { settings });
+}
+
+export async function hideAssistantWindow(): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("hide_assistant_window");
+}
+
+export async function showAssistantWindow(): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("show_assistant_window");
+}
+
+export async function toggleAssistantWindow(): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("toggle_assistant_window");
+}
+
+export async function setAssistantWindowMode(windowMode: AssistantWindowMode): Promise<AssistantWindowMode> {
+  if (!isTauri()) return windowMode;
+  return invoke<AssistantWindowMode>("set_assistant_window_mode", { windowMode });
+}
+
+export async function cycleAssistantWindowMode(): Promise<AssistantWindowMode> {
+  if (!isTauri()) return "medium";
+  return invoke<AssistantWindowMode>("cycle_assistant_window_mode");
+}
+
+export async function checkForUpdates(): Promise<string> {
+  if (!isTauri()) return "No updater plugin is configured for browser preview.";
+  return invoke<string>("check_for_updates");
+}
+
+// ── Cloud and remote provider settings ──────────────────────────────────────
+
+export async function listAiProviderConfigs(): Promise<ProviderList> {
+  if (!isTauri()) {
+    return {
+      activeProviderId: "local",
+      secureStorageAvailable: false,
+      providers: [{
+        id: "local",
+        name: "Local",
+        provider: "local",
+        enabled: true,
+        baseUrl: null,
+        model: null,
+        organization: null,
+        project: null,
+        timeoutSecs: 60,
+        temperature: 0.2,
+        apiKeySet: false,
+        options: {},
+      }],
+    };
+  }
+  return invoke<ProviderList>("list_ai_provider_configs");
+}
+
+export async function saveAiProviderConfig(input: AiProviderConfigInput): Promise<AiProviderConfig> {
+  if (!isTauri()) {
+    await mockDelay(250);
+    return {
+      ...input,
+      id: input.id ?? `provider-${Date.now()}`,
+      apiKeySet: !!input.apiKey,
+      baseUrl: input.baseUrl ?? null,
+      model: input.model ?? null,
+      organization: input.organization ?? null,
+      project: input.project ?? null,
+    };
+  }
+  return invoke<AiProviderConfig>("save_ai_provider_config", { input });
+}
+
+export async function deleteAiProviderConfig(providerId: string): Promise<void> {
+  if (!isTauri()) { await mockDelay(200); return; }
+  return invoke<void>("delete_ai_provider_config", { providerId });
+}
+
+export async function setActiveAiProvider(providerId: string): Promise<string> {
+  if (!isTauri()) { await mockDelay(150); return providerId; }
+  return invoke<string>("set_active_ai_provider", { providerId });
+}
+
+export async function testAiProviderConnection(providerId: string): Promise<ProviderTestResult> {
+  if (!isTauri()) { await mockDelay(700); return { ok: true, message: "Preview connection succeeded." }; }
+  return invoke<ProviderTestResult>("test_ai_provider_connection", { providerId });
 }
