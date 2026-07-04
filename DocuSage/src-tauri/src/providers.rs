@@ -20,7 +20,9 @@ pub enum AiProviderKind {
     Anthropic,
     GoogleGemini,
     OpenRouter,
+    OllamaLocal,
     OllamaRemote,
+    LmStudio,
     LmStudioRemote,
     CustomOpenAiCompatible,
 }
@@ -132,9 +134,17 @@ fn provider_defaults(kind: &AiProviderKind) -> (Option<String>, Option<String>) 
             Some("https://openrouter.ai/api/v1".to_string()),
             Some("openai/gpt-4.1-mini".to_string()),
         ),
+        AiProviderKind::OllamaLocal => (
+            Some("http://localhost:11434".to_string()),
+            Some("llama3.2".to_string()),
+        ),
         AiProviderKind::OllamaRemote => (
             Some("http://localhost:11434".to_string()),
             Some("llama3.2".to_string()),
+        ),
+        AiProviderKind::LmStudio => (
+            Some("http://localhost:1234/v1".to_string()),
+            Some("local-model".to_string()),
         ),
         AiProviderKind::LmStudioRemote => (
             Some("http://localhost:1234/v1".to_string()),
@@ -347,7 +357,10 @@ fn model(config: &AiProviderConfig) -> Result<String, String> {
 
 fn api_key_for(config: &AiProviderConfig) -> Result<String, String> {
     match config.provider {
-        AiProviderKind::OllamaRemote | AiProviderKind::LmStudioRemote => {
+        AiProviderKind::OllamaLocal
+        | AiProviderKind::OllamaRemote
+        | AiProviderKind::LmStudio
+        | AiProviderKind::LmStudioRemote => {
             Ok(read_api_key(&config.id).unwrap_or_default())
         }
         AiProviderKind::Local => Ok(String::new()),
@@ -599,6 +612,7 @@ async fn send_chat(
     match config.provider {
         AiProviderKind::OpenAi
         | AiProviderKind::OpenRouter
+        | AiProviderKind::LmStudio
         | AiProviderKind::LmStudioRemote
         | AiProviderKind::CustomOpenAiCompatible => {
             openai_compatible_chat(&client, config, &api_key, system_prompt, prompt, history).await
@@ -609,7 +623,9 @@ async fn send_chat(
         AiProviderKind::GoogleGemini => {
             gemini_chat(&client, config, &api_key, system_prompt, prompt, history).await
         }
-        AiProviderKind::OllamaRemote => ollama_chat(&client, config, system_prompt, prompt, history).await,
+        AiProviderKind::OllamaLocal | AiProviderKind::OllamaRemote => {
+            ollama_chat(&client, config, system_prompt, prompt, history).await
+        }
         AiProviderKind::Local => unreachable!(),
     }
 }
@@ -617,7 +633,7 @@ async fn send_chat(
 async fn test_provider(config: &AiProviderConfig) -> Result<String, String> {
     match config.provider {
         AiProviderKind::Local => Ok("Local mode is available when a GGUF model is connected.".to_string()),
-        AiProviderKind::OllamaRemote => {
+        AiProviderKind::OllamaLocal | AiProviderKind::OllamaRemote => {
             let client = reqwest::Client::builder()
                 .timeout(Duration::from_secs(config.timeout_secs.max(1)))
                 .build()

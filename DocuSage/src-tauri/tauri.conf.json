@@ -12,13 +12,18 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "DocuSage",
-        "width": 1100,
-        "height": 750,
-        "minWidth": 360,
+        "width": 640,
+        "height": 760,
+        "minWidth": 420,
         "minHeight": 420,
         "visible": false,
-        "skipTaskbar": true
+        "skipTaskbar": true,
+        "decorations": false,
+        "transparent": true,
+        "shadow": true,
+        "resizable": true
       }
     ],
     "security": {

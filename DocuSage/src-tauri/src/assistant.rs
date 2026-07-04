@@ -16,6 +16,7 @@ use tauri_plugin_global_shortcut::{
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const DEFAULT_SHORTCUT: &str = "Alt+Space";
+const FALLBACK_SHORTCUT: &str = "Ctrl+Space";
 const ACTIVATION_DEBOUNCE_MS: u64 = 180;
 
 #[derive(Default)]
@@ -43,7 +44,7 @@ impl AssistantWindowMode {
 
 impl Default for AssistantWindowMode {
     fn default() -> Self {
-        Self::Medium
+        Self::Compact
     }
 }
 
@@ -57,6 +58,8 @@ pub struct AssistantSettings {
     pub global_shortcut: String,
     pub window_mode: AssistantWindowMode,
     pub last_monitor_name: Option<String>,
+    #[serde(default)]
+    pub first_open_done: bool,
 }
 
 impl Default for AssistantSettings {
@@ -67,8 +70,9 @@ impl Default for AssistantSettings {
             hide_from_taskbar: true,
             keep_model_loaded: true,
             global_shortcut: DEFAULT_SHORTCUT.to_string(),
-            window_mode: AssistantWindowMode::Medium,
+            window_mode: AssistantWindowMode::Compact,
             last_monitor_name: None,
+            first_open_done: false,
         }
     }
 }
@@ -255,13 +259,13 @@ fn apply_window_geometry(window: &WebviewWindow, settings: &AssistantSettings) -
 
     let screen_w = monitor_size.width as i32;
     let screen_h = monitor_size.height as i32;
-    let min_compact = (360.0 * scale).round() as i32;
-    let max_compact = (520.0 * scale).round() as i32;
+    let min_compact = (420.0 * scale).round() as i32;
+    let max_compact = (720.0 * scale).round() as i32;
     let min_height = (520.0 * scale).round() as i32;
 
     let (width, height, x, y, maximize) = match settings.window_mode {
         AssistantWindowMode::Compact => {
-            let width = ((screen_w as f32 * 0.15).round() as i32)
+            let width = ((screen_w as f32 * 0.33).round() as i32)
                 .max(min_compact)
                 .min(max_compact)
                 .min(screen_w - padding * 2);
@@ -336,7 +340,12 @@ pub fn show_assistant(app: &AppHandle) -> Result<(), String> {
     }
 
     let window = main_window(app)?;
-    let settings = read_settings(app);
+    let mut settings = read_settings(app);
+    if !settings.first_open_done {
+        settings.window_mode = AssistantWindowMode::Compact;
+        settings.first_open_done = true;
+        let _ = write_settings(app, &settings);
+    }
 
     let _ = window.set_skip_taskbar(false);
     apply_window_geometry(&window, &settings)?;
@@ -373,6 +382,47 @@ pub fn register_shortcut(app: &AppHandle, shortcut_text: &str) -> Result<(), Str
         .map_err(|e| format!("Shortcut '{shortcut_text}' could not be registered. Another app may already be using it: {e}"))
 }
 
+fn register_shortcut_with_fallback(
+    app: &AppHandle,
+    settings: &AssistantSettings,
+) -> AssistantSettings {
+    let mut active_settings = settings.clone();
+
+    match replace_shortcut(app, &settings.global_shortcut, None) {
+        Ok(()) => active_settings,
+        Err(primary_error) => {
+            let fallback = if settings.global_shortcut == FALLBACK_SHORTCUT {
+                DEFAULT_SHORTCUT
+            } else {
+                FALLBACK_SHORTCUT
+            };
+
+            match register_shortcut(app, fallback) {
+                Ok(()) => {
+                    active_settings.global_shortcut = fallback.to_string();
+                    let _ = write_settings(app, &active_settings);
+                    let _ = app.emit(
+                        "assistant-shortcut-error",
+                        serde_json::json!({
+                            "message": format!("{primary_error} Fallback shortcut '{fallback}' was registered instead.")
+                        }),
+                    );
+                }
+                Err(fallback_error) => {
+                    let _ = app.emit(
+                        "assistant-shortcut-error",
+                        serde_json::json!({
+                            "message": format!("{primary_error} Fallback shortcut '{fallback}' also failed: {fallback_error}")
+                        }),
+                    );
+                }
+            }
+
+            active_settings
+        }
+    }
+}
+
 fn replace_shortcut(app: &AppHandle, next_shortcut: &str, previous_shortcut: Option<&str>) -> Result<(), String> {
     app.global_shortcut()
         .unregister_all()
@@ -403,7 +453,12 @@ fn setup_tray(app: &App) -> Result<(), tauri::Error> {
         &[&show, &hide, &settings, &check_updates, &restart_ai, &quit],
     )?;
 
-    TrayIconBuilder::with_id("docusage-assistant")
+    let mut tray = TrayIconBuilder::with_id("docusage-assistant");
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+
+    tray
         .tooltip("DocuSage")
         .menu(&menu)
         .show_menu_on_left_click(false)
@@ -449,13 +504,7 @@ pub fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(AssistantRuntime::default());
 
     let app_handle = app.handle().clone();
-    let settings = read_settings(&app_handle);
-    if let Err(error) = replace_shortcut(&app_handle, &settings.global_shortcut, None) {
-        let _ = app_handle.emit(
-            "assistant-shortcut-error",
-            serde_json::json!({ "message": error }),
-        );
-    }
+    let settings = register_shortcut_with_fallback(&app_handle, &read_settings(&app_handle));
 
     setup_tray(app)?;
 

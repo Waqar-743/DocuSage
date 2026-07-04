@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="public/logo-light.svg" alt="DocuSage Logo" width="140" />
+  <img src="src-tauri/icons/app-icon.svg" alt="DocuSage Logo" width="140" />
 </p>
 
 <h1 align="center">DocuSage</h1>
@@ -33,7 +33,7 @@ The app keeps ingestion, embeddings, retrieval, and storage on-device. It now al
 - **Local RAG pipeline** for PDF ingestion, chunking, embeddings, and retrieval
 - **Hidden desktop assistant mode** with background startup, system tray controls, and global shortcut activation
 - **Compact / medium / full assistant window modes** with smart monitor-aware positioning
-- **Cloud and remote provider modes** for OpenAI, Anthropic, Google Gemini, OpenRouter, Ollama remote, LM Studio remote, and custom OpenAI-compatible APIs
+- **Local, cloud, and remote provider modes** for OpenAI, Anthropic Claude, Google Gemini, OpenRouter, Ollama local/remote, LM Studio, and custom OpenAI-compatible APIs
 - **Grounded answers with sources** based on retrieved document excerpts
 - **Settings panels for assistant behavior, local models, RAG tuning, and AI provider credentials**
 - **Streaming responses and stop generation controls**

@@ -133,9 +133,11 @@ Normal assistant behavior uses `hide/show`; it does not destroy the webview and 
 
 Window modes:
 
-- Compact: around 15% screen width with a practical minimum width.
+- Compact: around 30-35% screen width with a practical minimum width and a right-side floating position.
 - Medium: around 50% screen width and centered.
 - Full: near full-screen/maximized on the target monitor without destructive fullscreen.
+
+First activation after install or settings migration forces compact mode once through the native `firstOpenDone` setting. After that, the user's selected window mode is preserved across hide/show and app restarts.
 
 ## Window State Machine
 
@@ -183,6 +185,7 @@ Implementation:
 - Registers during assistant setup.
 - Settings can save a replacement shortcut string.
 - Registration failure is emitted to React as `assistant-shortcut-error`.
+- If the configured shortcut cannot be registered during startup, DocuSage attempts `Ctrl+Space` as a fallback and writes the active fallback shortcut to assistant settings.
 
 Limitations:
 
@@ -202,7 +205,7 @@ Tray actions:
 - Restart AI Engine.
 - Quit.
 
-Left-click toggles the assistant. Quit is explicit and exits the process. Settings shows the assistant and opens the Assistant tab.
+Left-click toggles the assistant. Quit is explicit and exits the process. Settings shows the assistant and opens Settings.
 
 ## Multi-Monitor Behavior
 
@@ -270,9 +273,9 @@ Activation:
 
 Installer size:
 
-- Unused template assets `public/tauri.svg`, `public/vite.svg`, and `src/assets/react.svg` were removed.
+- Unused frontend public logos were removed from `public/` so Vite no longer copies them into `dist`.
 - GGUF models remain externally managed or downloaded into app data, not bundled by default.
-- Production frontend build is used.
+- Production frontend build is used. Current frontend output is about 332 KB uncompressed (`index.html`, one CSS asset, one JS asset).
 - No duplicate model assets are introduced.
 
 ## Accessibility Strategy

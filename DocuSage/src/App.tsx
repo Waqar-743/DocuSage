@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Moon, Sun, Settings, Database, Plus, FileText, Send, Paperclip, AlertCircle, Trash2, X, MessageSquare, Square, CheckCircle, Key, Download, Cpu, HardDrive, Sliders, Link, Link2Off, FolderOpen, RotateCcw, Maximize2, Cloud, Keyboard, ShieldCheck, Eye, EyeOff, Monitor, Power, RefreshCw } from 'lucide-react';
+import { Settings, Database, Plus, FileText, Send, Paperclip, AlertCircle, Trash2, X, MessageSquare, Square, CheckCircle, Key, Download, Cpu, HardDrive, Sliders, Link, Link2Off, FolderOpen, RotateCcw, Maximize2, Cloud, Keyboard, ShieldCheck, Eye, EyeOff, Monitor, Power, RefreshCw, Menu, Copy, Check, Search, Folder, Command, Palette, Wrench, Minimize2 } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import {
@@ -40,8 +40,11 @@ type GeneralChat = {
   messages: Message[];
 };
 
+type AppearanceTheme = 'dark' | 'light' | 'glass' | 'paper' | 'rose' | 'ocean';
+type SidebarTab = 'chats' | 'folders' | 'docs';
+
 type PersistedAppState = {
-  theme: 'dark' | 'light';
+  theme: AppearanceTheme;
   mode: 'general' | 'rag';
   documents: Document[];
   generalChats: GeneralChat[];
@@ -50,6 +53,8 @@ type PersistedAppState = {
   drafts: Record<string, string>;
   scrollPositions: Record<string, number>;
   assistantWindowMode: AssistantWindowMode;
+  sidebarCollapsed: boolean;
+  sidebarTab: SidebarTab;
 };
 
 type DownloadProgress = {
@@ -61,7 +66,7 @@ type DownloadProgress = {
   error?: string;
 };
 
-type SettingsTab = 'assistant' | 'models' | 'downloaded' | 'ragTuning' | 'providers';
+type SettingsTab = 'providers' | 'appearance' | 'shortcuts' | 'advanced' | 'models' | 'downloaded' | 'ragTuning';
 
 type ProviderDraft = {
   id?: string;
@@ -181,11 +186,13 @@ const MODEL_CATALOG: ModelCatalogEntry[] = [
 const PROVIDER_LABELS: Record<AiProviderKind, string> = {
   local: 'Local',
   openAi: 'OpenAI',
-  anthropic: 'Anthropic',
+  anthropic: 'Anthropic Claude',
   googleGemini: 'Google Gemini',
   openRouter: 'OpenRouter',
-  ollamaRemote: 'Ollama remote',
-  lmStudioRemote: 'LM Studio remote',
+  ollamaLocal: 'Ollama Local',
+  ollamaRemote: 'Ollama Remote',
+  lmStudio: 'LM Studio',
+  lmStudioRemote: 'LM Studio Remote',
   customOpenAiCompatible: 'Custom OpenAI-compatible',
 };
 
@@ -195,10 +202,33 @@ const PROVIDER_DEFAULTS: Record<AiProviderKind, { baseUrl: string; model: string
   anthropic: { baseUrl: 'https://api.anthropic.com/v1', model: 'claude-3-5-haiku-latest', needsKey: true },
   googleGemini: { baseUrl: 'https://generativelanguage.googleapis.com/v1beta', model: 'gemini-2.5-flash', needsKey: true },
   openRouter: { baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4.1-mini', needsKey: true },
+  ollamaLocal: { baseUrl: 'http://localhost:11434', model: 'llama3.2', needsKey: false },
   ollamaRemote: { baseUrl: 'http://localhost:11434', model: 'llama3.2', needsKey: false },
+  lmStudio: { baseUrl: 'http://localhost:1234/v1', model: 'local-model', needsKey: false },
   lmStudioRemote: { baseUrl: 'http://localhost:1234/v1', model: 'local-model', needsKey: false },
   customOpenAiCompatible: { baseUrl: 'https://example.com/v1', model: '', needsKey: true },
 };
+
+const MODEL_SELECTOR_GROUPS: { provider: AiProviderKind; heading: string; models: string[] }[] = [
+  { provider: 'local', heading: 'Local', models: ['Connected local model'] },
+  { provider: 'googleGemini', heading: 'Google Gemini', models: ['gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-2.5-pro'] },
+  { provider: 'openAi', heading: 'OpenAI', models: ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o-mini'] },
+  { provider: 'anthropic', heading: 'Anthropic Claude', models: ['claude-3-5-haiku-latest', 'claude-3-5-sonnet-latest', 'claude-3-opus-latest'] },
+  { provider: 'openRouter', heading: 'OpenRouter', models: ['openai/gpt-4.1-mini', 'anthropic/claude-3.5-sonnet', 'google/gemini-2.5-flash'] },
+  { provider: 'ollamaLocal', heading: 'Ollama Local', models: ['llama3.2', 'mistral', 'qwen2.5'] },
+  { provider: 'ollamaRemote', heading: 'Ollama Remote', models: ['llama3.2', 'mistral', 'qwen2.5'] },
+  { provider: 'lmStudio', heading: 'LM Studio', models: ['local-model'] },
+  { provider: 'customOpenAiCompatible', heading: 'Custom OpenAI-Compatible API', models: ['custom-model'] },
+];
+
+const APPEARANCE_OPTIONS: { key: AppearanceTheme; label: string; description: string }[] = [
+  { key: 'dark', label: 'Dark', description: 'Low-glare charcoal interface.' },
+  { key: 'light', label: 'Light', description: 'Bright neutral workspace.' },
+  { key: 'glass', label: 'Glass', description: 'Transparent assistant overlay.' },
+  { key: 'paper', label: 'Paper', description: 'Soft document-first surface.' },
+  { key: 'rose', label: 'Rose', description: 'Warm light accent palette.' },
+  { key: 'ocean', label: 'Ocean', description: 'Cool dark accent palette.' },
+];
 
 const createProviderDraft = (provider: AiProviderKind = 'openAi'): ProviderDraft => {
   const defaults = PROVIDER_DEFAULTS[provider];
@@ -276,7 +306,9 @@ const loadPersistedState = (): PersistedAppState => {
     selectedGeneralChatId: DEFAULT_CHAT_ID,
     drafts: {},
     scrollPositions: {},
-    assistantWindowMode: 'medium',
+    assistantWindowMode: 'compact',
+    sidebarCollapsed: false,
+    sidebarTab: 'chats',
   };
 
   if (typeof window === 'undefined') {
@@ -302,7 +334,9 @@ const loadPersistedState = (): PersistedAppState => {
       : [];
 
     return {
-      theme: parsed.theme === 'light' ? 'light' : 'dark',
+      theme: APPEARANCE_OPTIONS.some(option => option.key === parsed.theme)
+        ? parsed.theme as AppearanceTheme
+        : 'dark',
       mode: parsed.mode === 'general' ? 'general' : 'rag',
       documents,
       generalChats: generalChats.map((chat) => ({
@@ -319,7 +353,13 @@ const loadPersistedState = (): PersistedAppState => {
         : {},
       assistantWindowMode: parsed.assistantWindowMode === 'compact' || parsed.assistantWindowMode === 'full'
         ? parsed.assistantWindowMode
-        : 'medium',
+        : parsed.assistantWindowMode === 'medium'
+          ? 'medium'
+          : 'compact',
+      sidebarCollapsed: Boolean(parsed.sidebarCollapsed),
+      sidebarTab: parsed.sidebarTab === 'folders' || parsed.sidebarTab === 'docs'
+        ? parsed.sidebarTab
+        : 'chats',
     };
   } catch {
     return fallback;
@@ -345,11 +385,161 @@ const TypewriterEffect = ({ text, speed = 100 }: { text: string, speed?: number 
   return <span>{displayedText}</span>;
 };
 
+const parseCodeFence = (line: string) => {
+  const match = line.match(/^```\s*([A-Za-z0-9_+#.-]*)\s*$/);
+  return match ? match[1] || 'text' : null;
+};
+
+const renderInlineMarkdown = (text: string, isDark: boolean) => {
+  const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).filter(Boolean);
+  return parts.map((part, index) => {
+    if (part.startsWith('`') && part.endsWith('`')) {
+      return (
+        <code
+          key={`${part}-${index}`}
+          className={`px-1.5 py-0.5 rounded text-[0.86em] font-mono ${isDark ? 'bg-black/30 text-emerald-200' : 'bg-zinc-100 text-[#0F2854]'}`}
+        >
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={`${part}-${index}`}>{part.slice(2, -2)}</strong>;
+    }
+    return <React.Fragment key={`${part}-${index}`}>{part}</React.Fragment>;
+  });
+};
+
+const CodeBlock = ({ language, code, isDark }: { language: string; code: string; isDark: boolean }) => {
+  const [copied, setCopied] = useState(false);
+  const lines = code.replace(/\n$/, '').split('\n');
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(code.replace(/\n$/, ''));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <div className={`my-3 overflow-hidden rounded-lg border ${isDark ? 'border-[#343438] bg-[#111113]' : 'border-zinc-200 bg-zinc-950'}`}>
+      <div className={`flex items-center justify-between px-3 py-2 border-b ${isDark ? 'border-[#343438] bg-white/5' : 'border-white/10 bg-white/10'}`}>
+        <span className="text-[11px] font-medium uppercase tracking-normal text-zinc-400">{language || 'text'}</span>
+        <button
+          onClick={handleCopy}
+          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] text-zinc-300 hover:bg-white/10"
+          title="Copy code"
+        >
+          {copied ? <Check size={12} /> : <Copy size={12} />}
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <pre className="max-w-full overflow-x-auto p-0 text-[12px] leading-5 text-zinc-100">
+        <code className="block py-3">
+          {lines.map((line, index) => (
+            <span key={index} className="grid grid-cols-[3rem_1fr] px-3">
+              <span className="select-none pr-4 text-right text-zinc-600">{index + 1}</span>
+              <span className="whitespace-pre">{line || ' '}</span>
+            </span>
+          ))}
+        </code>
+      </pre>
+    </div>
+  );
+};
+
+const MarkdownMessage = ({ text, isDark }: { text: string; isDark: boolean }) => {
+  const blocks: Array<{ type: 'code'; language: string; code: string } | { type: 'text'; lines: string[] }> = [];
+  let currentText: string[] = [];
+  let currentCode: string[] | null = null;
+  let currentLanguage = 'text';
+
+  for (const line of text.split('\n')) {
+    const fenceLanguage = parseCodeFence(line);
+    if (fenceLanguage !== null) {
+      if (currentCode) {
+        blocks.push({ type: 'code', language: currentLanguage, code: currentCode.join('\n') });
+        currentCode = null;
+        currentLanguage = 'text';
+      } else {
+        if (currentText.length) {
+          blocks.push({ type: 'text', lines: currentText });
+          currentText = [];
+        }
+        currentCode = [];
+        currentLanguage = fenceLanguage;
+      }
+      continue;
+    }
+
+    if (currentCode) {
+      currentCode.push(line);
+    } else {
+      currentText.push(line);
+    }
+  }
+
+  if (currentCode) {
+    blocks.push({ type: 'code', language: currentLanguage, code: currentCode.join('\n') });
+  }
+  if (currentText.length) {
+    blocks.push({ type: 'text', lines: currentText });
+  }
+
+  return (
+    <div className="space-y-2">
+      {blocks.map((block, blockIndex) => {
+        if (block.type === 'code') {
+          return <CodeBlock key={blockIndex} language={block.language} code={block.code} isDark={isDark} />;
+        }
+
+        const groups: React.ReactNode[] = [];
+        let listItems: string[] = [];
+        const flushList = () => {
+          if (!listItems.length) return;
+          groups.push(
+            <ul key={`list-${groups.length}`} className="my-2 list-disc space-y-1 pl-5">
+              {listItems.map((item, index) => <li key={index}>{renderInlineMarkdown(item, isDark)}</li>)}
+            </ul>
+          );
+          listItems = [];
+        };
+
+        block.lines.forEach((line, lineIndex) => {
+          const bullet = line.match(/^\s*[-*]\s+(.+)$/);
+          const numbered = line.match(/^\s*\d+[.)]\s+(.+)$/);
+          if (bullet || numbered) {
+            listItems.push((bullet?.[1] ?? numbered?.[1] ?? '').trim());
+            return;
+          }
+
+          flushList();
+          if (!line.trim()) {
+            groups.push(<div key={`space-${lineIndex}`} className="h-1" />);
+          } else {
+            groups.push(
+              <p key={`line-${lineIndex}`} className="leading-relaxed">
+                {renderInlineMarkdown(line, isDark)}
+              </p>
+            );
+          }
+        });
+        flushList();
+
+        return <React.Fragment key={blockIndex}>{groups}</React.Fragment>;
+      })}
+    </div>
+  );
+};
+
 export default function App() {
   const initialStateRef = useRef<PersistedAppState>(loadPersistedState());
   const persistedState = initialStateRef.current;
 
-  const [theme, setTheme] = useState<'dark' | 'light'>(persistedState.theme);
+  const [theme, setTheme] = useState<AppearanceTheme>(persistedState.theme);
   const [mode, setMode] = useState<'general' | 'rag'>(persistedState.mode);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
@@ -364,7 +554,7 @@ export default function App() {
   const [isModelReady, setIsModelReady] = useState(!isTauri());
   const [modelStatus, setModelStatus] = useState<string>(isTauri() ? 'Model not loaded' : 'Browser preview mode');
   const [showSettings, setShowSettings] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>('assistant');
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('providers');
   const [geminiKey, setGeminiKey] = useState<string>(() => {
     try { return window.localStorage.getItem(GEMINI_KEY_STORAGE) ?? ''; } catch { return ''; }
   });
@@ -374,7 +564,10 @@ export default function App() {
   });
   const [assistantStatus, setAssistantStatus] = useState<AssistantStatus | null>(null);
   const [assistantShortcutDraft, setAssistantShortcutDraft] = useState(ASSISTANT_SETTINGS_DEFAULTS.globalShortcut);
-  const [isCompactUi, setIsCompactUi] = useState(() => typeof window !== 'undefined' ? window.innerWidth < 620 : false);
+  const [viewportCompact, setViewportCompact] = useState(() => typeof window !== 'undefined' ? window.innerWidth < 620 : false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(persistedState.sidebarCollapsed);
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(persistedState.sidebarTab);
+  const [chatSearch, setChatSearch] = useState('');
 
   // Model manager state
   const [downloadedModels, setDownloadedModels] = useState<DownloadedModel[]>([]);
@@ -403,7 +596,11 @@ export default function App() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const isDark = theme === 'dark';
+  const isDark = theme === 'dark' || theme === 'glass' || theme === 'ocean';
+  const isCompactMode = assistantSettings.windowMode === 'compact' || viewportCompact;
+  const isFullMode = assistantSettings.windowMode === 'full' && !viewportCompact;
+  const readyDocumentCount = documents.filter(doc => doc.status === 'ready').length;
+  const ingestingDocumentCount = documents.filter(doc => doc.status === 'ingesting').length;
 
   // Context ref for stable callbacks
   const contextRef = useRef({ mode, selectedDocId, selectedGeneralChatId });
@@ -419,6 +616,11 @@ export default function App() {
     ?? providerConfigs.find(provider => provider.id === 'local')
     ?? null;
   const isCloudMode = !!activeProvider && activeProvider.provider !== 'local';
+  const activeModelValue = activeProvider
+    ? `${activeProvider.provider}:${activeProvider.provider === 'local' ? 'Connected local model' : activeProvider.model ?? PROVIDER_DEFAULTS[activeProvider.provider].model}`
+    : 'local:Connected local model';
+  const filteredChats = generalChats.filter(chat => chat.name.toLowerCase().includes(chatSearch.toLowerCase()));
+  const filteredDocs = documents.filter(doc => doc.name.toLowerCase().includes(chatSearch.toLowerCase()));
 
   const updateMessages = (updater: Message[] | ((prev: Message[]) => Message[])) => {
     const { mode: currentMode, selectedDocId: currentDocId, selectedGeneralChatId: currentChatId } = contextRef.current;
@@ -484,7 +686,8 @@ export default function App() {
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'c') {
         e.preventDefault();
         updateMessages([]);
-      } else if (e.key === 'Escape' && !showSettings) {
+      } else if (e.key === 'Escape') {
+        setShowSettings(false);
         if (isTauri()) {
           e.preventDefault();
           hideAssistantWindow().catch(() => {});
@@ -494,7 +697,7 @@ export default function App() {
         handleNewChat();
       } else if ((e.metaKey || e.ctrlKey) && e.key === ',') {
         e.preventDefault();
-        setSettingsTab('assistant');
+        setSettingsTab('shortcuts');
         setShowSettings(true);
       }
     };
@@ -503,7 +706,7 @@ export default function App() {
   }, [showSettings]);
 
   useEffect(() => {
-    const onResize = () => setIsCompactUi(window.innerWidth < 620);
+    const onResize = () => setViewportCompact(window.innerWidth < 620);
     onResize();
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
@@ -575,13 +778,15 @@ export default function App() {
 
   useEffect(() => {
     if (isTauri()) {
-      ensureModelLoaded();
       refreshDownloadedModels();
       refreshProviderConfigs();
       getAssistantStatus().then(status => {
         setAssistantStatus(status);
         setAssistantSettings(status.settings);
         setAssistantShortcutDraft(status.settings.globalShortcut);
+        if (status.settings.keepModelLoaded) {
+          ensureModelLoaded();
+        }
       }).catch(() => {});
       // Hydrate RAG config from backend
       getRagConfig().then(setRagConfig).catch(() => {});
@@ -635,7 +840,7 @@ export default function App() {
     }).then(fn => unlisteners.push(fn));
 
     listen('assistant-open-settings', () => {
-      setSettingsTab('assistant');
+      setSettingsTab('providers');
       setShowSettings(true);
       setTimeout(() => textareaRef.current?.focus(), 50);
     }).then(fn => unlisteners.push(fn));
@@ -702,8 +907,10 @@ export default function App() {
       drafts,
       scrollPositions,
       assistantWindowMode: assistantSettings.windowMode,
+      sidebarCollapsed,
+      sidebarTab,
     } satisfies PersistedAppState));
-  }, [theme, mode, documents, generalChats, selectedDocId, selectedGeneralChatId, drafts, scrollPositions, assistantSettings.windowMode]);
+  }, [theme, mode, documents, generalChats, selectedDocId, selectedGeneralChatId, drafts, scrollPositions, assistantSettings.windowMode, sidebarCollapsed, sidebarTab]);
 
   const handlePickFile = async () => {
     let filePath: string;
@@ -930,8 +1137,93 @@ export default function App() {
     }
   };
 
+  const handleCycleWindowMode = async () => {
+    try {
+      const windowMode = await cycleAssistantWindowMode();
+      setAssistantSettings(prev => ({ ...prev, windowMode }));
+    } catch (err) {
+      showError(`Window resize failed: ${String(err)}`);
+    }
+  };
+
+  const handleHideAssistant = async () => {
+    setShowSettings(false);
+    if (isTauri()) {
+      try {
+        await hideAssistantWindow();
+      } catch (err) {
+        showError(`Hide failed: ${String(err)}`);
+      }
+    }
+  };
+
+  const handleSelectModel = async (value: string) => {
+    const separator = value.indexOf(':');
+    if (separator === -1) return;
+
+    const providerKind = value.slice(0, separator) as AiProviderKind;
+    const modelName = value.slice(separator + 1);
+
+    if (providerKind === 'local') {
+      try {
+        await setActiveAiProvider('local');
+        setActiveProviderId('local');
+        showSuccess('Active provider: Local');
+      } catch (err) {
+        showError(`Provider switch failed: ${String(err)}`);
+      }
+      return;
+    }
+
+    const existing = providerConfigs.find(provider => provider.provider === providerKind);
+    const baseDraft = existing ? providerToDraft(existing) : createProviderDraft(providerKind);
+    const nextDraft = { ...baseDraft, model: modelName };
+
+    try {
+      const saved = await saveAiProviderConfig(draftToInput(nextDraft));
+      await setActiveAiProvider(saved.id);
+      setActiveProviderId(saved.id);
+      setProviderDraft(providerToDraft(saved));
+      await refreshProviderConfigs();
+      showSuccess(`Selected model: ${modelName}`);
+    } catch (err) {
+      showError(`Model selection failed: ${String(err)}`);
+    }
+  };
+
+  const providerKeyLink = (kind: AiProviderKind): string | null => {
+    switch (kind) {
+      case 'openAi':
+        return 'https://platform.openai.com/api-keys';
+      case 'anthropic':
+        return 'https://console.anthropic.com/settings/keys';
+      case 'googleGemini':
+        return 'https://aistudio.google.com/app/apikey';
+      case 'openRouter':
+        return 'https://openrouter.ai/keys';
+      default:
+        return null;
+    }
+  };
+
+  const rootSurfaceClass = isDark
+    ? theme === 'glass'
+      ? 'bg-[#151517]/80 text-zinc-100 backdrop-blur-xl selection:bg-white/30'
+      : theme === 'ocean'
+        ? 'bg-[#111827] text-zinc-100 selection:bg-cyan-300/30'
+        : 'bg-[#151517] text-zinc-100 selection:bg-white/30'
+    : theme === 'paper'
+      ? 'bg-[#fbfaf7] text-zinc-900 selection:bg-[#0F2854]/30'
+      : theme === 'rose'
+        ? 'bg-[#fff7f8] text-zinc-900 selection:bg-rose-300/40'
+        : 'bg-white text-zinc-900 selection:bg-[#0F2854]/30';
+
+  const activeModelLabel = activeProvider?.provider === 'local'
+    ? connectedModelFile ?? 'Local'
+    : activeProvider?.model ?? 'Choose model';
+
   return (
-    <div className={`flex flex-col h-screen font-sans transition-colors duration-200 relative ${isDark ? 'bg-[#151517] text-zinc-100 selection:bg-white/30' : 'bg-white text-zinc-900 selection:bg-[#0F2854]/30'}`}>
+    <div className={`flex flex-col h-screen overflow-hidden font-sans transition-colors duration-200 relative rounded-[18px] ${rootSurfaceClass}`}>
 
       {/* Toast Notification for Errors */}
       {toastError && (
@@ -967,81 +1259,103 @@ export default function App() {
       )}
 
       {/* Header */}
-      <header className={`flex items-center justify-between px-5 h-14 border-b shrink-0 transition-colors duration-200 ${isDark ? 'border-[#2a2a2c]' : 'border-zinc-200'}`}>
-        <div className="flex items-center gap-3">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={isDark ? 'text-white' : 'text-[#0F2854]'}>
+      <header
+        data-tauri-drag-region
+        className={`flex min-h-14 items-center justify-between gap-3 border-b px-3 shrink-0 transition-colors duration-200 ${isDark ? 'border-white/10 bg-white/[0.03]' : 'border-zinc-200/80 bg-white/70'}`}
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          {!isCompactMode && (
+            <button
+              onClick={() => setSidebarCollapsed(prev => !prev)}
+              className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-white/10 text-zinc-400 hover:text-zinc-100 hover:bg-white/10' : 'border-zinc-200 text-zinc-500 hover:text-zinc-800 hover:bg-zinc-100'}`}
+              title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
+            >
+              <Menu size={16} />
+            </button>
+          )}
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={`shrink-0 ${isDark ? 'text-white' : 'text-[#0F2854]'}`}>
             <path d="M5 4H12C16.4183 4 20 7.58172 20 12C20 16.4183 16.4183 20 12 20H5V4Z" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
             <path d="M5 8H10C12.2091 8 14 9.79086 14 12C14 14.2091 12.2091 16 10 16H5V8Z" fill="#10b981"/>
           </svg>
-          <span className="font-semibold text-lg tracking-wide">DocuSage</span>
+          {!isCompactMode && <span className="font-semibold text-base tracking-normal">DocuSage</span>}
         </div>
 
-        <div className="flex items-center gap-3">
-          {/* Theme Toggle */}
-          <div className={`flex rounded-full p-1 border transition-colors duration-200 ${isDark ? 'bg-[#232325] border-[#2a2a2c]' : 'bg-zinc-100 border-zinc-200'}`}>
-            <button
-              className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-full transition-colors ${isDark ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}
-              onClick={() => setTheme('dark')}
-            >
-              <Moon size={14} /> Dark
-            </button>
-            <button
-              className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-full transition-colors ${!isDark ? 'bg-[#0F2854] text-white shadow-sm' : 'text-zinc-400 hover:text-zinc-200'}`}
-              onClick={() => setTheme('light')}
-            >
-              <Sun size={14} /> Light
-            </button>
-          </div>
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+          <select
+            value={activeModelValue}
+            onChange={e => handleSelectModel(e.target.value)}
+            className={`min-w-0 max-w-[220px] rounded-lg border px-2.5 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 ${
+              isDark ? 'bg-[#1d1d20] border-white/10 text-zinc-100 focus:ring-white/20' : 'bg-white border-zinc-200 text-zinc-800 focus:ring-[#0F2854]/20'
+            }`}
+            title={`Selected model: ${activeModelLabel}`}
+          >
+            {!MODEL_SELECTOR_GROUPS.some(group => group.models.some(modelName => `${group.provider}:${modelName}` === activeModelValue)) && (
+              <option value={activeModelValue}>{activeModelLabel}</option>
+            )}
+            {MODEL_SELECTOR_GROUPS.map(group => (
+              <optgroup key={group.heading} label={group.heading}>
+                {group.models.map(modelName => (
+                  <option key={`${group.provider}:${modelName}`} value={`${group.provider}:${modelName}`}>
+                    {modelName}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
 
           <button
-            onClick={async () => {
-              try {
-                const windowMode = await cycleAssistantWindowMode();
-                setAssistantSettings(prev => ({ ...prev, windowMode }));
-              } catch (err) {
-                showError(`Window resize failed: ${String(err)}`);
-              }
+            onClick={() => {
+              setMode('rag');
+              setSidebarTab('docs');
             }}
-            className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-400 hover:text-zinc-200 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50'}`}
+            className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg border transition-colors ${
+              isDark ? 'border-white/10 text-zinc-300 hover:bg-white/10' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-100'
+            }`}
+            title={`${readyDocumentCount} ready documents`}
+          >
+            <Database size={14} />
+            {readyDocumentCount}
+            {ingestingDocumentCount > 0 && <span className="text-amber-400">+{ingestingDocumentCount}</span>}
+          </button>
+
+          <button
+            onClick={handleCycleWindowMode}
+            className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-white/10 text-zinc-400 hover:text-zinc-100 hover:bg-white/10' : 'border-zinc-200 text-zinc-500 hover:text-zinc-800 hover:bg-zinc-100'}`}
             title={`Cycle assistant size (${assistantSettings.windowMode})`}
           >
-            <Maximize2 size={16} />
+            {assistantSettings.windowMode === 'full' ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
           </button>
 
           <button
             onClick={() => { setSettingsTab('providers'); setShowSettings(true); }}
-            className={`hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border transition-colors ${
-              isCloudMode
-                ? isDark ? 'border-emerald-500/50 text-emerald-300 bg-emerald-500/10' : 'border-emerald-300 text-emerald-700 bg-emerald-50'
-                : isDark ? 'border-[#2a2a2c] text-zinc-400 hover:text-zinc-200 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50'
-            }`}
-            title="AI provider"
-          >
-            <Cloud size={14} /> {activeProvider?.name ?? 'Local'}
-          </button>
-
-          <button
-            onClick={() => { setSettingsTab('assistant'); setShowSettings(true); }}
-            className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-400 hover:text-zinc-200 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50'} ${isCloudMode ? (isDark ? 'border-emerald-500/50 text-emerald-400' : 'border-emerald-400 text-emerald-600') : ''}`}
-            title={isCloudMode ? `Settings (${activeProvider?.name})` : 'Settings'}
+            className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-white/10 text-zinc-400 hover:text-zinc-100 hover:bg-white/10' : 'border-zinc-200 text-zinc-500 hover:text-zinc-800 hover:bg-zinc-100'}`}
+            title="Settings"
           >
             <Settings size={16} />
           </button>
 
-          {isTauri() && (
+          {isTauri() && !isCompactMode && (
             <button
               onClick={ensureModelLoaded}
               disabled={isModelLoading}
-              className={`px-3 py-1.5 text-xs rounded-lg border transition-colors disabled:opacity-50 ${
+              className={`px-2.5 py-1.5 text-xs rounded-lg border transition-colors disabled:opacity-50 ${
                 isModelReady
-                  ? (isDark ? 'border-emerald-500/50 text-emerald-300 bg-emerald-500/10' : 'border-emerald-300 text-emerald-700 bg-emerald-50')
-                  : (isDark ? 'border-amber-500/50 text-amber-300 bg-amber-500/10 hover:bg-amber-500/20' : 'border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100')
+                  ? (isDark ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10' : 'border-emerald-300 text-emerald-700 bg-emerald-50')
+                  : (isDark ? 'border-amber-500/40 text-amber-300 bg-amber-500/10 hover:bg-amber-500/20' : 'border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100')
               }`}
               title={modelStatus}
             >
-              {isModelLoading ? 'Loading model...' : isModelReady ? 'Model Ready' : 'Retry Model Load'}
+              {isModelLoading ? 'Loading' : isModelReady ? 'Ready' : 'Load'}
             </button>
           )}
+
+          <button
+            onClick={handleHideAssistant}
+            className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-white/10 text-zinc-400 hover:text-zinc-100 hover:bg-white/10' : 'border-zinc-200 text-zinc-500 hover:text-zinc-800 hover:bg-zinc-100'}`}
+            title="Hide assistant"
+          >
+            <X size={16} />
+          </button>
         </div>
       </header>
 
@@ -1062,12 +1376,14 @@ export default function App() {
             <div className={`flex gap-0.5 px-4 pt-2 border-b shrink-0 overflow-x-auto ${isDark ? 'border-[#2a2a2c]' : 'border-zinc-200'}`}>
               {(
                 [
-                  { key: 'assistant', icon: <Keyboard size={13} />, label: 'Assistant' },
+                  { key: 'providers', icon: <Cloud size={13} />, label: 'AI Providers' },
+                  { key: 'appearance', icon: <Palette size={13} />, label: 'Appearance' },
+                  { key: 'shortcuts', icon: <Keyboard size={13} />, label: 'Shortcuts' },
+                  { key: 'advanced', icon: <Wrench size={13} />, label: 'Advanced' },
                   { key: 'models', icon: <Cpu size={13} />, label: 'Model Catalog' },
                   { key: 'downloaded', icon: <HardDrive size={13} />, label: 'Downloaded' },
                   { key: 'ragTuning', icon: <Sliders size={13} />, label: 'RAG Tuning' },
-                  { key: 'providers', icon: <Cloud size={13} />, label: 'AI Providers' },
-                ] as const
+                ] satisfies { key: SettingsTab; icon: React.ReactNode; label: string }[]
               ).map(tab => (
                 <button
                   key={tab.key}
@@ -1091,8 +1407,49 @@ export default function App() {
             {/* Tab Content */}
             <div className="overflow-y-auto p-6 flex-1">
 
-              {/* ── Hidden Assistant ── */}
-              {settingsTab === 'assistant' && (
+              {/* ── Appearance ── */}
+              {settingsTab === 'appearance' && (
+                <div className="space-y-5">
+                  <div className={`p-4 rounded-xl border ${isDark ? 'bg-[#232325] border-[#2a2a2c]' : 'bg-zinc-50 border-zinc-200'}`}>
+                    <h3 className={`text-sm font-semibold ${isDark ? 'text-zinc-100' : 'text-zinc-900'}`}>Appearance</h3>
+                    <p className={`text-xs mt-1 leading-relaxed ${isDark ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                      Choose the assistant surface. The layout and DocuSage identity stay the same across themes.
+                    </p>
+                  </div>
+
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    {APPEARANCE_OPTIONS.map(option => (
+                      <button
+                        key={option.key}
+                        onClick={() => setTheme(option.key)}
+                        className={`p-4 rounded-xl border text-left transition-colors ${
+                          theme === option.key
+                            ? isDark ? 'border-emerald-500/50 bg-emerald-500/10' : 'border-[#0F2854]/40 bg-[#0F2854]/5'
+                            : isDark ? 'border-[#2a2a2c] bg-[#232325] hover:border-[#3a3a3c]' : 'border-zinc-200 bg-zinc-50 hover:border-zinc-300'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className={`h-7 w-7 rounded-full border ${
+                            option.key === 'dark' ? 'bg-[#151517] border-zinc-600'
+                            : option.key === 'light' ? 'bg-white border-zinc-300'
+                            : option.key === 'glass' ? 'bg-[#151517]/60 border-zinc-500'
+                            : option.key === 'paper' ? 'bg-[#fbfaf7] border-stone-300'
+                            : option.key === 'rose' ? 'bg-rose-100 border-rose-300'
+                            : 'bg-cyan-950 border-cyan-700'
+                          }`} />
+                          <div>
+                            <span className={`block text-sm font-medium ${isDark ? 'text-zinc-100' : 'text-zinc-900'}`}>{option.label}</span>
+                            <span className={`block text-xs mt-0.5 ${isDark ? 'text-zinc-500' : 'text-zinc-500'}`}>{option.description}</span>
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Shortcuts / Hidden Assistant ── */}
+              {settingsTab === 'shortcuts' && (
                 <div className="space-y-5">
                   <div className={`p-4 rounded-xl border ${isDark ? 'bg-[#232325] border-[#2a2a2c]' : 'bg-zinc-50 border-zinc-200'}`}>
                     <div className="flex items-start justify-between gap-4">
@@ -1105,6 +1462,27 @@ export default function App() {
                       <span className={`text-[10px] px-2 py-1 rounded-full font-bold uppercase ${isDark ? 'bg-emerald-500/15 text-emerald-400' : 'bg-emerald-100 text-emerald-700'}`}>
                         {assistantStatus?.isVisible ? 'Visible' : 'Background'}
                       </span>
+                    </div>
+                  </div>
+
+                  <div className={`p-4 rounded-xl border ${isDark ? 'bg-[#232325] border-[#2a2a2c]' : 'bg-zinc-50 border-zinc-200'}`}>
+                    <h3 className={`text-sm font-semibold mb-3 ${isDark ? 'text-zinc-100' : 'text-zinc-900'}`}>Shortcuts</h3>
+                    <div className="grid sm:grid-cols-2 gap-2">
+                      {[
+                        ['Toggle Window', assistantSettings.globalShortcut],
+                        ['Open Settings', 'Ctrl/Cmd + ,'],
+                        ['Close/Hide', 'Escape'],
+                        ['Send Message', 'Enter'],
+                        ['New Line', 'Shift + Enter'],
+                        ['New Chat', 'Ctrl/Cmd + N'],
+                      ].map(([label, shortcut]) => (
+                        <div key={label} className={`flex items-center justify-between gap-3 rounded-lg px-3 py-2 ${isDark ? 'bg-[#1e1e20]' : 'bg-white'}`}>
+                          <span className={`text-xs ${isDark ? 'text-zinc-400' : 'text-zinc-600'}`}>{label}</span>
+                          <kbd className={`rounded-md border px-2 py-1 text-[11px] font-medium ${isDark ? 'border-[#3a3a3c] bg-black/20 text-zinc-300' : 'border-zinc-200 bg-zinc-50 text-zinc-700'}`}>
+                            {shortcut}
+                          </kbd>
+                        </div>
+                      ))}
                     </div>
                   </div>
 
@@ -1241,6 +1619,58 @@ export default function App() {
                       <p>{assistantStatus.platform.focusNotes}</p>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* ── Developer / Advanced ── */}
+              {settingsTab === 'advanced' && (
+                <div className="space-y-5">
+                  <div className={`p-4 rounded-xl border ${isDark ? 'bg-[#232325] border-[#2a2a2c]' : 'bg-zinc-50 border-zinc-200'}`}>
+                    <h3 className={`text-sm font-semibold ${isDark ? 'text-zinc-100' : 'text-zinc-900'}`}>Developer / Advanced</h3>
+                    <p className={`text-xs mt-1 leading-relaxed ${isDark ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                      Runtime controls for the local AI engine, updates, and platform behavior.
+                    </p>
+                  </div>
+
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <button
+                      onClick={async () => {
+                        try {
+                          setIsModelLoading(true);
+                          const msg = await restartAiEngine();
+                          setIsModelReady(true);
+                          setModelStatus(msg);
+                          const connected = await getConnectedModel();
+                          setConnectedModelFile(connected);
+                          showSuccess('AI engine restarted');
+                        } catch (err) {
+                          setIsModelReady(false);
+                          showError(`AI engine restart failed: ${String(err)}`);
+                        } finally {
+                          setIsModelLoading(false);
+                        }
+                      }}
+                      className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-medium transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-300 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-700 hover:bg-zinc-50'}`}
+                    >
+                      <Power size={15} /> Restart AI Engine
+                    </button>
+                    <button
+                      onClick={async () => {
+                        try { showSuccess(await checkForUpdates()); } catch (err) { showError(`Update check failed: ${String(err)}`); }
+                      }}
+                      className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-medium transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-300 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-700 hover:bg-zinc-50'}`}
+                    >
+                      <RefreshCw size={15} /> Check for Updates
+                    </button>
+                  </div>
+
+                  <div className={`p-4 rounded-xl border text-xs leading-relaxed space-y-2 ${isDark ? 'bg-[#232325] border-[#2a2a2c] text-zinc-500' : 'bg-zinc-50 border-zinc-200 text-zinc-500'}`}>
+                    <p className="flex items-center gap-2"><Monitor size={14} /> Platform: {assistantStatus?.platform.platform ?? 'desktop'}</p>
+                    <p>{assistantStatus?.platform.startupHidden ?? 'Startup hidden by native window configuration.'}</p>
+                    <p>{assistantStatus?.platform.taskbarHidden ?? 'Taskbar hiding is best effort by platform.'}</p>
+                    <p>{assistantStatus?.platform.altTabHidden ?? 'Hidden windows are removed from window switching where the OS supports it.'}</p>
+                    <p>{assistantStatus?.platform.focusNotes ?? 'Focus is requested after native show.'}</p>
+                  </div>
                 </div>
               )}
 
@@ -1647,7 +2077,7 @@ export default function App() {
                   </div>
 
                   <div className="flex flex-wrap gap-2">
-                    {(['openAi', 'anthropic', 'googleGemini', 'openRouter', 'ollamaRemote', 'lmStudioRemote', 'customOpenAiCompatible'] as AiProviderKind[]).map(kind => (
+                    {(['openAi', 'anthropic', 'googleGemini', 'openRouter', 'ollamaLocal', 'ollamaRemote', 'lmStudio', 'lmStudioRemote', 'customOpenAiCompatible'] as AiProviderKind[]).map(kind => (
                       <button
                         key={kind}
                         onClick={() => {
@@ -1744,6 +2174,16 @@ export default function App() {
                               />
                               Delete saved API key on save
                             </label>
+                          )}
+                          {providerKeyLink(providerDraft.provider) && (
+                            <a
+                              href={providerKeyLink(providerDraft.provider) ?? undefined}
+                              target="_blank"
+                              rel="noreferrer"
+                              className={`inline-flex mt-2 text-xs font-medium ${isDark ? 'text-emerald-400 hover:text-emerald-300' : 'text-[#0F2854] hover:text-[#0a1b38]'}`}
+                            >
+                              Get API key
+                            </a>
                           )}
                         </div>
 
@@ -1850,151 +2290,261 @@ export default function App() {
       )}
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar */}
-        <aside className={`${isCompactUi ? 'hidden' : 'w-[280px]'} flex flex-col border-r shrink-0 transition-colors duration-200 ${isDark ? 'border-[#2a2a2c]' : 'border-zinc-200'}`}>
-          <div className="p-4 flex flex-col shrink-0 gap-3">
-            <button
-              onClick={handleNewChat}
-              className={`flex items-center justify-between w-full py-2.5 px-4 rounded-xl transition-colors font-medium text-sm border shadow-sm ${
-                isDark ? 'bg-[#232325] border-[#2a2a2c] hover:bg-[#2a2a2c] text-zinc-200' : 'bg-white border-zinc-200 hover:bg-zinc-50 text-zinc-700'
-              }`}
-            >
-              <span>New Chat</span>
-              <Plus size={16} />
-            </button>
+        {!isCompactMode && sidebarCollapsed && (
+          <nav className={`flex w-14 shrink-0 flex-col items-center gap-2 border-r py-3 ${isDark ? 'border-white/10' : 'border-zinc-200'}`}>
+            {[
+              { key: 'chats' as SidebarTab, icon: <MessageSquare size={17} />, title: 'Chats' },
+              { key: 'folders' as SidebarTab, icon: <Folder size={17} />, title: 'Folders' },
+              { key: 'docs' as SidebarTab, icon: <FileText size={17} />, title: 'Docs' },
+            ].map(item => (
+              <button
+                key={item.key}
+                onClick={() => {
+                  setSidebarCollapsed(false);
+                  setSidebarTab(item.key);
+                  if (item.key === 'chats') setMode('general');
+                  if (item.key === 'docs') setMode('rag');
+                }}
+                className={`p-2 rounded-lg transition-colors ${isDark ? 'text-zinc-400 hover:bg-white/10 hover:text-zinc-100' : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800'}`}
+                title={item.title}
+              >
+                {item.icon}
+              </button>
+            ))}
+          </nav>
+        )}
 
-            <button
-              onClick={handlePickFile}
-              className={`flex items-center justify-center gap-2 w-full py-2.5 px-4 rounded-xl transition-colors font-medium text-sm shadow-sm ${isDark ? 'bg-white hover:bg-zinc-200 text-zinc-900' : 'bg-[#0F2854] hover:bg-[#0a1b38] text-white'}`}
-            >
-              <Plus size={16} /> Ingest PDF
-            </button>
-          </div>
+        {!isCompactMode && !sidebarCollapsed && (
+          <aside className={`w-[300px] flex flex-col border-r shrink-0 transition-all duration-200 ${isDark ? 'border-white/10' : 'border-zinc-200'}`}>
+            <div className="p-4 flex flex-col shrink-0 gap-3">
+              <div className="grid grid-cols-[1fr_auto] gap-2">
+                <button
+                  onClick={handleNewChat}
+                  className={`flex items-center justify-between w-full py-2.5 px-4 rounded-lg transition-colors font-medium text-sm border shadow-sm ${
+                    isDark ? 'bg-[#232325] border-white/10 hover:bg-white/10 text-zinc-200' : 'bg-white border-zinc-200 hover:bg-zinc-50 text-zinc-700'
+                  }`}
+                >
+                  <span>New Chat</span>
+                  <Plus size={16} />
+                </button>
+                <button
+                  onClick={() => setSidebarCollapsed(true)}
+                  className={`p-2.5 rounded-lg border transition-colors ${isDark ? 'border-white/10 text-zinc-400 hover:bg-white/10 hover:text-zinc-100' : 'border-zinc-200 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800'}`}
+                  title="Collapse sidebar"
+                >
+                  <Menu size={16} />
+                </button>
+              </div>
 
-          {/* Document / Chat List */}
-          <div className="flex-1 overflow-y-auto px-2 space-y-1 pb-4">
-            <h2 className={`text-[11px] font-semibold tracking-wider mb-3 px-2 mt-2 ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-              {mode === 'rag' ? 'DOCUMENTS' : 'CHATS'}
-            </h2>
+              <button
+                onClick={handlePickFile}
+                className={`flex items-center justify-center gap-2 w-full py-2.5 px-4 rounded-lg transition-colors font-medium text-sm shadow-sm ${isDark ? 'bg-white hover:bg-zinc-200 text-zinc-900' : 'bg-[#0F2854] hover:bg-[#0a1b38] text-white'}`}
+              >
+                <Plus size={16} /> Ingest PDF
+              </button>
 
-            {mode === 'rag' ? (
-              documents.length === 0 ? (
-                <div className="flex items-start justify-center pt-4">
-                  <p className="text-xs text-zinc-500 text-center px-4">No documents ingested yet. Upload a PDF to get started.</p>
-                </div>
-              ) : (
-                documents.map(doc => (
+              <div className={`grid grid-cols-3 gap-1 rounded-lg border p-1 ${isDark ? 'border-white/10 bg-[#1c1c1f]' : 'border-zinc-200 bg-zinc-100'}`}>
+                {[
+                  { key: 'chats' as SidebarTab, label: 'Chats', icon: <MessageSquare size={13} /> },
+                  { key: 'folders' as SidebarTab, label: 'Folders', icon: <Folder size={13} /> },
+                  { key: 'docs' as SidebarTab, label: 'Docs', icon: <FileText size={13} /> },
+                ].map(tab => (
                   <button
-                    key={doc.id}
-                    onClick={() => setSelectedDocId(doc.id)}
-                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm transition-colors text-left group ${
-                      selectedDocId === doc.id
-                        ? (isDark ? 'bg-[#2a2a2c] text-white' : 'bg-zinc-100 text-zinc-900 font-medium')
-                        : (isDark ? 'text-zinc-400 hover:bg-[#232325] hover:text-zinc-200' : 'text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900')
+                    key={tab.key}
+                    onClick={() => {
+                      setSidebarTab(tab.key);
+                      if (tab.key === 'chats') setMode('general');
+                      if (tab.key === 'docs') setMode('rag');
+                    }}
+                    className={`flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition-colors ${
+                      sidebarTab === tab.key
+                        ? isDark ? 'bg-white text-zinc-900' : 'bg-[#0F2854] text-white'
+                        : isDark ? 'text-zinc-400 hover:text-zinc-100' : 'text-zinc-600 hover:text-zinc-900'
                     }`}
                   >
-                    <div className="flex items-center gap-3 truncate pr-2">
-                      <FileText size={16} className={`shrink-0 ${
-                        doc.status === 'ingesting' ? 'animate-pulse text-amber-400'
-                        : doc.status === 'error' ? 'text-red-400'
-                        : selectedDocId === doc.id ? (isDark ? 'text-white' : 'text-[#0F2854]')
-                        : ''
-                      }`} />
-                      <span className="truncate">{doc.name}</span>
-                    </div>
-                    {selectedDocId === doc.id && (
-                      <div
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteDoc(doc.id);
-                        }}
-                        className={`p-1.5 rounded-md transition-colors ${isDark ? 'hover:bg-red-900/30 text-red-400' : 'hover:bg-red-100 text-red-500'}`}
-                        title="Delete document"
-                      >
-                        <Trash2 size={14} />
-                      </div>
-                    )}
+                    {tab.icon} {tab.label}
                   </button>
-                ))
-              )
-            ) : (
-              generalChats.length === 0 ? (
-                <div className="flex items-start justify-center pt-4">
-                  <p className="text-xs text-zinc-500 text-center px-4">No chats yet. Start a new conversation.</p>
+                ))}
+              </div>
+
+              <div className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${isDark ? 'border-white/10 bg-[#1c1c1f]' : 'border-zinc-200 bg-white'}`}>
+                <Search size={14} className={isDark ? 'text-zinc-500' : 'text-zinc-400'} />
+                <input
+                  value={chatSearch}
+                  onChange={e => setChatSearch(e.target.value)}
+                  placeholder="Search"
+                  className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-zinc-500"
+                />
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-2 space-y-1 pb-4">
+              {sidebarTab === 'chats' && (
+                <>
+                  {filteredChats.length === 0 ? (
+                    <p className="px-3 py-4 text-center text-xs text-zinc-500">No chats found.</p>
+                  ) : filteredChats.map(chat => (
+                    <button
+                      key={chat.id}
+                      onClick={() => {
+                        setMode('general');
+                        setSelectedGeneralChatId(chat.id);
+                      }}
+                      className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors text-left group ${
+                        selectedGeneralChatId === chat.id && mode === 'general'
+                          ? (isDark ? 'bg-white/10 text-white' : 'bg-zinc-100 text-zinc-900 font-medium')
+                          : (isDark ? 'text-zinc-400 hover:bg-white/5 hover:text-zinc-200' : 'text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900')
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 truncate pr-2">
+                        <MessageSquare size={16} className="shrink-0" />
+                        <span className="truncate">{chat.name}</span>
+                      </div>
+                      {selectedGeneralChatId === chat.id && (
+                        <span
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteGeneralChat(chat.id);
+                          }}
+                          className={`p-1.5 rounded-md transition-colors ${isDark ? 'hover:bg-red-900/30 text-red-400' : 'hover:bg-red-100 text-red-500'}`}
+                          title="Delete chat"
+                        >
+                          <Trash2 size={14} />
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </>
+              )}
+
+              {sidebarTab === 'folders' && (
+                <div className="space-y-2 px-2">
+                  {['Recent', 'Pinned', 'Research'].map(folder => (
+                    <button
+                      key={folder}
+                      className={`w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition-colors ${isDark ? 'text-zinc-400 hover:bg-white/5 hover:text-zinc-200' : 'text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900'}`}
+                    >
+                      <Folder size={16} /> {folder}
+                    </button>
+                  ))}
                 </div>
-              ) : (
-                generalChats.map(chat => (
-                  <button
-                    key={chat.id}
-                    onClick={() => setSelectedGeneralChatId(chat.id)}
-                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm transition-colors text-left group ${
-                      selectedGeneralChatId === chat.id
-                        ? (isDark ? 'bg-[#2a2a2c] text-white' : 'bg-zinc-100 text-zinc-900 font-medium')
-                        : (isDark ? 'text-zinc-400 hover:bg-[#232325] hover:text-zinc-200' : 'text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900')
-                    }`}
-                  >
-                    <div className="flex items-center gap-3 truncate pr-2">
-                      <MessageSquare size={16} className={`shrink-0 ${selectedGeneralChatId === chat.id ? (isDark ? 'text-white' : 'text-[#0F2854]') : ''}`} />
-                      <span className="truncate">{chat.name}</span>
-                    </div>
-                    {selectedGeneralChatId === chat.id && (
-                      <div
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteGeneralChat(chat.id);
-                        }}
-                        className={`p-1.5 rounded-md transition-colors ${isDark ? 'hover:bg-red-900/30 text-red-400' : 'hover:bg-red-100 text-red-500'}`}
-                        title="Delete chat"
-                      >
-                        <Trash2 size={14} />
+              )}
+
+              {sidebarTab === 'docs' && (
+                <>
+                  {filteredDocs.length === 0 ? (
+                    <p className="px-3 py-4 text-center text-xs text-zinc-500">No documents found.</p>
+                  ) : filteredDocs.map(doc => (
+                    <button
+                      key={doc.id}
+                      onClick={() => {
+                        setMode('rag');
+                        setSelectedDocId(doc.id);
+                      }}
+                      className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors text-left group ${
+                        selectedDocId === doc.id && mode === 'rag'
+                          ? (isDark ? 'bg-white/10 text-white' : 'bg-zinc-100 text-zinc-900 font-medium')
+                          : (isDark ? 'text-zinc-400 hover:bg-white/5 hover:text-zinc-200' : 'text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900')
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 truncate pr-2">
+                        <FileText size={16} className={`shrink-0 ${
+                          doc.status === 'ingesting' ? 'animate-pulse text-amber-400'
+                          : doc.status === 'error' ? 'text-red-400'
+                          : selectedDocId === doc.id ? (isDark ? 'text-white' : 'text-[#0F2854]')
+                          : ''
+                        }`} />
+                        <span className="truncate">{doc.name}</span>
                       </div>
-                    )}
-                  </button>
-                ))
-              )
-            )}
-          </div>
-        </aside>
+                      {selectedDocId === doc.id && (
+                        <span
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteDoc(doc.id);
+                          }}
+                          className={`p-1.5 rounded-md transition-colors ${isDark ? 'hover:bg-red-900/30 text-red-400' : 'hover:bg-red-100 text-red-500'}`}
+                          title="Delete document"
+                        >
+                          <Trash2 size={14} />
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </>
+              )}
+            </div>
+
+            <div className={`m-3 rounded-lg border p-3 text-xs ${isDark ? 'border-white/10 bg-white/[0.03] text-zinc-400' : 'border-zinc-200 bg-zinc-50 text-zinc-600'}`}>
+              <div className="mb-2 flex items-center justify-between">
+                <span>Index status</span>
+                <span className={ingestingDocumentCount ? 'text-amber-400' : 'text-emerald-500'}>
+                  {ingestingDocumentCount ? 'Indexing' : 'Ready'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Documents</span>
+                <span>{readyDocumentCount}/{documents.length}</span>
+              </div>
+              <button
+                onClick={() => { setSettingsTab('advanced'); setShowSettings(true); }}
+                className={`mt-3 flex w-full items-center justify-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${isDark ? 'border-white/10 hover:bg-white/10 text-zinc-300' : 'border-zinc-200 hover:bg-white text-zinc-700'}`}
+              >
+                <Command size={13} /> Command Palette
+              </button>
+            </div>
+          </aside>
+        )}
 
         {/* Main Content */}
-        <main className="flex-1 flex flex-col relative min-w-0">
+        <main className={`flex-1 flex flex-col relative min-w-0 ${isFullMode ? 'max-w-none' : ''}`}>
           {/* Main Content Header */}
-          <div className={`flex flex-wrap items-center justify-between gap-2 px-6 py-3 border-b shrink-0 transition-colors duration-200 ${isDark ? 'border-[#2a2a2c]' : 'border-zinc-200'}`}>
+          <div className={`flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b shrink-0 transition-colors duration-200 ${isDark ? 'border-white/10' : 'border-zinc-200'}`}>
             <div className="flex items-center gap-3 min-w-0">
-              <h1 className="text-base font-semibold">
-                <TypewriterEffect key={`${theme}-${mode}`} text="Your Private Assistant" speed={100} />
+              <h1 className={`${isCompactMode ? 'text-sm' : 'text-base'} font-semibold`}>
+                {isCompactMode ? 'Assistant' : <TypewriterEffect key={`${theme}-${mode}`} text="Your Private Assistant" speed={100} />}
               </h1>
+              <span className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md font-medium ${isDark ? 'bg-white/10 text-zinc-300' : 'bg-zinc-100 text-zinc-600'}`}>
+                <Database size={12} />
+                {readyDocumentCount} docs
+              </span>
               {mode === 'rag' && selectedDocId && (
-                <span className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md font-medium ${isDark ? 'bg-[#2a2a2c] text-zinc-300' : 'bg-zinc-100 text-zinc-600'}`}>
-                  <span className="truncate max-w-[200px]">Chatting with: {documents.find(d => d.id === selectedDocId)?.name}</span>
+                <span className={`hidden sm:flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md font-medium ${isDark ? 'bg-white/10 text-zinc-300' : 'bg-zinc-100 text-zinc-600'}`}>
+                  <span className="truncate max-w-[180px]">{documents.find(d => d.id === selectedDocId)?.name}</span>
                   <button
                     onClick={() => setSelectedDocId(null)}
-                    className={`p-0.5 rounded-full transition-colors ${isDark ? 'hover:bg-[#353538] hover:text-white' : 'hover:bg-zinc-200 hover:text-zinc-900'}`}
+                    className={`p-0.5 rounded-full transition-colors ${isDark ? 'hover:bg-white/10 hover:text-white' : 'hover:bg-zinc-200 hover:text-zinc-900'}`}
                     title="Clear selected document"
                   >
                     <X size={12} />
                   </button>
                 </span>
               )}
-              {mode === 'general' && selectedGeneralChatId && (
-                <span className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md font-medium ${isDark ? 'bg-[#2a2a2c] text-zinc-300' : 'bg-zinc-100 text-zinc-600'}`}>
+              {mode === 'general' && selectedGeneralChatId && !isCompactMode && (
+                <span className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md font-medium ${isDark ? 'bg-white/10 text-zinc-300' : 'bg-zinc-100 text-zinc-600'}`}>
                   <span className="truncate max-w-[200px]">{generalChats.find(c => c.id === selectedGeneralChatId)?.name}</span>
                 </span>
               )}
             </div>
 
-            {isCompactUi && (
-              <div className="order-3 w-full grid grid-cols-[auto_auto_1fr_auto] gap-2">
+            {isCompactMode && (
+              <div className="order-3 w-full grid grid-cols-[auto_auto_auto_1fr] gap-2">
+                <button
+                  onClick={() => setMode(mode === 'general' ? 'rag' : 'general')}
+                  className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-white/10 text-zinc-300 hover:bg-white/10' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
+                  title={mode === 'general' ? 'Switch to documents' : 'Switch to chat'}
+                >
+                  {mode === 'general' ? <Database size={16} /> : <MessageSquare size={16} />}
+                </button>
                 <button
                   onClick={handleNewChat}
-                  className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-300 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
+                  className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-white/10 text-zinc-300 hover:bg-white/10' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
                   title="New Chat"
                 >
                   <Plus size={16} />
                 </button>
                 <button
                   onClick={handlePickFile}
-                  className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-300 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
+                  className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-white/10 text-zinc-300 hover:bg-white/10' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
                   title="Ingest PDF"
                 >
                   <Paperclip size={16} />
@@ -2005,7 +2555,7 @@ export default function App() {
                     if (mode === 'rag') setSelectedDocId(e.target.value || null);
                     else setSelectedGeneralChatId(e.target.value);
                   }}
-                  className={`min-w-0 px-2 py-2 rounded-lg border text-xs focus:outline-none ${isDark ? 'bg-[#232325] border-[#2a2a2c] text-zinc-200' : 'bg-white border-zinc-200 text-zinc-700'}`}
+                  className={`min-w-0 px-2 py-2 rounded-lg border text-xs focus:outline-none ${isDark ? 'bg-[#232325] border-white/10 text-zinc-200' : 'bg-white border-zinc-200 text-zinc-700'}`}
                 >
                   {mode === 'rag' ? (
                     <>
@@ -2016,31 +2566,25 @@ export default function App() {
                     generalChats.map(chat => <option key={chat.id} value={chat.id}>{chat.name}</option>)
                   )}
                 </select>
-                <button
-                  onClick={() => { setSettingsTab('providers'); setShowSettings(true); }}
-                  className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-300 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
-                  title="AI Provider"
-                >
-                  <Cloud size={16} />
-                </button>
               </div>
             )}
 
-            {/* Mode Toggle */}
-            <div className={`flex rounded-full p-1 border transition-colors duration-200 ${isDark ? 'bg-[#232325] border-[#2a2a2c]' : 'bg-zinc-100 border-zinc-200'}`}>
-              <button
-                className={`flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-full transition-colors ${mode === 'general' ? (isDark ? 'bg-white text-zinc-900 shadow-sm' : 'bg-[#0F2854] text-white shadow-sm') : isDark ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}
-                onClick={() => setMode('general')}
-              >
-                <Settings size={14} /> General
-              </button>
-              <button
-                className={`flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-full transition-colors ${mode === 'rag' ? (isDark ? 'bg-white text-zinc-900 shadow-sm' : 'bg-[#0F2854] text-white shadow-sm') : isDark ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}
-                onClick={() => setMode('rag')}
-              >
-                <Database size={14} /> RAG
-              </button>
-            </div>
+            {!isCompactMode && (
+              <div className={`flex rounded-full p-1 border transition-colors duration-200 ${isDark ? 'bg-[#232325] border-white/10' : 'bg-zinc-100 border-zinc-200'}`}>
+                <button
+                  className={`flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-full transition-colors ${mode === 'general' ? (isDark ? 'bg-white text-zinc-900 shadow-sm' : 'bg-[#0F2854] text-white shadow-sm') : isDark ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}
+                  onClick={() => setMode('general')}
+                >
+                  <MessageSquare size={14} /> General
+                </button>
+                <button
+                  className={`flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-full transition-colors ${mode === 'rag' ? (isDark ? 'bg-white text-zinc-900 shadow-sm' : 'bg-[#0F2854] text-white shadow-sm') : isDark ? 'text-zinc-400 hover:text-zinc-200' : 'text-zinc-500 hover:text-zinc-700'}`}
+                  onClick={() => setMode('rag')}
+                >
+                  <Database size={14} /> RAG
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Chat Area */}
@@ -2050,7 +2594,7 @@ export default function App() {
               const top = e.currentTarget.scrollTop;
               setScrollPositions(prev => ({ ...prev, [activeConversationKey]: top }));
             }}
-            className="flex-1 overflow-y-auto p-6 flex flex-col gap-6"
+            className={`${isCompactMode ? 'p-4 gap-4' : 'p-6 gap-6'} flex-1 overflow-y-auto flex flex-col`}
           >
             {activeMessages.length === 0 ? (
               <div className="flex flex-1 items-center justify-center">
@@ -2076,9 +2620,9 @@ export default function App() {
               activeMessages.map((msg) => (
                 <div key={msg.id} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
                   <div
-                    className={`px-5 py-3.5 rounded-2xl max-w-[80%] text-sm shadow-sm whitespace-pre-wrap leading-relaxed ${
+                    className={`px-5 py-3.5 rounded-2xl ${isCompactMode ? 'max-w-[92%]' : 'max-w-[86%]'} text-sm shadow-sm leading-relaxed ${
                       msg.sender === 'user'
-                        ? (isDark ? 'bg-white text-zinc-900 rounded-tr-sm' : 'bg-[#0F2854] text-white rounded-tr-sm')
+                        ? (isDark ? 'bg-white text-zinc-900 rounded-tr-sm whitespace-pre-wrap' : 'bg-[#0F2854] text-white rounded-tr-sm whitespace-pre-wrap')
                         : msg.isError
                           ? isDark
                             ? 'bg-red-900/20 border border-red-900/50 text-red-400 rounded-tl-sm'
@@ -2096,7 +2640,9 @@ export default function App() {
                       </div>
                     ) : (
                       <>
-                        {msg.text}
+                        {msg.sender === 'bot'
+                          ? <MarkdownMessage text={msg.text} isDark={isDark} />
+                          : msg.text}
                         {msg.isStreaming && (
                           <span className="inline-block w-1.5 h-4 ml-1 align-middle bg-current animate-pulse rounded-full" />
                         )}
@@ -2110,11 +2656,11 @@ export default function App() {
           </div>
 
           {/* Input Area */}
-          <div className="p-4 shrink-0 pb-6">
+          <div className={`${isCompactMode ? 'p-3 pb-4' : 'p-4 pb-6'} shrink-0`}>
             <div className="max-w-4xl mx-auto relative">
               <div className={`flex items-end gap-2 p-2 rounded-2xl border transition-all shadow-sm ${
                 isDark
-                  ? 'bg-[#232325] border-[#2a2a2c] focus-within:border-white focus-within:ring-1 focus-within:ring-white'
+                  ? 'bg-[#232325] border-white/10 focus-within:border-white focus-within:ring-1 focus-within:ring-white'
                   : 'bg-white border-zinc-200 focus-within:border-[#0F2854] focus-within:ring-1 focus-within:ring-[#0F2854]'
               }`}>
                 <button
@@ -2146,11 +2692,6 @@ export default function App() {
                 >
                   {isTyping ? <Square size={20} /> : <Send size={20} />}
                 </button>
-              </div>
-              <div className="text-center mt-2">
-                <span className={`text-[10px] ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                  Press Enter to send, Shift+Enter for new line, Ctrl+Shift+C to clear chat
-                </span>
               </div>
             </div>
           </div>

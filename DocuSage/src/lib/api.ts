@@ -34,6 +34,7 @@ export type AssistantSettings = {
   globalShortcut: string;
   windowMode: AssistantWindowMode;
   lastMonitorName: string | null;
+  firstOpenDone: boolean;
 };
 
 export type AssistantStatus = {
@@ -54,7 +55,9 @@ export type AiProviderKind =
   | "anthropic"
   | "googleGemini"
   | "openRouter"
+  | "ollamaLocal"
   | "ollamaRemote"
+  | "lmStudio"
   | "lmStudioRemote"
   | "customOpenAiCompatible";
 
@@ -304,8 +307,9 @@ export const ASSISTANT_SETTINGS_DEFAULTS: AssistantSettings = {
   hideFromTaskbar: true,
   keepModelLoaded: true,
   globalShortcut: "Alt+Space",
-  windowMode: "medium",
+  windowMode: "compact",
   lastMonitorName: null,
+  firstOpenDone: false,
 };
 
 export async function getAssistantStatus(): Promise<AssistantStatus> {
