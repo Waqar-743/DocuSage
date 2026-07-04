@@ -50,33 +50,31 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: DocuSage ${{ github.ref_name }}
           releaseBody: |
-            ## DocuSage ${{ github.ref_name }} — In-App Model Manager & RAG Diagnostics
+            ## DocuSage ${{ github.ref_name }} — Hidden Desktop Assistant Mode
 
             ### What's new
 
-            #### In-App Model Downloader
-            - Download GGUF models directly inside DocuSage — no manual file management
-            - Live progress bar with byte/percent display during download
-            - Models land in the app's data directory automatically
+            #### Hidden Desktop Assistant
+            - Launches hidden in the background with backend services kept alive
+            - Toggles instantly with the global shortcut, default `Alt+Space`
+            - Hides to tray instead of closing, preserving active chat state and local RAG state
 
-            #### Downloaded Models Panel (Settings → Downloaded)
-            - Lists every `.gguf` file on your machine
-            - **Connect Now** loads the model into the active chat session instantly
-            - Connected model shows a green indicator; button becomes **Disconnect**
-            - **Delete** (trash) icon permanently removes the file (blocked while connected)
+            #### Window Modes & Tray
+            - Adds compact, medium, and full assistant window modes
+            - Opens on the current cursor monitor with DPI-aware placement
+            - Adds tray actions for show, hide, settings, update check, AI engine restart, and quit
 
-            #### RAG Diagnostics & Tuning (Settings → RAG Tuning)
-            - **Chunk Size** slider (200–2000 chars) — controls ingestion chunk granularity
-            - **Chunk Overlap** slider (0–500 chars) — cross-boundary context preservation
-            - **Top-K Retrieval** slider (1–20 chunks) — how many chunks are injected per query
-            - **Show Retrieved Context** toggle — appends the raw retrieved chunks after each RAG answer for full transparency
+            #### AI Providers
+            - Adds provider settings for Local, OpenAI, Anthropic, Google Gemini, OpenRouter, Ollama remote, LM Studio remote, and custom OpenAI-compatible APIs
+            - Stores provider credentials through platform secure storage where available
+            - Keeps local document indexing private while allowing optional cloud answer generation
 
             ### Download
             | Platform | File |
             |----------|------|
             | Windows | `.msi` or `.exe` installer |
 
-            > **First run:** place a GGUF model in Settings → Model Catalog → Download, then go to Settings → Downloaded → Connect Now.
+            > **First run:** use Settings to connect a local model or configure an AI provider, then press `Alt+Space` to summon DocuSage from anywhere.
           releaseDraft: false
           prerelease: false
           projectPath: DocuSage
