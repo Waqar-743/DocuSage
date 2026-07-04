@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/Tauri-v2-blue?logo=tauri" alt="Tauri v2" />
   <img src="https://img.shields.io/badge/React-19-61dafb?logo=react" alt="React 19" />
   <img src="https://img.shields.io/badge/Rust-2021-orange?logo=rust" alt="Rust" />
-  <img src="https://img.shields.io/badge/Release-v0.5.1-brightgreen" alt="Release v0.5.1" />
+  <img src="https://img.shields.io/badge/Release-v0.5.2-brightgreen" alt="Release v0.5.2" />
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
 </p>
 
