@@ -1,177 +1,167 @@
-import { useEffect, type CSSProperties } from 'react';
+import { useEffect, useState, type ComponentType } from 'react';
 import {
-  CheckCircle,
-  Cloud,
+  ArrowDown,
+  ArrowRight,
+  Check,
+  ChevronRight,
   Command,
   Cpu,
   Database,
   Download,
+  FileSearch,
   FileText,
+  Github,
   HardDrive,
-  Keyboard,
-  Link,
-  MessageSquare,
-  Monitor,
-  Search,
-  Settings,
+  KeyRound,
+  Menu,
+  MonitorUp,
+  Network,
   ShieldCheck,
-  Sliders,
-  type LucideIcon,
+  Sparkles,
+  X,
 } from 'lucide-react';
 import './MarketingSite.css';
 
-const releaseUrl = 'https://github.com/Waqar-743/DocuSage/releases';
+const releaseUrl = 'https://github.com/Waqar-743/DocuSage/releases/latest';
 const sourceUrl = 'https://github.com/Waqar-743/DocuSage';
 const portfolioUrl = 'https://waqarahmed.live';
 
-const asset = (name: string) => `${import.meta.env.BASE_URL}brand/${name}`;
+const media = (name: string) => `${import.meta.env.BASE_URL}media/${name}`;
 
-const assets = {
-  logo: asset('doc-stylish.png'),
-  chatbot: asset('chatbot.png'),
-  document: asset('document-1.png'),
-  documentFlow: asset('document-2.png'),
-  rag: asset('document-with-rag.png'),
-  privateAi: asset('private.png'),
-  appLight: asset('app-light.png'),
-  appDark: asset('app-dark.png'),
+const images = {
+  logo: media('docusage-logo.png'),
+  dashboardDark: media('dashboard-dark.png'),
+  dashboardLight: media('dashboard-light.png'),
+  modelCatalog: media('model-catalog.png'),
+  providerSettings: media('provider-settings.png'),
+  shortcutSettings: media('shortcut-settings.png'),
+  bored: media('bored.png'),
+  frustration: media('frustration.png'),
+  searching: media('searching.png'),
+  observing: media('observing.png'),
+  teaching: media('teaching.png'),
+  privacy: media('privacy.png'),
+  hiddenWorkflow: media('hidden-workflow.png'),
+  hiddenFile: media('hidden-file.png'),
+  protected: media('protected.png'),
 };
 
-type IconItem = {
-  icon: LucideIcon;
+type Icon = ComponentType<{ size?: number; strokeWidth?: number; 'aria-hidden'?: boolean }>;
+
+type ProofRow = {
+  icon: Icon;
   title: string;
   copy: string;
+  tag: string;
 };
 
-const coreFeatures: IconItem[] = [
+const proofRows: ProofRow[] = [
   {
-    icon: MessageSquare,
-    title: 'Local AI chat with GGUF models',
-    copy: 'Run private desktop conversations through mistral.rs without a hosted chat server, account, or cloud upload.',
+    icon: FileSearch,
+    title: 'Ask questions across private PDF documents',
+    copy: 'DocuSage parses, chunks, embeds, and searches your PDFs locally so answers are grounded in the material you selected.',
+    tag: 'Local RAG',
   },
   {
-    icon: Database,
-    title: 'Local RAG for PDF question answering',
-    copy: 'Ingest PDFs, generate embeddings, and search a LanceDB vector index that stays on your own machine.',
-  },
-  {
-    icon: Cloud,
-    title: 'Optional cloud and remote AI providers',
-    copy: 'Use Gemini, OpenAI, Anthropic, OpenRouter, Ollama, LM Studio, or custom OpenAI-compatible APIs when you choose.',
-  },
-  {
-    icon: Keyboard,
-    title: 'Hidden desktop assistant mode',
-    copy: 'Keep DocuSage ready in the background and summon the compact assistant instantly with a global shortcut.',
-  },
-];
-
-const workflowSteps = [
-  {
-    number: '01',
-    title: 'Connect a model or provider',
-    copy: 'Use a local GGUF model for offline AI, or add a provider key for cloud and remote model access.',
     icon: Cpu,
+    title: 'Run offline AI chat with GGUF models',
+    copy: 'Connect a local model through mistral.rs and keep both the conversation and generation on your own computer.',
+    tag: 'On-device',
   },
   {
-    number: '02',
-    title: 'Ingest private documents',
-    copy: 'Drop in PDFs. DocuSage extracts text, chunks it, embeds it locally, and writes it to your LanceDB index.',
-    icon: FileText,
-  },
-  {
-    number: '03',
-    title: 'Ask grounded questions',
-    copy: 'Search local document chunks and answer with the retrieved context, not loose guesses about the file.',
-    icon: Search,
-  },
-  {
-    number: '04',
-    title: 'Scale only the final answer',
-    copy: 'When cloud mode is active, retrieval remains local and only selected prompt context leaves the device.',
-    icon: Link,
-  },
-];
-
-const technicalProof: IconItem[] = [
-  {
-    icon: ShieldCheck,
-    title: 'Privacy-first document intelligence',
-    copy: 'Ingestion, embeddings, retrieval, model files, settings, and session history are designed around local control.',
-  },
-  {
-    icon: Sliders,
-    title: 'RAG tuning controls',
-    copy: 'Tune chunk size, overlap, top-k retrieval, and source context display from the desktop settings panel.',
-  },
-  {
-    icon: HardDrive,
-    title: 'Model download and management',
-    copy: 'Download, connect, disconnect, and delete local GGUF models without leaving the DocuSage interface.',
-  },
-  {
-    icon: Settings,
-    title: 'Provider credential settings',
-    copy: 'Manage API keys, base URLs, model names, timeouts, and active providers through a focused settings flow.',
-  },
-  {
-    icon: Monitor,
-    title: 'Compact, medium, and full modes',
-    copy: 'Switch between assistant sizes with monitor-aware placement for quick lookups or deeper document sessions.',
+    icon: Network,
+    title: 'Choose cloud power only when it helps',
+    copy: 'Use Gemini, OpenAI, Anthropic, OpenRouter, Ollama, LM Studio, or a compatible endpoint while retrieval remains local.',
+    tag: '10 profiles',
   },
   {
     icon: Command,
-    title: 'Desktop workflow controls',
-    copy: 'Use tray actions, restart the AI engine, check for updates, and keep the app ready in the background.',
+    title: 'Call the assistant without leaving your work',
+    copy: 'DocuSage starts hidden, lives in the system tray, and appears with Alt+Space in compact, medium, or full mode.',
+    tag: 'Alt+Space',
   },
 ];
 
+const lifecycle = [
+  ['01', 'Start quietly', 'Launch hidden with the Rust backend ready and no dashboard interrupting your desktop.'],
+  ['02', 'Call it', 'Press Alt+Space from any application to open the compact assistant beside your work.'],
+  ['03', 'Go deeper', 'Move through compact, medium, and full modes when a quick answer becomes a research session.'],
+  ['04', 'Leave no mess', 'Escape or close hides DocuSage to the tray while drafts, documents, sessions, and model state remain intact.'],
+];
+
+const architecture = [
+  { icon: FileText, label: 'Your PDF', detail: 'Local parsing' },
+  { icon: Sparkles, label: 'Embeddings', detail: 'fastembed' },
+  { icon: Database, label: 'Vector search', detail: 'LanceDB' },
+  { icon: Cpu, label: 'Answer', detail: 'Local or chosen provider' },
+];
+
 const installSteps = [
-  'Download the latest Windows installer from GitHub Releases.',
-  'Open DocuSage and connect a local GGUF model or configure an AI provider.',
-  'Ingest a PDF, ask a question, and choose local or cloud answer generation per workflow.',
+  ['Download', 'Get the current Windows installer from GitHub Releases.'],
+  ['Open once', 'DocuSage starts in the tray with its background services ready.'],
+  ['Press Alt+Space', 'Open the compact assistant from anywhere on your desktop.'],
+  ['Add knowledge', 'Connect a GGUF model or provider, ingest a PDF, and ask your first grounded question.'],
 ];
 
-const stackRows = [
-  ['Desktop shell', 'Tauri v2', 'Native Windows desktop app with a smaller footprint than Electron.'],
-  ['Frontend', 'React 19 + Vite', 'Fast interface for chat, RAG, settings, provider management, and assistant modes.'],
-  ['Backend', 'Rust 2021', 'Tauri commands for model loading, document ingestion, chat, RAG, and provider calls.'],
-  ['Local inference', 'mistral.rs + GGUF', 'On-device model execution for offline private AI chat.'],
-  ['Embeddings', 'fastembed + bge-small-en-v1.5', 'Local vector generation for PDF semantic search.'],
-  ['Vector store', 'LanceDB', 'Persistent local retrieval for private document question answering.'],
-];
-
-function MarketingNav() {
+function Brand() {
   return (
-    <header className="marketing-nav">
-      <nav className="marketing-wrap marketing-nav-inner" aria-label="Primary navigation">
-        <a className="marketing-logo" href="#top" aria-label="DocuSage home">
-          <img src={assets.logo} alt="DocuSage logo" />
-          <span>Docu<em>Sage</em></span>
-        </a>
-        <div className="marketing-nav-links" aria-label="Website sections">
-          <a href="#features">Features</a>
-          <a href="#privacy">Privacy</a>
-          <a href="#docs">Docs</a>
-          <a href="#stack">Stack</a>
+    <a className="site-brand" href="#top" aria-label="DocuSage home">
+      <img src={images.logo} alt="" />
+      <span>DocuSage</span>
+    </a>
+  );
+}
+
+function SiteNav() {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <header className="site-nav">
+      <nav className="site-shell nav-inner" aria-label="Primary navigation">
+        <Brand />
+        <button
+          className="nav-toggle"
+          type="button"
+          aria-label={open ? 'Close navigation' : 'Open navigation'}
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          {open ? <X size={20} /> : <Menu size={20} />}
+        </button>
+        <div className={`nav-links ${open ? 'is-open' : ''}`}>
+          <a href="#story" onClick={() => setOpen(false)}>Why DocuSage</a>
+          <a href="#product" onClick={() => setOpen(false)}>Product</a>
+          <a href="#privacy" onClick={() => setOpen(false)}>Privacy</a>
+          <a href="#architecture" onClick={() => setOpen(false)}>Architecture</a>
+          <a className="nav-github" href={sourceUrl} target="_blank" rel="noreferrer">
+            <Github size={17} aria-hidden="true" /> GitHub
+          </a>
+          <a className="nav-install" href={releaseUrl} target="_blank" rel="noreferrer">
+            <Download size={16} aria-hidden="true" /> Download
+          </a>
         </div>
-        <a className="marketing-nav-cta" href={releaseUrl} target="_blank" rel="noreferrer">
-          <Download size={15} aria-hidden="true" />
-          Install
-        </a>
       </nav>
     </header>
   );
 }
 
-function FeaturePanel({ item }: { item: IconItem }) {
-  const Icon = item.icon;
+function DashboardShowcase() {
+  const [mode, setMode] = useState<'light' | 'dark'>('light');
+  const source = mode === 'light' ? images.dashboardLight : images.dashboardDark;
+
   return (
-    <article className="feature-panel">
-      <Icon size={22} aria-hidden="true" />
-      <h3>{item.title}</h3>
-      <p>{item.copy}</p>
-    </article>
+    <div className={`dashboard-stage dashboard-stage-${mode}`}>
+      <div className="dashboard-toolbar">
+        <div>
+          <span className="live-dot" /> Real DocuSage interface
+        </div>
+        <div className="theme-switch" aria-label="Dashboard screenshot theme">
+          <button className={mode === 'light' ? 'active' : ''} type="button" onClick={() => setMode('light')}>Light</button>
+          <button className={mode === 'dark' ? 'active' : ''} type="button" onClick={() => setMode('dark')}>Dark</button>
+        </div>
+      </div>
+      <img src={source} alt={`DocuSage ${mode} mode dashboard showing private AI document chat`} />
+    </div>
   );
 }
 
@@ -181,139 +171,120 @@ function MarketingSite() {
     return () => document.body.classList.remove('marketing-body');
   }, []);
 
-  const heroStyle = { '--hero-image': `url(${assets.appDark})` } as CSSProperties;
-
   return (
     <div className="marketing-site" id="top">
       <a className="skip-link" href="#main-content">Skip to content</a>
-      <MarketingNav />
+      <SiteNav />
 
       <main id="main-content">
-        <section className="marketing-hero" style={heroStyle}>
-          <div className="marketing-hero-shade" />
-          <div className="marketing-wrap hero-content">
-            <p className="eyebrow">Local-first desktop AI assistant</p>
-            <h1>DocuSage private document intelligence for your desktop.</h1>
-            <p className="hero-copy">
-              Chat with local GGUF models, ask questions across private PDFs, run a local RAG pipeline,
-              and switch to trusted cloud or remote providers only when stronger answer generation is worth it.
-            </p>
-            <div className="hero-actions" aria-label="DocuSage install actions">
-              <a className="button button-primary" href={releaseUrl} target="_blank" rel="noreferrer">
-                <Download size={18} aria-hidden="true" />
-                Download Windows installer
-              </a>
-              <a className="button button-secondary" href="#docs">
-                Read install guide
-              </a>
+        <section className="hero-section">
+          <div className="site-shell hero-grid">
+            <div className="hero-copy">
+              <p className="section-kicker"><span /> Private AI document assistant</p>
+              <h1><span>DocuSage.</span> Your files already know the answer.</h1>
+              <p className="hero-lede">
+                Read, search, and chat with private PDFs using local RAG and offline GGUF models.
+                DocuSage stays quietly in your tray until you press Alt+Space.
+              </p>
+              <div className="hero-actions">
+                <a className="primary-action" href={releaseUrl} target="_blank" rel="noreferrer">
+                  <Download size={18} aria-hidden="true" /> Download for Windows
+                </a>
+                <a className="text-action" href={sourceUrl} target="_blank" rel="noreferrer">
+                  <Github size={18} aria-hidden="true" /> Explore the source <ArrowRight size={16} aria-hidden="true" />
+                </a>
+              </div>
+              <div className="hero-trust" aria-label="Product highlights">
+                <span><Check size={15} /> Local PDF retrieval</span>
+                <span><Check size={15} /> Offline model support</span>
+                <span><Check size={15} /> Open source</span>
+              </div>
+            </div>
+
+            <div className="hero-visual" aria-label="DocuSage product preview">
+              <div className="hero-window">
+                <div className="window-chrome"><i /><i /><i /><span>DocuSage / Private workspace</span></div>
+                <img src={images.dashboardDark} alt="DocuSage dark mode desktop AI dashboard" />
+              </div>
+              <img className="hero-character" src={images.observing} alt="DocuSage document character working privately on a laptop" />
+              <div className="shortcut-callout"><KeyRound size={16} /> <kbd>Alt</kbd><b>+</b><kbd>Space</kbd></div>
             </div>
           </div>
+          <a className="scroll-cue" href="#story"><ArrowDown size={17} /> The story</a>
         </section>
 
-        <section className="metric-strip" aria-label="Product highlights">
-          <div className="marketing-wrap">
-            <dl className="hero-facts" aria-label="Product highlights">
-              <div>
-                <dt>v0.5.3</dt>
-                <dd>Current release</dd>
-              </div>
-              <div>
-                <dt>100%</dt>
-                <dd>Local document indexing</dd>
-              </div>
-              <div>
-                <dt>7+</dt>
-                <dd>Provider options</dd>
-              </div>
-            </dl>
-          </div>
-        </section>
-
-        <section className="icon-strip" aria-label="DocuSage product capabilities">
-          <div className="marketing-wrap icon-strip-inner">
-            <figure>
-              <img src={assets.chatbot} alt="Black DocuSage chatbot icon" />
-              <figcaption>AI chat</figcaption>
-            </figure>
-            <figure>
-              <img src={assets.document} alt="Document assistant icon" />
-              <figcaption>PDF RAG</figcaption>
-            </figure>
-            <figure>
-              <img src={assets.privateAi} alt="Private AI shield icon" />
-              <figcaption>Privacy</figcaption>
-            </figure>
-            <figure>
-              <img src={assets.rag} alt="Document to AI retrieval icon" />
-              <figcaption>Hybrid mode</figcaption>
-            </figure>
-          </div>
-        </section>
-
-        <section className="marketing-section product-proof" id="features">
-          <div className="marketing-wrap">
-            <div className="section-intro split-intro">
-              <div>
-                <p className="eyebrow">AI document assistant</p>
-                <h2>Built for offline PDF chat, local RAG, and private AI research.</h2>
-              </div>
+        <section className="story-section" id="story">
+          <div className="site-shell">
+            <div className="story-opening">
+              <p className="chapter-number">Chapter 01</p>
+              <h2>Research should not feel like searching for one sentence in a room full of paper.</h2>
               <p>
-                DocuSage is a desktop AI assistant for people who want document question answering without
-                uploading every file to a hosted service. It combines local model inference, local vector search,
-                and optional cloud synthesis in one controlled workflow.
+                You open another PDF, try another keyword, and lose the thread between tabs. Hosted AI tools
+                promise speed, then ask you to upload the documents you were trying to keep private.
               </p>
             </div>
 
-            <div className="product-showcase">
-              <img src={assets.appLight} alt="DocuSage light mode desktop interface with RAG document controls" />
-            </div>
-
-            <div className="feature-grid">
-              {coreFeatures.map((item) => (
-                <FeaturePanel key={item.title} item={item} />
-              ))}
+            <div className="problem-reel" aria-label="Common document research frustrations">
+              <figure className="problem-frame frame-left">
+                <img src={images.frustration} alt="DocuSage character frustrated by difficult document research" />
+                <figcaption><strong>Too many files.</strong><span>The useful sentence is buried somewhere.</span></figcaption>
+              </figure>
+              <figure className="problem-frame frame-center">
+                <img src={images.searching} alt="DocuSage character searching documents on a laptop" />
+                <figcaption><strong>Too much searching.</strong><span>Keywords miss what the document actually means.</span></figcaption>
+              </figure>
+              <figure className="problem-frame frame-right">
+                <img src={images.bored} alt="Tired DocuSage document character waiting beside a clock" />
+                <figcaption><strong>Too much waiting.</strong><span>Your focus disappears before the answer appears.</span></figcaption>
+              </figure>
             </div>
           </div>
         </section>
 
-        <section className="marketing-section privacy-section" id="privacy">
-          <div className="marketing-wrap privacy-grid">
-            <div className="privacy-media">
-              <img src={assets.privateAi} alt="Private AI shield for local document intelligence" />
+        <section className="turning-point">
+          <div className="site-shell turning-grid">
+            <div className="turning-visual">
+              <span className="orbit-label orbit-one">PDF</span>
+              <span className="orbit-label orbit-two">RAG</span>
+              <span className="orbit-label orbit-three">GGUF</span>
+              <img src={images.teaching} alt="DocuSage character explaining private AI document question answering" />
             </div>
-            <div className="privacy-copy">
-              <p className="eyebrow">Private by architecture</p>
-              <h2>Your documents stay local before any model writes an answer.</h2>
-              <p>
-                DocuSage keeps PDF parsing, chunking, embeddings, retrieval, local storage, and session history
-                on-device. When a cloud or remote provider is active, the local retrieval step still happens first,
-                so the app sends selected context instead of the full document.
+            <div className="turning-copy">
+              <p className="chapter-number">Chapter 02</p>
+              <h2>So I built the assistant I wanted beside me.</h2>
+              <p className="founder-note">
+                "DocuSage began with a simple frustration: my documents contained the context, but finding it
+                interrupted the work. I wanted an assistant that could stay close to the files, stay out of the
+                way, and let me decide when the cloud was involved."
               </p>
-              <ul className="check-list">
-                <li><CheckCircle size={17} aria-hidden="true" /> Offline local chat with GGUF model files.</li>
-                <li><CheckCircle size={17} aria-hidden="true" /> Local LanceDB vector index for private PDF search.</li>
-                <li><CheckCircle size={17} aria-hidden="true" /> Optional provider mode for Gemini, OpenAI, Anthropic, OpenRouter, Ollama, LM Studio, and custom APIs.</li>
-                <li><CheckCircle size={17} aria-hidden="true" /> API keys and provider settings managed from the desktop app.</li>
-              </ul>
+              <p className="founder-byline">Waqar Ahmed <span>Creator of DocuSage</span></p>
             </div>
           </div>
         </section>
 
-        <section className="marketing-section workflow-section">
-          <div className="marketing-wrap">
-            <div className="section-intro">
-              <p className="eyebrow">How DocuSage works</p>
-              <h2>From PDF to grounded AI answer in four controlled steps.</h2>
+        <section className="product-section" id="product">
+          <div className="site-shell">
+            <div className="product-heading">
+              <div>
+                <p className="chapter-number">Chapter 03</p>
+                <h2>One private workspace. No tab maze.</h2>
+              </div>
+              <p>
+                Ingest a PDF, switch between general chat and document RAG, choose a local or remote model,
+                and keep every research session in one desktop interface.
+              </p>
             </div>
-            <div className="workflow-grid">
-              {workflowSteps.map((step) => {
-                const Icon = step.icon;
+            <DashboardShowcase />
+
+            <div className="proof-list">
+              {proofRows.map((row, index) => {
+                const Icon = row.icon;
                 return (
-                  <article className="workflow-step" key={step.number}>
-                    <span className="step-number">{step.number}</span>
-                    <Icon size={24} aria-hidden="true" />
-                    <h3>{step.title}</h3>
-                    <p>{step.copy}</p>
+                  <article className="proof-row" key={row.title}>
+                    <span className="proof-index">0{index + 1}</span>
+                    <Icon size={25} strokeWidth={1.7} aria-hidden={true} />
+                    <div><h3>{row.title}</h3><p>{row.copy}</p></div>
+                    <span className="proof-tag">{row.tag}</span>
                   </article>
                 );
               })}
@@ -321,113 +292,141 @@ function MarketingSite() {
           </div>
         </section>
 
-        <section className="marketing-section technical-section">
-          <div className="marketing-wrap">
-            <div className="section-intro split-intro">
-              <div>
-                <p className="eyebrow">Desktop features</p>
-                <h2>More than a PDF chatbot: a complete local AI workspace.</h2>
-              </div>
+        <section className="assistant-section">
+          <div className="site-shell assistant-layout">
+            <div className="assistant-sticky">
+              <p className="section-kicker light"><span /> Hidden desktop assistant</p>
+              <h2>Present when needed. Gone when it is not.</h2>
               <p>
-                The current app includes hidden assistant mode, provider management, model download tools,
-                RAG tuning, update checks, session persistence, and source-grounded document answers.
+                DocuSage is built around the rhythm of desktop work. It launches hidden, answers in a compact
+                panel, expands for deeper sessions, and returns to the tray without throwing your context away.
               </p>
+              <img src={images.hiddenWorkflow} alt="DocuSage character carrying a protected folder in hidden assistant mode" />
             </div>
-            <div className="technical-grid">
-              {technicalProof.map((item) => (
-                <FeaturePanel key={item.title} item={item} />
+            <div className="lifecycle-track">
+              {lifecycle.map(([number, title, copy]) => (
+                <article key={number}>
+                  <span>{number}</span>
+                  <div><h3>{title}</h3><p>{copy}</p></div>
+                </article>
               ))}
+              <figure className="shortcut-proof">
+                <img src={images.shortcutSettings} alt="DocuSage shortcut settings showing hidden desktop assistant controls" />
+                <figcaption>Every shortcut is visible in Settings, including toggle, hide, new chat, and send.</figcaption>
+              </figure>
             </div>
           </div>
         </section>
 
-        <section className="marketing-section docs-section" id="docs">
-          <div className="marketing-wrap docs-grid">
-            <div className="docs-copy">
-              <p className="eyebrow">Install DocuSage</p>
-              <h2>Get the Windows desktop app or build from source.</h2>
-              <p>
-                The fastest path is the signed release artifact from GitHub Releases. Developers can clone the
-                repository and run the Tauri app locally with Node.js, npm, Rust stable, and the Tauri v2
-                system prerequisites installed.
+        <section className="privacy-section" id="privacy">
+          <div className="site-shell privacy-layout">
+            <div className="privacy-copy">
+              <p className="chapter-number">Chapter 04</p>
+              <h2>Your document is not the price of getting an answer.</h2>
+              <p className="privacy-lede">
+                DocuSage keeps PDF parsing, chunking, embeddings, LanceDB retrieval, model files, settings,
+                and history on your device. In provider mode, local retrieval still happens first and only the
+                selected context is sent for synthesis.
               </p>
-              <div className="docs-actions">
-                <a className="button button-primary" href={releaseUrl} target="_blank" rel="noreferrer">
-                  <Download size={18} aria-hidden="true" />
-                  Install latest release
+              <div className="privacy-facts">
+                <div><HardDrive size={21} /><strong>Local by default</strong><span>Documents and indexes remain on your computer.</span></div>
+                <div><ShieldCheck size={21} /><strong>You choose the boundary</strong><span>Use offline GGUF chat or an explicitly configured provider.</span></div>
+                <div><KeyRound size={21} /><strong>Protected credentials</strong><span>Secrets use the platform keyring where available.</span></div>
+              </div>
+            </div>
+            <div className="privacy-visual">
+              <img className="privacy-main" src={images.privacy} alt="DocuSage character protecting a private document" />
+              <img className="privacy-secondary" src={images.protected} alt="DocuSage protected document assistant asking for quiet" />
+              <p><span>Local boundary</span> Your files stay here</p>
+            </div>
+          </div>
+        </section>
+
+        <section className="architecture-section" id="architecture">
+          <div className="site-shell">
+            <div className="architecture-heading">
+              <p className="section-kicker"><span /> How local RAG works</p>
+              <h2>A short path from your PDF to a grounded answer.</h2>
+              <p>Each stage has one job. The retrieval path stays visible, inspectable, and local.</p>
+            </div>
+            <div className="architecture-flow" aria-label="DocuSage local RAG architecture">
+              {architecture.map((step, index) => {
+                const Icon = step.icon;
+                return (
+                  <div className="architecture-step" key={step.label}>
+                    <span className="architecture-icon"><Icon size={28} strokeWidth={1.6} /></span>
+                    <strong>{step.label}</strong>
+                    <small>{step.detail}</small>
+                    {index < architecture.length - 1 && <ChevronRight className="architecture-arrow" size={24} />}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="architecture-note">
+              <img src={images.hiddenFile} alt="DocuSage document character hiding safely behind a local folder" />
+              <p><strong>The important part:</strong> cloud providers never perform the retrieval step. DocuSage finds the relevant excerpts locally, then you decide which model writes the final response.</p>
+            </div>
+          </div>
+        </section>
+
+        <section className="inside-section">
+          <div className="site-shell">
+            <div className="inside-heading">
+              <p className="chapter-number">Inside the product</p>
+              <h2>Real controls for real desktop AI work.</h2>
+            </div>
+            <div className="screenshot-rail">
+              <figure className="screen screen-wide">
+                <img src={images.modelCatalog} alt="DocuSage local GGUF model catalog" />
+                <figcaption><span>01</span><strong>Local model catalog</strong><p>Download and manage compact GGUF models in the app.</p></figcaption>
+              </figure>
+              <figure className="screen screen-tall">
+                <img src={images.providerSettings} alt="DocuSage AI provider configuration settings" />
+                <figcaption><span>02</span><strong>Provider control</strong><p>Set models, endpoints, timeouts, temperature, and credentials.</p></figcaption>
+              </figure>
+              <figure className="screen screen-wide">
+                <img src={images.dashboardDark} alt="DocuSage dark mode chat interface" />
+                <figcaption><span>03</span><strong>Focused document chat</strong><p>Move between general conversation and source-grounded RAG.</p></figcaption>
+              </figure>
+            </div>
+          </div>
+        </section>
+
+        <section className="install-section" id="install">
+          <div className="site-shell install-layout">
+            <div className="install-copy">
+              <p className="section-kicker light"><span /> Open source Windows desktop app</p>
+              <h2>Your next document can be the first one you do not upload.</h2>
+              <p>Install DocuSage, keep your research close, and summon private document intelligence with one shortcut.</p>
+              <div className="install-actions">
+                <a className="primary-action light-action" href={releaseUrl} target="_blank" rel="noreferrer">
+                  <Download size={19} /> Get the latest release
                 </a>
-                <a className="button button-secondary" href={sourceUrl} target="_blank" rel="noreferrer">
-                  View source
+                <a className="text-action light-link" href={sourceUrl} target="_blank" rel="noreferrer">
+                  <Github size={18} /> View on GitHub <ArrowRight size={16} />
                 </a>
               </div>
+              <p className="release-note"><MonitorUp size={16} /> Windows installer available from GitHub Releases</p>
             </div>
-            <div className="install-ledger" aria-label="DocuSage install steps">
-              {installSteps.map((step, index) => (
-                <div className="install-row" key={step}>
-                  <span>{String(index + 1).padStart(2, '0')}</span>
-                  <p>{step}</p>
-                </div>
+            <ol className="install-steps">
+              {installSteps.map(([title, copy], index) => (
+                <li key={title}><span>0{index + 1}</span><div><strong>{title}</strong><p>{copy}</p></div></li>
               ))}
-              <div className="command-block" aria-label="Build from source commands">
-                <div><span># clone and run from source</span></div>
-                <div>git clone https://github.com/Waqar-743/DocuSage.git</div>
-                <div>cd DocuSage/DocuSage</div>
-                <div>npm install</div>
-                <div>npm run tauri dev</div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section className="marketing-section stack-section" id="stack">
-          <div className="marketing-wrap">
-            <div className="section-intro split-intro">
-              <div>
-                <p className="eyebrow">Technical stack</p>
-                <h2>Local-first AI software built with React, Rust, Tauri, GGUF, and LanceDB.</h2>
-              </div>
-              <p>
-                Each layer is selected for a desktop AI workflow where private document search, local model
-                execution, and optional remote answer generation can coexist without changing the privacy model.
-              </p>
-            </div>
-            <div className="stack-table" role="table" aria-label="DocuSage technical stack">
-              {stackRows.map(([layer, choice, reason]) => (
-                <div className="stack-row" role="row" key={layer}>
-                  <span role="cell">{layer}</span>
-                  <strong role="cell">{choice}</strong>
-                  <p role="cell">{reason}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <section className="final-cta">
-          <div className="marketing-wrap final-cta-inner">
-            <img src={assets.documentFlow} alt="Stylized document intelligence icon" />
-            <p className="eyebrow">Ready to install</p>
-            <h2>Bring private AI document search to your desktop.</h2>
-            <p>
-              Install DocuSage for local PDF question answering, offline GGUF chat, and controlled cloud AI
-              provider access from one desktop workspace.
-            </p>
-            <a className="button button-primary" href={releaseUrl} target="_blank" rel="noreferrer">
-              <Download size={18} aria-hidden="true" />
-              Download DocuSage
-            </a>
+            </ol>
           </div>
         </section>
       </main>
 
-      <footer className="marketing-footer">
-        <div className="marketing-wrap footer-inner">
-          <span>DocuSage by Waqar Ahmed</span>
-          <div>
+      <footer className="site-footer">
+        <div className="site-shell footer-grid">
+          <div><Brand /><p>Private document intelligence, built for your desktop.</p></div>
+          <div className="footer-links">
+            <a href={releaseUrl} target="_blank" rel="noreferrer">Download</a>
             <a href={sourceUrl} target="_blank" rel="noreferrer">GitHub</a>
-            <a href={releaseUrl} target="_blank" rel="noreferrer">Releases</a>
-            <a href={portfolioUrl} target="_blank" rel="noreferrer">Portfolio</a>
+            <a href={`${sourceUrl}/blob/main/README.md`} target="_blank" rel="noreferrer">Documentation</a>
+            <a href={`${sourceUrl}/blob/main/LICENSE`} target="_blank" rel="noreferrer">MIT License</a>
           </div>
+          <p className="footer-credit">Designed and built by <a href={portfolioUrl} target="_blank" rel="noreferrer">Waqar Ahmed</a>.</p>
         </div>
       </footer>
     </div>
