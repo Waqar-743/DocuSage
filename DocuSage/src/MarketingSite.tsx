@@ -160,9 +160,14 @@ function DashboardShowcase() {
           <button className={mode === 'dark' ? 'active' : ''} type="button" onClick={() => setMode('dark')}>Dark</button>
         </div>
       </div>
-      <img src={source} alt={`DocuSage ${mode} mode dashboard showing private AI document chat`} />
+      <img src={source} alt={`DocuSage ${mode} mode dashboard showing private AI document chat`} loading="lazy" decoding="async" />
     </div>
   );
+}
+
+function SplitHeading({ text }: { text: string }) {
+  const [first, ...rest] = text.split(' ');
+  return <>{first} <span>{rest.join(' ')}</span></>;
 }
 
 function MarketingSite() {
@@ -179,32 +184,40 @@ function MarketingSite() {
       <main id="main-content">
         <section className="hero-section">
           <div className="site-shell hero-grid">
-            <div className="hero-copy">
-              <p className="section-kicker"><span /> Private AI document assistant</p>
-              <h1><span>DocuSage.</span> Your files already know the answer.</h1>
-              <p className="hero-lede">
-                Read, search, and chat with private PDFs using local RAG and offline GGUF models.
-                DocuSage stays quietly in your tray until you press Alt+Space.
-              </p>
-              <div className="hero-actions">
-                <a className="primary-action" href={releaseUrl} target="_blank" rel="noreferrer">
-                  <Download size={18} aria-hidden="true" /> Download for Windows
-                </a>
-                <a className="text-action" href={sourceUrl} target="_blank" rel="noreferrer">
-                  <Github size={18} aria-hidden="true" /> Explore the source <ArrowRight size={16} aria-hidden="true" />
-                </a>
+            <div className="hero-intro">
+              <div className="hero-copy">
+                <p className="section-kicker"><span /> Private AI document assistant</p>
+                <h1><span>DocuSage.</span> Private answers from files that stay yours.</h1>
+                <p className="hero-lede">
+                  Read, search, and chat with private PDFs using local RAG and offline GGUF models.
+                  DocuSage stays quietly in your tray until you press Alt+Space.
+                </p>
+                <div className="hero-actions">
+                  <a className="primary-action" href={releaseUrl} target="_blank" rel="noreferrer">
+                    <Download size={18} aria-hidden="true" /> Download for Windows
+                  </a>
+                  <a className="text-action" href={sourceUrl} target="_blank" rel="noreferrer">
+                    <Github size={18} aria-hidden="true" /> Explore the source <ArrowRight size={16} aria-hidden="true" />
+                  </a>
+                </div>
+                <div className="hero-trust" aria-label="Product highlights">
+                  <span><Check size={15} /> Local PDF retrieval</span>
+                  <span><Check size={15} /> Offline model support</span>
+                  <span><Check size={15} /> Open source</span>
+                </div>
               </div>
-              <div className="hero-trust" aria-label="Product highlights">
-                <span><Check size={15} /> Local PDF retrieval</span>
-                <span><Check size={15} /> Offline model support</span>
-                <span><Check size={15} /> Open source</span>
-              </div>
+              <aside className="hero-aside" aria-label="DocuSage privacy summary">
+                <span>Privacy boundary</span>
+                <strong>Your documents remain on your computer.</strong>
+                <p>Local parsing, local embeddings, local retrieval. A remote model is involved only when you choose one.</p>
+                <a href="#privacy">See the architecture <ArrowRight size={15} /></a>
+              </aside>
             </div>
 
             <div className="hero-visual" aria-label="DocuSage product preview">
+              <div className="hero-product-meta"><span>Real desktop interface</span><span>React + Tauri + Rust</span></div>
               <div className="hero-window">
-                <div className="window-chrome"><i /><i /><i /><span>DocuSage / Private workspace</span></div>
-                <img src={images.dashboardDark} alt="DocuSage dark mode desktop AI dashboard" />
+                <img src={images.dashboardDark} alt="DocuSage dark mode desktop AI dashboard" fetchPriority="high" />
               </div>
               <img className="hero-character" src={images.observing} alt="DocuSage document character working privately on a laptop" />
               <div className="shortcut-callout"><KeyRound size={16} /> <kbd>Alt</kbd><b>+</b><kbd>Space</kbd></div>
@@ -217,7 +230,7 @@ function MarketingSite() {
           <div className="site-shell">
             <div className="story-opening">
               <p className="chapter-number">Chapter 01</p>
-              <h2>Research should not feel like searching for one sentence in a room full of paper.</h2>
+              <h2>Research should feel focused. <span>Not like a search party.</span></h2>
               <p>
                 You open another PDF, try another keyword, and lose the thread between tabs. Hosted AI tools
                 promise speed, then ask you to upload the documents you were trying to keep private.
@@ -226,15 +239,15 @@ function MarketingSite() {
 
             <div className="problem-reel" aria-label="Common document research frustrations">
               <figure className="problem-frame frame-left">
-                <img src={images.frustration} alt="DocuSage character frustrated by difficult document research" />
+                <img src={images.frustration} alt="DocuSage character frustrated by difficult document research" loading="lazy" decoding="async" />
                 <figcaption><strong>Too many files.</strong><span>The useful sentence is buried somewhere.</span></figcaption>
               </figure>
               <figure className="problem-frame frame-center">
-                <img src={images.searching} alt="DocuSage character searching documents on a laptop" />
+                <img src={images.searching} alt="DocuSage character searching documents on a laptop" loading="lazy" decoding="async" />
                 <figcaption><strong>Too much searching.</strong><span>Keywords miss what the document actually means.</span></figcaption>
               </figure>
               <figure className="problem-frame frame-right">
-                <img src={images.bored} alt="Tired DocuSage document character waiting beside a clock" />
+                <img src={images.bored} alt="Tired DocuSage document character waiting beside a clock" loading="lazy" decoding="async" />
                 <figcaption><strong>Too much waiting.</strong><span>Your focus disappears before the answer appears.</span></figcaption>
               </figure>
             </div>
@@ -247,11 +260,11 @@ function MarketingSite() {
               <span className="orbit-label orbit-one">PDF</span>
               <span className="orbit-label orbit-two">RAG</span>
               <span className="orbit-label orbit-three">GGUF</span>
-              <img src={images.teaching} alt="DocuSage character explaining private AI document question answering" />
+              <img src={images.teaching} alt="DocuSage character explaining private AI document question answering" loading="lazy" decoding="async" />
             </div>
             <div className="turning-copy">
               <p className="chapter-number">Chapter 02</p>
-              <h2>So I built the assistant I wanted beside me.</h2>
+              <h2>Built from frustration. <span>Designed to stay beside you.</span></h2>
               <p className="founder-note">
                 "DocuSage began with a simple frustration: my documents contained the context, but finding it
                 interrupted the work. I wanted an assistant that could stay close to the files, stay out of the
@@ -267,7 +280,7 @@ function MarketingSite() {
             <div className="product-heading">
               <div>
                 <p className="chapter-number">Chapter 03</p>
-                <h2>One private workspace. No tab maze.</h2>
+                <h2>One private workspace. <span>No tab maze.</span></h2>
               </div>
               <p>
                 Ingest a PDF, switch between general chat and document RAG, choose a local or remote model,
@@ -283,7 +296,7 @@ function MarketingSite() {
                   <article className="proof-row" key={row.title}>
                     <span className="proof-index">0{index + 1}</span>
                     <Icon size={25} strokeWidth={1.7} aria-hidden={true} />
-                    <div><h3>{row.title}</h3><p>{row.copy}</p></div>
+                    <div><h3><SplitHeading text={row.title} /></h3><p>{row.copy}</p></div>
                     <span className="proof-tag">{row.tag}</span>
                   </article>
                 );
@@ -296,18 +309,18 @@ function MarketingSite() {
           <div className="site-shell assistant-layout">
             <div className="assistant-sticky">
               <p className="section-kicker light"><span /> Hidden desktop assistant</p>
-              <h2>Present when needed. Gone when it is not.</h2>
+              <h2>Present when needed. <span>Invisible when it is not.</span></h2>
               <p>
                 DocuSage is built around the rhythm of desktop work. It launches hidden, answers in a compact
                 panel, expands for deeper sessions, and returns to the tray without throwing your context away.
               </p>
-              <img src={images.hiddenWorkflow} alt="DocuSage character carrying a protected folder in hidden assistant mode" />
+              <img src={images.hiddenWorkflow} alt="DocuSage character carrying a protected folder in hidden assistant mode" loading="lazy" decoding="async" />
             </div>
             <div className="lifecycle-track">
               {lifecycle.map(([number, title, copy]) => (
                 <article key={number}>
                   <span>{number}</span>
-                  <div><h3>{title}</h3><p>{copy}</p></div>
+                  <div><h3><SplitHeading text={title} /></h3><p>{copy}</p></div>
                 </article>
               ))}
               <figure className="shortcut-proof">
@@ -322,7 +335,7 @@ function MarketingSite() {
           <div className="site-shell privacy-layout">
             <div className="privacy-copy">
               <p className="chapter-number">Chapter 04</p>
-              <h2>Your document is not the price of getting an answer.</h2>
+              <h2>Your document stays yours. <span>The answer still arrives.</span></h2>
               <p className="privacy-lede">
                 DocuSage keeps PDF parsing, chunking, embeddings, LanceDB retrieval, model files, settings,
                 and history on your device. In provider mode, local retrieval still happens first and only the
@@ -335,8 +348,8 @@ function MarketingSite() {
               </div>
             </div>
             <div className="privacy-visual">
-              <img className="privacy-main" src={images.privacy} alt="DocuSage character protecting a private document" />
-              <img className="privacy-secondary" src={images.protected} alt="DocuSage protected document assistant asking for quiet" />
+              <img className="privacy-main" src={images.privacy} alt="DocuSage character protecting a private document" loading="lazy" decoding="async" />
+              <img className="privacy-secondary" src={images.protected} alt="DocuSage protected document assistant asking for quiet" loading="lazy" decoding="async" />
               <p><span>Local boundary</span> Your files stay here</p>
             </div>
           </div>
@@ -346,7 +359,7 @@ function MarketingSite() {
           <div className="site-shell">
             <div className="architecture-heading">
               <p className="section-kicker"><span /> How local RAG works</p>
-              <h2>A short path from your PDF to a grounded answer.</h2>
+              <h2>A short local path. <span>From PDF to grounded answer.</span></h2>
               <p>Each stage has one job. The retrieval path stays visible, inspectable, and local.</p>
             </div>
             <div className="architecture-flow" aria-label="DocuSage local RAG architecture">
@@ -363,7 +376,7 @@ function MarketingSite() {
               })}
             </div>
             <div className="architecture-note">
-              <img src={images.hiddenFile} alt="DocuSage document character hiding safely behind a local folder" />
+              <img src={images.hiddenFile} alt="DocuSage document character hiding safely behind a local folder" loading="lazy" decoding="async" />
               <p><strong>The important part:</strong> cloud providers never perform the retrieval step. DocuSage finds the relevant excerpts locally, then you decide which model writes the final response.</p>
             </div>
           </div>
@@ -373,7 +386,7 @@ function MarketingSite() {
           <div className="site-shell">
             <div className="inside-heading">
               <p className="chapter-number">Inside the product</p>
-              <h2>Real controls for real desktop AI work.</h2>
+              <h2>Real controls. <span>Built for real desktop AI work.</span></h2>
             </div>
             <div className="screenshot-rail">
               <figure className="screen screen-wide">
@@ -396,7 +409,7 @@ function MarketingSite() {
           <div className="site-shell install-layout">
             <div className="install-copy">
               <p className="section-kicker light"><span /> Open source Windows desktop app</p>
-              <h2>Your next document can be the first one you do not upload.</h2>
+              <h2>Your next document <span>does not need to be uploaded.</span></h2>
               <p>Install DocuSage, keep your research close, and summon private document intelligence with one shortcut.</p>
               <div className="install-actions">
                 <a className="primary-action light-action" href={releaseUrl} target="_blank" rel="noreferrer">

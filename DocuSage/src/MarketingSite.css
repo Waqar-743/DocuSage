@@ -182,16 +182,20 @@ body.marketing-body {
 .hero-section {
   position: relative;
   min-height: calc(100dvh - 76px);
-  padding: clamp(64px, 9vh, 112px) 0 76px;
+  padding: clamp(58px, 6vw, 82px) 0 clamp(104px, 9vw, 136px);
   border-bottom: 1px solid var(--line);
   background: rgba(247, 247, 244, 0.88);
 }
 
 .hero-grid {
+  display: block;
+}
+
+.hero-intro {
   display: grid;
-  grid-template-columns: minmax(0, 0.82fr) minmax(530px, 1.18fr);
-  align-items: center;
-  gap: clamp(44px, 6vw, 96px);
+  grid-template-columns: minmax(0, 1.5fr) minmax(270px, 0.5fr);
+  align-items: end;
+  gap: clamp(48px, 6vw, 92px);
 }
 
 .section-kicker,
@@ -215,11 +219,11 @@ body.marketing-body {
 }
 
 .hero-copy h1 {
-  max-width: 760px;
+  max-width: 940px;
   margin: 0;
-  font-size: clamp(3.8rem, 5.7vw, 5.4rem);
+  font-size: clamp(3.9rem, 5.8vw, 5.65rem);
   font-weight: 760;
-  line-height: 0.92;
+  line-height: 0.94;
   text-wrap: balance;
 }
 
@@ -229,8 +233,8 @@ body.marketing-body {
 }
 
 .hero-lede {
-  max-width: 630px;
-  margin: 30px 0 0;
+  max-width: 670px;
+  margin: 24px 0 0;
   color: #555960;
   font-size: clamp(1.05rem, 1.25vw, 1.28rem);
   line-height: 1.7;
@@ -244,6 +248,10 @@ body.marketing-body {
   align-items: center;
   gap: 24px;
   margin-top: 34px;
+}
+
+.hero-actions {
+  margin-top: 28px;
 }
 
 .primary-action {
@@ -288,7 +296,7 @@ body.marketing-body {
   display: flex;
   flex-wrap: wrap;
   gap: 10px 20px;
-  margin-top: 32px;
+  margin-top: 24px;
   color: #686b72;
   font-size: 0.8rem;
 }
@@ -303,19 +311,80 @@ body.marketing-body {
   color: var(--green);
 }
 
+.hero-aside {
+  max-width: 390px;
+  margin-bottom: 8px;
+  padding: 5px 0 5px 28px;
+  border-left: 2px solid var(--green);
+}
+
+.hero-aside > span {
+  color: var(--green);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.hero-aside strong {
+  display: block;
+  margin-top: 16px;
+  color: var(--navy);
+  font-size: clamp(1.16rem, 1.55vw, 1.48rem);
+  line-height: 1.35;
+}
+
+.hero-aside p {
+  margin: 13px 0 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.65;
+}
+
+.hero-aside a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 18px;
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.hero-aside a svg {
+  transition: transform 180ms ease;
+}
+
+.hero-aside a:hover svg {
+  transform: translateX(4px);
+}
+
 .hero-visual {
   position: relative;
   min-width: 0;
-  padding: 24px 0 70px 10px;
+  margin-top: clamp(42px, 5vw, 64px);
+  padding: 0 4.5% 58px 6.5%;
 }
 
 .hero-visual::before {
   position: absolute;
-  inset: -20px -14vw 0 18%;
+  inset: 48px -10vw 18px 18%;
   z-index: 0;
   content: "";
   background: var(--green-soft);
-  clip-path: polygon(18% 0, 100% 0, 100% 100%, 0 86%);
+}
+
+.hero-product-meta {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 0 2px 12px;
+  color: #73767c;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 0.66rem;
+  text-transform: uppercase;
 }
 
 .hero-window {
@@ -326,31 +395,6 @@ body.marketing-body {
   background: #151618;
   border-radius: 8px;
   box-shadow: 0 40px 80px rgba(12, 30, 61, 0.24);
-  transform: perspective(1400px) rotateY(-4deg) rotateX(1deg);
-  transform-origin: center right;
-}
-
-.window-chrome {
-  display: flex;
-  height: 38px;
-  align-items: center;
-  gap: 7px;
-  padding: 0 13px;
-  color: #a7aab0;
-  border-bottom: 1px solid #303237;
-  font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 0.66rem;
-}
-
-.window-chrome i {
-  width: 8px;
-  height: 8px;
-  background: #555960;
-  border-radius: 50%;
-}
-
-.window-chrome span {
-  margin-left: 8px;
 }
 
 .hero-window > img {
@@ -359,20 +403,19 @@ body.marketing-body {
 
 .hero-character {
   position: absolute;
-  right: -4%;
-  bottom: -4%;
+  right: -3%;
+  bottom: -8%;
   z-index: 3;
-  width: clamp(150px, 22vw, 280px);
+  width: clamp(170px, 18vw, 260px);
   aspect-ratio: 1;
-  object-fit: cover;
+  object-fit: contain;
   object-position: center;
-  border-radius: 50%;
   filter: drop-shadow(0 20px 24px rgba(12, 30, 61, 0.18));
 }
 
 .shortcut-callout {
   position: absolute;
-  left: -22px;
+  left: 1.5%;
   bottom: 24px;
   z-index: 4;
   display: flex;
@@ -434,10 +477,31 @@ body.marketing-body {
 .inside-heading h2,
 .install-copy h2 {
   margin: 0;
+  color: var(--ink);
   font-size: clamp(2.65rem, 5.4vw, 6rem);
   font-weight: 730;
   line-height: 0.98;
   text-wrap: balance;
+}
+
+.story-opening h2 > span,
+.product-heading h2 > span,
+.privacy-copy h2 > span,
+.architecture-heading h2 > span,
+.inside-heading h2 > span {
+  color: var(--navy);
+}
+
+.turning-copy h2,
+.assistant-sticky h2,
+.install-copy h2 {
+  color: var(--white);
+}
+
+.turning-copy h2 > span,
+.assistant-sticky h2 > span,
+.install-copy h2 > span {
+  color: #73d6b8;
 }
 
 .story-opening > p:last-child {
@@ -464,9 +528,7 @@ body.marketing-body {
 .problem-frame img {
   width: 100%;
   aspect-ratio: 1;
-  object-fit: cover;
-  background: #fbfbf9;
-  border-radius: 6px;
+  object-fit: contain;
 }
 
 .problem-frame figcaption {
@@ -524,8 +586,8 @@ body.marketing-body {
   z-index: 1;
   width: 100%;
   aspect-ratio: 1;
-  object-fit: cover;
-  border-radius: 50%;
+  object-fit: contain;
+  filter: drop-shadow(0 24px 34px rgba(3, 11, 24, 0.28));
 }
 
 .orbit-label {
@@ -714,8 +776,13 @@ body.marketing-body {
 
 .proof-row h3 {
   margin: 0;
+  color: var(--ink);
   font-size: clamp(1.18rem, 1.8vw, 1.7rem);
   font-weight: 690;
+}
+
+.proof-row h3 > span {
+  color: var(--green);
 }
 
 .proof-row p {
@@ -768,8 +835,8 @@ body.marketing-body {
   width: min(440px, 90%);
   margin-top: 48px;
   aspect-ratio: 1;
-  object-fit: cover;
-  border-radius: 50%;
+  object-fit: contain;
+  filter: drop-shadow(0 24px 34px rgba(3, 11, 24, 0.3));
 }
 
 .lifecycle-track {
@@ -811,8 +878,13 @@ body.marketing-body {
 
 .lifecycle-track h3 {
   margin: 2px 0 0;
+  color: var(--white);
   font-size: clamp(1.4rem, 2.1vw, 2rem);
   font-weight: 650;
+}
+
+.lifecycle-track h3 > span {
+  color: #73d6b8;
 }
 
 .lifecycle-track p {
@@ -903,8 +975,8 @@ body.marketing-body {
   right: 0;
   width: 78%;
   aspect-ratio: 1;
-  object-fit: cover;
-  border-radius: 50%;
+  object-fit: contain;
+  filter: drop-shadow(0 24px 34px rgba(22, 76, 59, 0.18));
 }
 
 .privacy-secondary {
@@ -913,9 +985,8 @@ body.marketing-body {
   left: 0;
   width: 46%;
   aspect-ratio: 1;
-  object-fit: cover;
-  border: 10px solid var(--green-soft);
-  border-radius: 50%;
+  object-fit: contain;
+  filter: drop-shadow(0 18px 26px rgba(22, 76, 59, 0.16));
 }
 
 .privacy-visual > p {
@@ -1032,8 +1103,7 @@ body.marketing-body {
 .architecture-note img {
   width: 180px;
   height: 180px;
-  object-fit: cover;
-  border-radius: 50%;
+  object-fit: contain;
 }
 
 .architecture-note p {
@@ -1259,8 +1329,9 @@ body.marketing-body {
     display: none;
   }
 
-  .hero-grid {
-    grid-template-columns: 1fr;
+  .hero-intro {
+    grid-template-columns: minmax(0, 1fr) 280px;
+    gap: 48px;
   }
 
   .hero-copy {
@@ -1379,15 +1450,20 @@ body.marketing-body {
 
   .hero-section {
     min-height: auto;
-    padding: 50px 0 72px;
+    padding: 48px 0 82px;
   }
 
-  .hero-grid {
-    gap: 16px;
+  .hero-intro {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .hero-aside {
+    display: none;
   }
 
   .hero-copy h1 {
-    font-size: clamp(3.1rem, 14vw, 3.55rem);
+    font-size: clamp(3rem, 13vw, 3.35rem);
   }
 
   .hero-lede {
@@ -1413,24 +1489,22 @@ body.marketing-body {
 
   .hero-visual {
     width: 100%;
-    padding: 6px 0 78px;
+    margin-top: 38px;
+    padding: 0 0 68px;
   }
 
   .hero-visual::before {
-    inset: -5px -20vw 18px 12%;
+    inset: 38px -20vw 14px 16%;
   }
 
-  .hero-window {
-    transform: none;
-  }
-
-  .window-chrome {
-    height: 30px;
+  .hero-product-meta {
+    font-size: 0.57rem;
   }
 
   .hero-character {
-    right: -4%;
-    width: 42vw;
+    right: -2%;
+    bottom: -5%;
+    width: min(38vw, 150px);
   }
 
   .shortcut-callout {
