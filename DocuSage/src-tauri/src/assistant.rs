@@ -162,6 +162,9 @@ fn parse_shortcut(shortcut: &str) -> Result<Shortcut, String> {
 
     for raw_part in shortcut.split('+') {
         let part = raw_part.trim().to_ascii_lowercase();
+        if code.is_some() && !matches!(part.as_str(), "alt" | "option" | "ctrl" | "control" | "cmd" | "command" | "meta" | "super" | "shift") {
+            return Err("A shortcut must contain exactly one key.".into());
+        }
         match part.as_str() {
             "alt" | "option" => modifiers |= Modifiers::ALT,
             "ctrl" | "control" => modifiers |= Modifiers::CONTROL,
@@ -504,7 +507,10 @@ pub fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(AssistantRuntime::default());
 
     let app_handle = app.handle().clone();
-    let settings = register_shortcut_with_fallback(&app_handle, &read_settings(&app_handle));
+    let mut settings = register_shortcut_with_fallback(&app_handle, &read_settings(&app_handle));
+    if !app_handle.global_shortcut().is_registered(parse_shortcut(&settings.global_shortcut)?) {
+        settings.launch_hidden = false;
+    }
 
     setup_tray(app)?;
 
@@ -603,6 +609,35 @@ pub fn cycle_assistant_window_mode(app: AppHandle) -> Result<AssistantWindowMode
 }
 
 #[tauri::command]
-pub fn check_for_updates() -> Result<String, String> {
-    Ok("No updater plugin is configured for this build.".to_string())
+pub async fn check_for_updates() -> Result<String, String> {
+    let client = reqwest::Client::builder().timeout(Duration::from_secs(15))
+        .user_agent("DocuSage update check").build().map_err(|e| e.to_string())?;
+    let response = client.get("https://api.github.com/repos/Waqar-743/DocuSage/releases/latest")
+        .send().await.map_err(|e| format!("Cannot reach GitHub: {e}"))?
+        .error_for_status().map_err(|e| format!("GitHub update check failed: {e}"))?;
+    let release: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+    let tag = release["tag_name"].as_str().ok_or("GitHub did not return a release version")?;
+    let current = env!("CARGO_PKG_VERSION");
+    if tag.trim_start_matches('v') == current {
+        Ok(format!("You are using the latest release ({current})."))
+    } else {
+        Ok(format!("Latest GitHub release: {tag}. Installed: {current}. Download updates from GitHub Releases."))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn shortcut_parser_rejects_ambiguous_and_unmodified_keys() {
+        assert!(parse_shortcut("Space").is_err());
+        assert!(parse_shortcut("Alt+Space+N").is_err());
+        assert!(parse_shortcut("Alt+Unsupported").is_err());
+        assert!(parse_shortcut("Ctrl+Shift+K").is_ok());
+        assert!(parse_shortcut("Option+Space").is_ok());
+    }
+    #[test]
+    fn window_mode_cycle_returns_to_compact() {
+        assert_eq!(AssistantWindowMode::Compact.next().next().next(), AssistantWindowMode::Compact);
+    }
 }

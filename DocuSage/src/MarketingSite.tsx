@@ -30,20 +30,20 @@ const media = (name: string) => `${import.meta.env.BASE_URL}media/${name}`;
 
 const images = {
   logo: media('docusage-logo.png'),
-  dashboardDark: media('dashboard-dark.png'),
-  dashboardLight: media('dashboard-light.png'),
-  modelCatalog: media('model-catalog.png'),
-  providerSettings: media('provider-settings.png'),
-  shortcutSettings: media('shortcut-settings.png'),
-  bored: media('bored.png'),
-  frustration: media('frustration.png'),
-  searching: media('searching.png'),
-  observing: media('observing.png'),
-  teaching: media('teaching.png'),
-  privacy: media('privacy.png'),
-  hiddenWorkflow: media('hidden-workflow.png'),
-  hiddenFile: media('hidden-file.png'),
-  protected: media('protected.png'),
+  dashboardDark: media('desktop-dark.webp'),
+  dashboardLight: media('desktop-light.webp'),
+  modelCatalog: media('desktop-models.webp'),
+  providerSettings: media('desktop-providers.webp'),
+  shortcutSettings: media('desktop-shortcuts.webp'),
+  bored: media('bored.webp'),
+  frustration: media('frustration.webp'),
+  searching: media('searching.webp'),
+  observing: media('research-guide.webp'),
+  teaching: media('teaching.webp'),
+  privacy: media('privacy-guide.webp'),
+  hiddenWorkflow: media('hidden-workflow.webp'),
+  hiddenFile: media('hidden-file.webp'),
+  protected: media('protected.webp'),
 };
 
 type Icon = ComponentType<{ size?: number; strokeWidth?: number; 'aria-hidden'?: boolean }>;
@@ -58,21 +58,21 @@ type ProofRow = {
 const proofRows: ProofRow[] = [
   {
     icon: FileSearch,
-    title: 'Ask questions across private PDF documents',
-    copy: 'DocuSage parses, chunks, embeds, and searches your PDFs locally so answers are grounded in the material you selected.',
+    title: 'Ask questions about your selected PDF',
+    copy: 'Import a text-based PDF, select it, and ask a question. DocuSage searches that file locally and supplies relevant excerpts to your model.',
     tag: 'Local RAG',
   },
   {
     icon: Cpu,
     title: 'Run offline AI chat with GGUF models',
-    copy: 'Connect a local model through mistral.rs and keep both the conversation and generation on your own computer.',
+    copy: 'Download a compatible GGUF model once, then generate answers on your computer. Document search needs a separate embedding-model download on first use.',
     tag: 'On-device',
   },
   {
     icon: Network,
     title: 'Choose cloud power only when it helps',
     copy: 'Use Gemini, OpenAI, Anthropic, OpenRouter, Ollama, LM Studio, or a compatible endpoint while retrieval remains local.',
-    tag: '10 profiles',
+    tag: 'Optional providers',
   },
   {
     icon: Command,
@@ -83,8 +83,8 @@ const proofRows: ProofRow[] = [
 ];
 
 const lifecycle = [
-  ['01', 'Start quietly', 'Launch hidden with the Rust backend ready and no dashboard interrupting your desktop.'],
-  ['02', 'Call it', 'Press Alt+Space from any application to open the compact assistant beside your work.'],
+  ['01', 'Start quietly', 'By default, DocuSage opens in the tray. Connect a model or configure a provider when you are ready.'],
+  ['02', 'Call it', 'Press Alt+Space to open the assistant. If that shortcut is occupied, try the fallback shown in Settings or open it from the tray.'],
   ['03', 'Go deeper', 'Move through compact, medium, and full modes when a quick answer becomes a research session.'],
   ['04', 'Leave no mess', 'Escape or close hides DocuSage to the tray while drafts, documents, sessions, and model state remain intact.'],
 ];
@@ -97,16 +97,16 @@ const architecture = [
 ];
 
 const installSteps = [
-  ['Download', 'Get the current Windows installer from GitHub Releases.'],
+  ['Download', 'Get the Windows .exe or .msi installer from GitHub Releases.'],
   ['Open once', 'DocuSage starts in the tray with its background services ready.'],
   ['Press Alt+Space', 'Open the compact assistant from anywhere on your desktop.'],
-  ['Add knowledge', 'Connect a GGUF model or provider, ingest a PDF, and ask your first grounded question.'],
+  ['Add knowledge', 'Connect a model or provider, import a text-based PDF, select it, and ask your first question.'],
 ];
 
 function Brand() {
   return (
     <a className="site-brand" href="#top" aria-label="DocuSage home">
-      <img src={images.logo} alt="" />
+      <img src={images.logo} alt="" width="35" height="35" />
       <span>DocuSage</span>
     </a>
   );
@@ -124,11 +124,12 @@ function SiteNav() {
           type="button"
           aria-label={open ? 'Close navigation' : 'Open navigation'}
           aria-expanded={open}
+          aria-controls="primary-links"
           onClick={() => setOpen((value) => !value)}
         >
           {open ? <X size={20} /> : <Menu size={20} />}
         </button>
-        <div className={`nav-links ${open ? 'is-open' : ''}`}>
+        <div id="primary-links" className={`nav-links ${open ? 'is-open' : ''}`}>
           <a href="#story" onClick={() => setOpen(false)}>Why DocuSage</a>
           <a href="#product" onClick={() => setOpen(false)}>Product</a>
           <a href="#privacy" onClick={() => setOpen(false)}>Privacy</a>
@@ -153,14 +154,16 @@ function DashboardShowcase() {
     <div className={`dashboard-stage dashboard-stage-${mode}`}>
       <div className="dashboard-toolbar">
         <div>
-          <span className="live-dot" /> Real DocuSage interface
+          <span className="live-dot" /> Desktop capture · Linux source build
         </div>
-        <div className="theme-switch" aria-label="Dashboard screenshot theme">
-          <button className={mode === 'light' ? 'active' : ''} type="button" onClick={() => setMode('light')}>Light</button>
-          <button className={mode === 'dark' ? 'active' : ''} type="button" onClick={() => setMode('dark')}>Dark</button>
+        <div className="theme-switch" role="group" aria-label="Dashboard screenshot theme">
+          <button aria-pressed={mode === 'light'} className={mode === 'light' ? 'active' : ''} type="button" onClick={() => setMode('light')}>Light</button>
+          <button aria-pressed={mode === 'dark'} className={mode === 'dark' ? 'active' : ''} type="button" onClick={() => setMode('dark')}>Dark</button>
         </div>
       </div>
-      <img src={source} alt={`DocuSage ${mode} mode dashboard showing private AI document chat`} loading="lazy" decoding="async" />
+      <a href={source} target="_blank" rel="noreferrer" aria-label={`Open full-size ${mode} desktop screenshot`}>
+        <img src={source} alt={`DocuSage ${mode} desktop capture with a real local PDF conversation`} loading="lazy" decoding="async" width="1440" height="1000" />
+      </a>
     </div>
   );
 }
@@ -187,9 +190,9 @@ function MarketingSite() {
             <div className="hero-intro">
               <div className="hero-copy">
                 <p className="section-kicker"><span /> Private AI document assistant</p>
-                <h1><span>DocuSage.</span> Private answers from files that stay yours.</h1>
+                <h1><span>Ask your PDFs.</span> Keep your files close.</h1>
                 <p className="hero-lede">
-                  Read, search, and chat with private PDFs using local RAG and offline GGUF models.
+                  Find useful passages in text-based PDFs and ask questions with a local AI model or a provider you choose.
                   DocuSage stays quietly in your tray until you press Alt+Space.
                 </p>
                 <div className="hero-actions">
@@ -203,23 +206,23 @@ function MarketingSite() {
                 <div className="hero-trust" aria-label="Product highlights">
                   <span><Check size={15} /> Local PDF retrieval</span>
                   <span><Check size={15} /> Offline model support</span>
-                  <span><Check size={15} /> Open source</span>
+                  <span><Check size={15} /> Source on GitHub</span>
                 </div>
               </div>
               <aside className="hero-aside" aria-label="DocuSage privacy summary">
                 <span>Privacy boundary</span>
-                <strong>Your documents remain on your computer.</strong>
-                <p>Local parsing, local embeddings, local retrieval. A remote model is involved only when you choose one.</p>
-                <a href="#privacy">See the architecture <ArrowRight size={15} /></a>
+                <strong>Local search. Your choice of AI.</strong>
+                <p>PDFs are indexed on your device. Cloud mode sends your question, chat history, and retrieved excerpts to your selected provider.</p>
+                <a href="#privacy">Understand the privacy boundary <ArrowRight size={15} /></a>
               </aside>
             </div>
 
             <div className="hero-visual" aria-label="DocuSage product preview">
-              <div className="hero-product-meta"><span>Real desktop interface</span><span>React + Tauri + Rust</span></div>
+              <div className="hero-product-meta"><span>Captured from the desktop app</span><span>Local PDF chat</span></div>
               <div className="hero-window">
-                <img src={images.dashboardDark} alt="DocuSage dark mode desktop AI dashboard" fetchPriority="high" />
+                <img src={images.dashboardDark} alt="DocuSage dark mode desktop AI dashboard" fetchPriority="high" width="1440" height="1000" decoding="async" />
               </div>
-              <img className="hero-character" src={images.observing} alt="DocuSage document character working privately on a laptop" />
+              <img className="hero-character" src={images.observing} alt="" aria-hidden="true" width="640" height="640" decoding="async" />
               <div className="shortcut-callout"><KeyRound size={16} /> <kbd>Alt</kbd><b>+</b><kbd>Space</kbd></div>
             </div>
           </div>
@@ -239,15 +242,15 @@ function MarketingSite() {
 
             <div className="problem-reel" aria-label="Common document research frustrations">
               <figure className="problem-frame frame-left">
-                <img src={images.frustration} alt="DocuSage character frustrated by difficult document research" loading="lazy" decoding="async" />
+                <img src={images.frustration} alt="DocuSage character frustrated by difficult document research" loading="lazy" decoding="async" width="800" height="800" />
                 <figcaption><strong>Too many files.</strong><span>The useful sentence is buried somewhere.</span></figcaption>
               </figure>
               <figure className="problem-frame frame-center">
-                <img src={images.searching} alt="DocuSage character searching documents on a laptop" loading="lazy" decoding="async" />
-                <figcaption><strong>Too much searching.</strong><span>Keywords miss what the document actually means.</span></figcaption>
+                <img src={images.searching} alt="DocuSage character searching documents on a laptop" loading="lazy" decoding="async" width="800" height="800" />
+                <figcaption><strong>Too much searching.</strong><span>The right idea may use different words.</span></figcaption>
               </figure>
               <figure className="problem-frame frame-right">
-                <img src={images.bored} alt="Tired DocuSage document character waiting beside a clock" loading="lazy" decoding="async" />
+                <img src={images.bored} alt="Tired DocuSage document character waiting beside a clock" loading="lazy" decoding="async" width="800" height="800" />
                 <figcaption><strong>Too much waiting.</strong><span>Your focus disappears before the answer appears.</span></figcaption>
               </figure>
             </div>
@@ -260,15 +263,15 @@ function MarketingSite() {
               <span className="orbit-label orbit-one">PDF</span>
               <span className="orbit-label orbit-two">RAG</span>
               <span className="orbit-label orbit-three">GGUF</span>
-              <img src={images.teaching} alt="DocuSage character explaining private AI document question answering" loading="lazy" decoding="async" />
+              <img src={images.teaching} alt="DocuSage character explaining private AI document question answering" loading="lazy" decoding="async" width="800" height="800" />
             </div>
             <div className="turning-copy">
               <p className="chapter-number">Chapter 02</p>
               <h2>Built from frustration. <span>Designed to stay beside you.</span></h2>
               <p className="founder-note">
-                "DocuSage began with a simple frustration: my documents contained the context, but finding it
-                interrupted the work. I wanted an assistant that could stay close to the files, stay out of the
-                way, and let me decide when the cloud was involved."
+                The useful passage is often already in your files. DocuSage brings local document search and
+                conversation into a small desktop workspace, with a clear choice between on-device generation
+                and a provider you configure.
               </p>
               <p className="founder-byline">Waqar Ahmed <span>Creator of DocuSage</span></p>
             </div>
@@ -284,7 +287,7 @@ function MarketingSite() {
               </div>
               <p>
                 Ingest a PDF, switch between general chat and document RAG, choose a local or remote model,
-                and keep every research session in one desktop interface.
+                and keep your conversations in one desktop interface.
               </p>
             </div>
             <DashboardShowcase />
@@ -314,7 +317,7 @@ function MarketingSite() {
                 DocuSage is built around the rhythm of desktop work. It launches hidden, answers in a compact
                 panel, expands for deeper sessions, and returns to the tray without throwing your context away.
               </p>
-              <img src={images.hiddenWorkflow} alt="DocuSage character carrying a protected folder in hidden assistant mode" loading="lazy" decoding="async" />
+              <img src={images.hiddenWorkflow} alt="DocuSage character carrying a protected folder in hidden assistant mode" loading="lazy" decoding="async" width="800" height="800" />
             </div>
             <div className="lifecycle-track">
               {lifecycle.map(([number, title, copy]) => (
@@ -324,8 +327,8 @@ function MarketingSite() {
                 </article>
               ))}
               <figure className="shortcut-proof">
-                <img src={images.shortcutSettings} alt="DocuSage shortcut settings showing hidden desktop assistant controls" />
-                <figcaption>Every shortcut is visible in Settings, including toggle, hide, new chat, and send.</figcaption>
+                <img src={images.shortcutSettings} alt="DocuSage shortcut settings showing hidden desktop assistant controls" loading="lazy" decoding="async" width="1440" height="1000" />
+                <figcaption>Set your global shortcut and window size in Settings. Shortcut availability depends on your operating system.</figcaption>
               </figure>
             </div>
           </div>
@@ -335,21 +338,21 @@ function MarketingSite() {
           <div className="site-shell privacy-layout">
             <div className="privacy-copy">
               <p className="chapter-number">Chapter 04</p>
-              <h2>Your document stays yours. <span>The answer still arrives.</span></h2>
+              <h2>Know what stays local. <span>Know what gets sent.</span></h2>
               <p className="privacy-lede">
-                DocuSage keeps PDF parsing, chunking, embeddings, LanceDB retrieval, model files, settings,
-                and history on your device. In provider mode, local retrieval still happens first and only the
-                selected context is sent for synthesis.
+                PDF parsing, indexing, semantic search, and history storage happen on your device. Local models
+                generate answers there too. With a cloud or remote provider, your question, conversation history,
+                and retrieved PDF excerpts leave your device. The original PDF is not uploaded by the indexing pipeline.
               </p>
               <div className="privacy-facts">
                 <div><HardDrive size={21} /><strong>Local by default</strong><span>Documents and indexes remain on your computer.</span></div>
                 <div><ShieldCheck size={21} /><strong>You choose the boundary</strong><span>Use offline GGUF chat or an explicitly configured provider.</span></div>
-                <div><KeyRound size={21} /><strong>Protected credentials</strong><span>Secrets use the platform keyring where available.</span></div>
+                <div><KeyRound size={21} /><strong>Protected credentials</strong><span>API keys require the native credential store. DocuSage reports when it is unavailable.</span></div>
               </div>
             </div>
             <div className="privacy-visual">
-              <img className="privacy-main" src={images.privacy} alt="DocuSage character protecting a private document" loading="lazy" decoding="async" />
-              <img className="privacy-secondary" src={images.protected} alt="DocuSage protected document assistant asking for quiet" loading="lazy" decoding="async" />
+              <img className="privacy-main" src={images.privacy} alt="DocuSage character protecting a private document" loading="lazy" decoding="async" width="800" height="800" />
+              <img className="privacy-secondary" src={images.protected} alt="DocuSage protected document assistant asking for quiet" loading="lazy" decoding="async" width="800" height="800" />
               <p><span>Local boundary</span> Your files stay here</p>
             </div>
           </div>
@@ -359,8 +362,8 @@ function MarketingSite() {
           <div className="site-shell">
             <div className="architecture-heading">
               <p className="section-kicker"><span /> How local RAG works</p>
-              <h2>A short local path. <span>From PDF to grounded answer.</span></h2>
-              <p>Each stage has one job. The retrieval path stays visible, inspectable, and local.</p>
+              <h2>A short local path. <span>From a passage to an answer.</span></h2>
+              <p>Search happens locally. The selected model writes the answer. Review its citations against the source; AI can make mistakes.</p>
             </div>
             <div className="architecture-flow" aria-label="DocuSage local RAG architecture">
               {architecture.map((step, index) => {
@@ -376,8 +379,8 @@ function MarketingSite() {
               })}
             </div>
             <div className="architecture-note">
-              <img src={images.hiddenFile} alt="DocuSage document character hiding safely behind a local folder" loading="lazy" decoding="async" />
-              <p><strong>The important part:</strong> cloud providers never perform the retrieval step. DocuSage finds the relevant excerpts locally, then you decide which model writes the final response.</p>
+              <img src={images.hiddenFile} alt="DocuSage document character hiding safely behind a local folder" loading="lazy" decoding="async" width="800" height="800" />
+              <p><strong>The important part:</strong> the PDF retrieval step happens on your device. DocuSage finds the relevant excerpts locally, then you decide which model writes the final response.</p>
             </div>
           </div>
         </section>
@@ -390,27 +393,38 @@ function MarketingSite() {
             </div>
             <div className="screenshot-rail">
               <figure className="screen screen-wide">
-                <img src={images.modelCatalog} alt="DocuSage local GGUF model catalog" />
+                <img src={images.modelCatalog} alt="DocuSage local GGUF model catalog" loading="lazy" decoding="async" width="1440" height="1000" />
                 <figcaption><span>01</span><strong>Local model catalog</strong><p>Download and manage compact GGUF models in the app.</p></figcaption>
               </figure>
               <figure className="screen screen-tall">
-                <img src={images.providerSettings} alt="DocuSage AI provider configuration settings" />
+                <img src={images.providerSettings} alt="DocuSage AI provider configuration settings" loading="lazy" decoding="async" width="1440" height="1000" />
                 <figcaption><span>02</span><strong>Provider control</strong><p>Set models, endpoints, timeouts, temperature, and credentials.</p></figcaption>
               </figure>
               <figure className="screen screen-wide">
-                <img src={images.dashboardDark} alt="DocuSage dark mode chat interface" />
-                <figcaption><span>03</span><strong>Focused document chat</strong><p>Move between general conversation and source-grounded RAG.</p></figcaption>
+                <img src={images.dashboardDark} alt="DocuSage dark mode chat interface" loading="lazy" decoding="async" width="1440" height="1000" />
+                <figcaption><span>03</span><strong>Focused document chat</strong><p>Move between general conversation and document questions.</p></figcaption>
               </figure>
             </div>
           </div>
         </section>
 
+        <section className="faq-section site-shell" aria-labelledby="faq-heading">
+          <p className="section-kicker"><span /> Before you download</p>
+          <h2 id="faq-heading">A few useful details.</h2>
+          <details><summary>What do I need for offline use?</summary><p>A compatible GGUF model for answers and the embedding model for PDF search. Both need an internet connection to download initially. Local model speed and memory use depend on your computer and model size.</p></details>
+          <details><summary>Which documents can I import?</summary><p>Text-based PDFs. Image-only scans need OCR in another tool first. DocuSage does not currently provide OCR, Word import, or an in-app PDF reader.</p></details>
+          <details><summary>Does cloud mode share my documents?</summary><p>It shares your prompt, chat history, and the PDF excerpts retrieved for the question with your configured provider. That provider’s privacy policy applies. The original PDF and local vector index are not uploaded by the retrieval pipeline.</p></details>
+          <details><summary>How do I open the app after launch?</summary><p>Press Alt+Space, or choose Show Assistant from the tray. If the shortcut is already taken, DocuSage tries Ctrl+Space. You can change it in Settings. Closing or pressing Escape normally hides the app; use Tray → Quit to exit.</p></details>
+          <details><summary>Are answers guaranteed to be correct?</summary><p>No. Retrieved excerpts help the model answer from your selected PDF, but answers and model-generated filename citations can be wrong. Enable Show Retrieved Context to inspect the passages the model received.</p></details>
+          <details><summary>Which platforms are available?</summary><p>The existing GitHub release provides Windows installers. This page shows the current source build; published installers may predate these improvements. Screenshots and native tests are from Linux. Windows installation and macOS behavior have not been verified in this audit. Check the release notes and source-build requirements before installing.</p></details>
+        </section>
+
         <section className="install-section" id="install">
           <div className="site-shell install-layout">
             <div className="install-copy">
-              <p className="section-kicker light"><span /> Open source Windows desktop app</p>
-              <h2>Your next document <span>does not need to be uploaded.</span></h2>
-              <p>Install DocuSage, keep your research close, and summon private document intelligence with one shortcut.</p>
+              <p className="section-kicker light"><span /> Windows desktop app · source on GitHub</p>
+              <h2>A calmer way <span>to work with your documents.</span></h2>
+              <p>Set up your model, import a text-based PDF, and start a conversation. Local mode works offline after the required models are downloaded.</p>
               <div className="install-actions">
                 <a className="primary-action light-action" href={releaseUrl} target="_blank" rel="noreferrer">
                   <Download size={19} /> Get the latest release
@@ -437,7 +451,6 @@ function MarketingSite() {
             <a href={releaseUrl} target="_blank" rel="noreferrer">Download</a>
             <a href={sourceUrl} target="_blank" rel="noreferrer">GitHub</a>
             <a href={`${sourceUrl}/blob/main/README.md`} target="_blank" rel="noreferrer">Documentation</a>
-            <a href={`${sourceUrl}/blob/main/LICENSE`} target="_blank" rel="noreferrer">MIT License</a>
           </div>
           <p className="footer-credit">Designed and built by <a href={portfolioUrl} target="_blank" rel="noreferrer">Waqar Ahmed</a>.</p>
         </div>

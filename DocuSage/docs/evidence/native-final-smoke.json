@@ -1,0 +1,32 @@
+{
+  "date": "2026-10-14T17:13:54.364Z",
+  "platform": "linux",
+  "binaryProfile": "release",
+  "binarySha256": "b47eca1934665ab95bd8d2b1c7ff69cab27144d8b7643486de2b58d3121d3a51",
+  "actualNativeBackend": true,
+  "completed": true,
+  "screenshots": [],
+  "livePaidProvidersVerified": false,
+  "checks": [
+    {
+      "name": "the production desktop stylesheet is applied",
+      "result": "passed",
+      "milliseconds": 19
+    },
+    {
+      "name": "production native bridge, hidden launch, and interrupted download recovery",
+      "result": "passed",
+      "milliseconds": 592
+    },
+    {
+      "name": "window sizes, global toggle, Escape, and single instance",
+      "result": "passed",
+      "milliseconds": 2238
+    },
+    {
+      "name": "local GGUF startup, general inference, and real streaming",
+      "result": "passed",
+      "milliseconds": 21415
+    }
+  ]
+}

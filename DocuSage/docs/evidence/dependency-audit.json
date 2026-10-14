@@ -1,0 +1,22 @@
+{
+  "date": "2026-10-14T17:01:21.482404+00:00",
+  "command": "npm audit --json",
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 0,
+      "critical": 0,
+      "total": 0
+    },
+    "dependencies": {
+      "prod": 8,
+      "dev": 238,
+      "optional": 92,
+      "peer": 10,
+      "peerOptional": 0,
+      "total": 245
+    }
+  }
+}

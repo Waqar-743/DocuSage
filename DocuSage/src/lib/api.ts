@@ -9,6 +9,7 @@ export type IngestResult = {
   fileName: string;
   chunkCount: number;
   charCount: number;
+  sourcePath?: string;
 };
 
 export type DownloadedModel = {
@@ -160,24 +161,16 @@ export async function chatRag(
   prompt: string,
   history: ChatHistoryMessage[],
   requestId: string,
+  sourcePath: string,
 ): Promise<string> {
   if (!isTauri()) { await mockDelay(1200); return nextMock("rag"); }
-  return invoke<string>("chat_rag", { prompt, history, requestId });
+  return invoke<string>("chat_rag", { prompt, history, requestId, sourcePath });
 }
 
 /** Storage key for the Gemini API key. */
 export const GEMINI_KEY_STORAGE = 'docusage_gemini_key';
 
-/** Send a prompt to the Gemini API in hybrid RAG mode. */
-export async function chatGeminiRag(
-  apiKey: string,
-  prompt: string,
-  history: ChatHistoryMessage[],
-): Promise<string> {
-  if (!isTauri()) { await mockDelay(1200); return "Gemini RAG preview: In the real app, your question would be answered by the Gemini API using your ingested document chunks."; }
-  return invoke<string>("chat_gemini_rag", { apiKey, prompt, history });
-}
-
+/** Send a general-chat request through the selected remote provider. */
 export async function chatCloud(
   prompt: string,
   history: ChatHistoryMessage[],
@@ -191,9 +184,10 @@ export async function chatCloudRag(
   prompt: string,
   history: ChatHistoryMessage[],
   requestId: string,
+  sourcePath: string,
 ): Promise<string> {
-  if (!isTauri()) { await mockDelay(1200); return "Cloud RAG preview: DocuSage will retrieve local document chunks, then send only the prompt context to the selected provider."; }
-  return invoke<string>("chat_cloud_rag", { prompt, history, requestId });
+  if (!isTauri()) { await mockDelay(1200); return "Cloud RAG simulation: the desktop app sends the prompt, conversation history, and retrieved excerpts to your selected provider."; }
+  return invoke<string>("chat_cloud_rag", { prompt, history, requestId, sourcePath });
 }
 
 export async function stopChat(requestId: string): Promise<void> {
@@ -212,6 +206,16 @@ export async function ingestDocument(filePath: string): Promise<IngestResult> {
     return { fileName: name, chunkCount: 42, charCount: 12500 };
   }
   return invoke<IngestResult>("ingest_document", { filePath: String(filePath) });
+}
+
+export async function deleteDocument(filePath: string): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>('delete_document', { filePath });
+}
+
+export async function listIndexedDocuments(): Promise<{ path: string; chunkCount: number }[]> {
+  if (!isTauri()) return [];
+  return invoke('list_indexed_documents');
 }
 
 // ── Model management ─────────────────────────────────────────────────────────

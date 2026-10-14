@@ -6,7 +6,7 @@
   --line: #dcdedc;
   --navy: #132f5f;
   --navy-deep: #0c1e3d;
-  --green: #168263;
+  --green: #116b52;
   --green-soft: #e0f1ea;
   --warm: #f0eadf;
   --site-shell: min(1380px, calc(100vw - 64px));
@@ -51,6 +51,15 @@ body.marketing-body {
   display: block;
   max-width: 100%;
 }
+
+.faq-section { padding-block: 88px; max-width: 900px; }
+.faq-section h2 { font-size: clamp(1.8rem, 4vw, 2.6rem); margin: 18px 0 32px; color: var(--navy); }
+.faq-section details { border-bottom: 1px solid var(--line); padding: 20px 0; }
+.faq-section summary { cursor: pointer; color: var(--ink); font-weight: 650; line-height: 1.5; }
+.faq-section details p { color: var(--muted); line-height: 1.75; max-width: 75ch; margin: 16px 0 4px; }
+.faq-section summary:focus-visible { outline: 3px solid var(--green); outline-offset: 5px; }
+.marketing-site img[width][height] { height: auto; }
+.hero-window img { aspect-ratio: auto; object-fit: contain; }
 
 .marketing-site a {
   color: inherit;
@@ -716,6 +725,8 @@ body.marketing-body {
   background: #27292d;
 }
 
+.dashboard-stage-dark .theme-switch button { color: #c5c7cb; }
+
 .theme-switch button {
   min-width: 58px;
   min-height: 32px;
@@ -740,9 +751,13 @@ body.marketing-body {
 
 .dashboard-stage > img {
   width: 100%;
-  aspect-ratio: 1.91;
-  object-fit: cover;
+  height: auto;
+  object-fit: contain;
 }
+
+.dashboard-stage > a img { width: 100%; height: auto; }
+.dashboard-stage-dark .dashboard-toolbar { color: #c5c7cb; }
+.footer-credit a { text-decoration: underline; text-underline-offset: 3px; }
 
 .proof-list {
   margin-top: clamp(70px, 8vw, 112px);
@@ -765,7 +780,7 @@ body.marketing-body {
 }
 
 .proof-index {
-  color: #9a9ca1;
+  color: #62656c;
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 0.72rem;
 }
@@ -1181,7 +1196,7 @@ body.marketing-body {
 
 .screen figcaption p {
   margin: 0;
-  color: #777267;
+  color: #605b51;
   font-size: 0.82rem;
   line-height: 1.5;
 }
@@ -1286,7 +1301,7 @@ body.marketing-body {
 
 .footer-grid > div:first-child > p {
   margin: 13px 0 0;
-  color: #777c84;
+  color: #b0b5bd;
   font-size: 0.82rem;
 }
 
@@ -1307,7 +1322,7 @@ body.marketing-body {
   grid-column: 1 / -1;
   margin: 8px 0 0;
   padding-top: 28px;
-  color: #696e76;
+  color: #b0b5bd;
   border-top: 1px solid #292b30;
   font-size: 0.76rem;
 }
@@ -1583,6 +1598,9 @@ body.marketing-body {
     padding: 7px 0;
     border: 0;
   }
+
+  .dashboard-stage-dark .dashboard-toolbar { color: var(--muted); }
+  .dashboard-stage > a img { border: 1px solid var(--line); border-radius: 6px; }
 
   .dashboard-stage > img {
     border: 1px solid var(--line);

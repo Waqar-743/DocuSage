@@ -22,7 +22,6 @@
   <img src="https://img.shields.io/badge/React-19-168263?logo=react&logoColor=white" alt="React 19" />
   <img src="https://img.shields.io/badge/Rust-2021-17181b?logo=rust&logoColor=white" alt="Rust 2021" />
   <img src="https://img.shields.io/github/v/release/Waqar-743/DocuSage?color=168263" alt="Latest release" />
-  <img src="https://img.shields.io/badge/license-MIT-132f5f" alt="MIT License" />
 </p>
 
 ---
@@ -31,19 +30,23 @@
 
 DocuSage started with a familiar research problem: the answer was already inside the document, but finding it meant breaking focus, searching across tabs, and often uploading private material to a hosted service.
 
-It is designed as the assistant that stays beside the work instead. DocuSage starts hidden, waits in the system tray, and appears as a compact panel when you press `Alt+Space`. PDF parsing, embeddings, vector retrieval, local model files, and session data remain on your computer. You can use a local GGUF model for a fully offline workflow or deliberately choose a remote provider for final answer generation.
+It is designed as the assistant that stays beside the work instead. DocuSage starts hidden, waits in the system tray, and appears as a compact panel when you press `Alt+Space`. PDF parsing, embeddings, vector retrieval, local model files, and session storage happen on your computer. Download the generation and embedding models before offline use. You can use a local GGUF model for a fully offline workflow or deliberately choose a remote provider for final answer generation.
 
 ## Current dashboard
 
+Captured from the verified Linux source build. Windows release behavior can differ. See [audit and test evidence](DocuSage/docs/audit.md) for the verification scope.
+
+The current source includes improvements that may not yet be in the published Windows installer.
+
 <p align="center">
-  <img src="DocuSage/public/media/dashboard-light.png" alt="DocuSage light mode dashboard with private RAG document chat" width="100%" />
+  <img src="DocuSage/public/media/desktop-light.webp" alt="DocuSage light mode dashboard with private RAG document chat" width="100%" />
 </p>
 
-The dashboard brings document ingestion, general chat, RAG mode, model selection, chat history, folders, index status, and assistant controls into one desktop workspace.
+The dashboard brings document ingestion, general chat, RAG mode, model selection, chat history, index status, and assistant controls into one desktop workspace.
 
 ## What DocuSage can do
 
-- Ask grounded questions across private PDF documents.
+- Ask questions about a selected text-based PDF using local retrieval.
 - Parse, chunk, embed, and retrieve document context locally.
 - Run offline chat with local GGUF models through `mistral.rs`.
 - Store semantic document vectors in a local LanceDB index.
@@ -54,8 +57,8 @@ The dashboard brings document ingestion, general chat, RAG mode, model selection
 - Keep API credentials in the platform keyring where available.
 - Download, connect, disconnect, restart, and remove local models in the app.
 - Tune RAG chunk size, overlap, top-k retrieval, and source context display.
-- Render streamed Markdown and line-numbered code blocks with copy controls.
-- Persist multiple chats, folders, drafts, selected documents, provider choice, sidebar state, and window mode.
+- Render streamed local responses, basic Markdown, and line-numbered code blocks with copy controls. Cloud answers arrive after the provider returns.
+- Persist multiple chats, drafts, selected documents, provider choice, sidebar state, and window mode.
 
 ## Architecture
 
@@ -74,7 +77,7 @@ flowchart LR
 
     CONTEXT --> LOCAL[mistral.rs + GGUF]
     CONTEXT --> REMOTE[Chosen cloud or remote provider]
-    LOCAL --> STREAM[Streamed grounded answer]
+    LOCAL --> STREAM[Answer returned to the UI]
     REMOTE --> STREAM
     STREAM --> UI
 
@@ -99,13 +102,13 @@ flowchart LR
 
 ## How document Q&A works
 
-1. DocuSage extracts text from the selected PDF on-device.
+1. DocuSage extracts text from the selected text-based PDF on-device. Scanned PDFs need external OCR first.
 2. The text is split using the configured chunk size and overlap.
 3. `fastembed` creates local vectors for each chunk.
 4. LanceDB stores the vectors in a persistent local index.
-5. The question is embedded and matched against relevant document chunks.
+5. The question is embedded and matched against chunks from the selected PDF. Removing a document also removes its chunks; re-importing replaces its indexed content.
 6. DocuSage sends the selected context to the local GGUF model or the provider you explicitly selected.
-7. The grounded answer streams back into the desktop conversation.
+7. The local answer streams back; cloud responses are returned when complete. Citations are model-generated filenames and should be checked against the source. Show Retrieved Context displays the excerpts the model received.
 
 ## Privacy boundary
 
@@ -148,7 +151,7 @@ Get the newest installer from [GitHub Releases](https://github.com/Waqar-743/Doc
 #### Required dependencies
 
 - Windows 10 or Windows 11
-- [Node.js 18+](https://nodejs.org/) and npm
+- [Node.js 22.22.2+ or 24.15+](https://nodejs.org/) and npm
 - [Rust stable toolchain](https://www.rust-lang.org/tools/install)
 - [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with Desktop development with C++
 - [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) on systems where it is not already installed
@@ -237,7 +240,6 @@ DocuSage/
 |   |-- vite.config.ts
 |   `-- index.html
 |-- README.md
-`-- LICENSE
 ```
 
 ## Main dependencies
@@ -289,6 +291,6 @@ npm run tauri dev    # Run the desktop app in development
 npm run tauri build  # Build the desktop installer
 ```
 
-## License
+## License status
 
-DocuSage is released under the [MIT License](LICENSE).
+This repository currently does not include a license file. The previous MIT badge and broken license link have been removed pending an explicit license file from the maintainer.

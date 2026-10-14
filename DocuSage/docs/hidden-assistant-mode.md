@@ -1,5 +1,9 @@
 # Hidden Desktop Assistant Mode
 
+For the current verification scope, corrected behavior, and remaining platform
+limitations, see the [audit report](audit.md). This document describes the design;
+its cross-platform notes are not evidence of Windows or macOS runtime testing.
+
 ## Executive Summary
 
 DocuSage now supports a hidden/background desktop assistant lifecycle. The process can start with no visible window, keep the Rust backend, local model state, embeddings, and LanceDB index available, and toggle the assistant with a global shortcut or tray action.
@@ -256,14 +260,14 @@ It does not upload the local vector DB or raw document collection. Local mode co
 Startup:
 
 - Hidden window startup avoids immediate user-facing layout work.
-- Model loading remains lazy from the existing React startup path.
+- The startup model setting controls automatic loading of a discovered GGUF file.
 - Assistant activation reuses the live process.
 
 Idle:
 
 - Hidden mode does not run a duplicate process.
 - RAG embeddings are cached with `OnceLock`.
-- Local model remains loaded only when configured and connected.
+- Connected models stay loaded until disconnected, restarted, or the process exits.
 
 Activation:
 
@@ -275,7 +279,7 @@ Installer size:
 
 - Unused frontend public logos were removed from `public/` so Vite no longer copies them into `dist`.
 - GGUF models remain externally managed or downloaded into app data, not bundled by default.
-- Production frontend build is used. Current frontend output is about 332 KB uncompressed (`index.html`, one CSS asset, one JS asset).
+- Production frontend builds load the desktop and marketing interfaces separately. See the audit report for measured build results.
 - No duplicate model assets are introduced.
 
 ## Accessibility Strategy
@@ -332,7 +336,7 @@ Used:
 - Secure key storage depends on platform keychain availability.
 - Cloud providers are not streamed yet; local chat remains streamed.
 - macOS Dock hiding may need a packaging-level activation policy if a true accessory app experience is required.
-- Rust compilation could not be verified in this shell because `cargo` is unavailable.
+- Windows/macOS installers, Wayland behavior, and multiple monitors require separate platform testing; see the audit report for Linux build evidence.
 
 ## Edge Case Handling
 

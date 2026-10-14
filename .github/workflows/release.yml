@@ -20,7 +20,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: DocuSage/package-lock.json
 
@@ -41,6 +41,12 @@ jobs:
       - name: Install frontend dependencies
         working-directory: DocuSage
         run: npm ci
+
+      - name: Verify frontend
+        working-directory: DocuSage
+        run: |
+          npm test
+          npm run build
 
       - name: Build and create GitHub release
         uses: tauri-apps/tauri-action@v0

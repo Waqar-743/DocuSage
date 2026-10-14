@@ -39,6 +39,7 @@ const TABLE_NAME: &str = "documents";
 ///
 /// Avoids the cost of loading the ONNX model on every request.
 static EMBEDDING: OnceLock<TextEmbedding> = OnceLock::new();
+static EMBEDDING_INIT: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Return a reference to the shared [`TextEmbedding`] instance, creating it
 /// on first access.
@@ -46,8 +47,16 @@ pub fn get_embedding() -> Result<&'static TextEmbedding, String> {
     if let Some(m) = EMBEDDING.get() {
         return Ok(m);
     }
+    let _guard = EMBEDDING_INIT.lock().map_err(|e| format!("Embedding initialization lock: {e}"))?;
+    if let Some(m) = EMBEDDING.get() {
+        return Ok(m);
+    }
+    let cache_dir = dirs::data_local_dir().ok_or("Cannot resolve embedding cache directory")?
+        .join("com.docusage.app").join("embeddings");
     let model = TextEmbedding::try_new(
-        InitOptions::new(EMBEDDING_MODEL).with_show_download_progress(true),
+        InitOptions::new(EMBEDDING_MODEL)
+            .with_cache_dir(cache_dir)
+            .with_show_download_progress(true),
     )
     .map_err(|e| format!("Failed to initialise embedding model: {e}"))?;
     let _ = EMBEDDING.set(model);
@@ -164,7 +173,9 @@ pub fn chunk_text(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> 
             // Seed the next chunk with the overlap tail of the previous one.
             if overlap > 0 {
                 let last = chunks.last().unwrap();
-                let tail = take_tail(last, overlap);
+                // Leave space for the next unit; overlap must never push a
+                // chunk beyond the configured size.
+                let tail = take_tail(last, overlap.min(chunk_size.saturating_sub(unit_len + 1)));
                 current.push_str(&tail);
                 current_len = current.chars().count();
             } else {
@@ -225,6 +236,7 @@ fn split_into_sentences(paragraph: &str, max_len: usize) -> Vec<String> {
 /// Take the last `n` characters of `s`, snapping to a sentence boundary
 /// when one falls within the tail so the overlap reads cleanly.
 fn take_tail(s: &str, n: usize) -> String {
+    if n == 0 { return String::new(); }
     let chars: Vec<char> = s.chars().collect();
     let total = chars.len();
     if total <= n {
@@ -233,8 +245,7 @@ fn take_tail(s: &str, n: usize) -> String {
     let start = total - n;
     let tail: String = chars[start..].iter().collect();
     if let Some(idx) = tail.find(['.', '!', '?']) {
-        let after: String = tail.chars().skip(idx + 1).collect();
-        let trimmed = after.trim();
+        let trimmed = tail[idx + 1..].trim();
         if !trimmed.is_empty() {
             return trimmed.to_string();
         }
@@ -417,13 +428,17 @@ pub async fn embed_and_store(
     )
     .map_err(|e| format!("Failed to build RecordBatch: {e}"))?;
 
-    // ── 4. Append to the table ──────────────────────────────────────────
+    // Replace all chunks of this source in one transaction. Re-ingestion
+    // updates changed PDFs without accumulating stale duplicate evidence.
     let batches = RecordBatchIterator::new(vec![Ok(batch)], schema);
 
-    println!("[rag] Appending {} chunks to '{}' table (existing rows: {})...", num_chunks, TABLE_NAME, existing_rows);
-    table
-        .add(Box::new(batches))
-        .execute()
+    println!("[rag] Replacing source chunks in '{TABLE_NAME}' ({num_chunks} chunks)");
+    let mut merge = table.merge_insert(&["source_path", "chunk_index"]);
+    merge.when_matched_update_all(None)
+        .when_not_matched_insert_all()
+        .when_not_matched_by_source_delete(Some(source_filter(source_path)));
+    merge
+        .execute(Box::new(batches))
         .await
         .map_err(|e| format!("LanceDB insert failed: {e}"))?;
 
@@ -431,7 +446,7 @@ pub async fn embed_and_store(
         .count_rows(None)
         .await
         .map_err(|e| format!("Failed to count rows after insert: {e}"))? as i32;
-    println!("[rag] Insert complete. Row count: {} -> {} (expected {})", existing_rows, new_total, existing_rows + num_chunks);
+    println!("[rag] Source updated. Row count: {existing_rows} -> {new_total}");
 
     Ok(())
 }
@@ -448,24 +463,22 @@ pub async fn query_similar(
     query: &str,
     db_path: &Path,
     top_k: usize,
+    source_path: Option<&str>,
 ) -> Result<Vec<(String, String)>, String> {
-    println!("[rag-query] Starting vector search for: {:?}", &query[..query.len().min(100)]);
-    println!("[rag-query] DB path: {}", db_path.display());
+    if !(1..=20).contains(&top_k) { return Err("Top-K must be between 1 and 20.".into()); }
 
     // ── 1. Embed the query ──────────────────────────────────────────────
     // BGE retrieval models are trained with an asymmetric instruction: the
     // query is prefixed, the passages are not. Skipping this prefix is a
     // common silent quality regression — relevance scores drop ~5-10 %.
-    let model = get_embedding()?;
-    println!("[rag-query] Embedding model ready, generating query vector...");
-
     let prefixed_query = format!(
         "Represent this sentence for searching relevant passages: {}",
         query
     );
-    let embeddings = model
-        .embed(vec![prefixed_query], None)
-        .map_err(|e| format!("Query embedding failed: {e}"))?;
+    let embeddings = tauri::async_runtime::spawn_blocking(move || {
+        get_embedding()?.embed(vec![prefixed_query], None)
+            .map_err(|e| format!("Query embedding failed: {e}"))
+    }).await.map_err(|e| format!("Query embedding task failed: {e}"))??;
 
     let query_vec: Vec<f32> = embeddings
         .into_iter()
@@ -519,10 +532,14 @@ pub async fn query_similar(
     // same paragraph appears multiple times due to overlap or boilerplate)
     // before returning the final top_k.
     let fetch_k = (top_k * 3).max(top_k + 5);
-    let stream = table
+    let mut search = table
         .vector_search(query_vec)
         .map_err(|e| format!("Vector search setup failed: {e}"))?
-        .limit(fetch_k)
+        .limit(fetch_k);
+    if let Some(source) = source_path {
+        search = search.only_if(source_filter(source));
+    }
+    let stream = search
         .execute()
         .await
         .map_err(|e| format!("Vector search execution failed: {e}"))?;
@@ -571,9 +588,6 @@ pub async fn query_similar(
     output = dedup_chunks(output, top_k);
 
     println!("[rag-query] Vector search returned {} chunks", output.len());
-    if !output.is_empty() {
-        println!("[rag-query] First chunk preview: {:?}", &output[0].0[..output[0].0.len().min(150)]);
-    }
 
     Ok(output)
 }
@@ -585,6 +599,7 @@ fn dedup_chunks(
     chunks: Vec<(String, String)>,
     keep: usize,
 ) -> Vec<(String, String)> {
+    if keep == 0 { return Vec::new(); }
     let mut selected_tokens: Vec<std::collections::HashSet<String>> = Vec::new();
     let mut out: Vec<(String, String)> = Vec::new();
     for (text, src) in chunks {
@@ -607,6 +622,55 @@ fn dedup_chunks(
         }
     }
     out
+}
+
+/// Quote a path as a SQL string literal; apostrophes in filenames are valid.
+pub fn source_filter(source: &str) -> String {
+    format!("source_path = '{}'", source.replace('\'', "''"))
+}
+
+pub fn canonical_source(path: &str) -> String {
+    std::fs::canonicalize(path).unwrap_or_else(|_| Path::new(path).to_path_buf())
+        .to_string_lossy().into_owned()
+}
+
+pub async fn delete_source(db_path: &Path, source: &str) -> Result<(), String> {
+    let db = init_lancedb(db_path).await?;
+    db.open_table(TABLE_NAME).execute().await.map_err(|e| e.to_string())?
+        .delete(&source_filter(source)).await.map(|_| ()).map_err(|e| format!("Cannot remove document from index: {e}"))
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexedDocument {
+    pub path: String,
+    pub chunk_count: usize,
+}
+
+pub async fn indexed_documents(db_path: &Path) -> Result<Vec<IndexedDocument>, String> {
+    use futures_util::TryStreamExt;
+    use lancedb::query::{ExecutableQuery, QueryBase, Select};
+    if !db_path.exists() { return Ok(Vec::new()); }
+    let db = init_lancedb(db_path).await?;
+    let table = db.open_table(TABLE_NAME).execute().await.map_err(|e| e.to_string())?;
+    let batches: Vec<RecordBatch> = table.query().select(Select::columns(&["source_path"]))
+        .execute().await.map_err(|e| e.to_string())?
+        .try_collect().await.map_err(|e| e.to_string())?;
+    let mut counts = std::collections::BTreeMap::new();
+    for batch in batches {
+        let paths = batch.column_by_name("source_path").and_then(|c| c.as_any().downcast_ref::<StringArray>())
+            .ok_or("Invalid source_path column")?;
+        for path in paths.iter().flatten() { *counts.entry(path.to_owned()).or_insert(0) += 1; }
+    }
+    Ok(counts.into_iter().map(|(path, chunk_count)| IndexedDocument { path, chunk_count }).collect())
+}
+
+pub fn context_appendix(chunks: &[(String, String)]) -> String {
+    let mut text = String::from("\n\n---\nRetrieved Context\n");
+    for (i, (chunk, source)) in chunks.iter().enumerate() {
+        text.push_str(&format!("\n[{}] {}\n{}\n", i + 1, source, chunk));
+    }
+    text
 }
 
 /// Count the total number of rows in the `documents` table.
@@ -632,4 +696,75 @@ pub async fn verify_row_count(db_conn: &lancedb::Connection) -> Result<usize, St
         .count_rows(None)
         .await
         .map_err(|e| format!("Failed to count rows: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow_array::Array;
+
+    #[test]
+    fn unicode_chunks_are_bounded_and_keep_the_last_passage() {
+        let text = format!("{}\n\nA final sentence.", "你好🌿. ".repeat(100));
+        let chunks = chunk_text(&text, 40, 35);
+        assert!(chunks.iter().all(|chunk| chunk.chars().count() <= 40));
+        assert!(chunks.last().unwrap().contains("A final sentence."));
+        assert!(chunks.len() < 200);
+    }
+
+    #[test]
+    fn chunking_handles_empty_text_and_extreme_overlap() {
+        assert!(chunk_text(" \n\t", 20, 10).is_empty());
+        assert_eq!(chunk_text("  hello  ", 0, 10), vec!["hello"]);
+        let chunks = chunk_text(&"x".repeat(101), 20, usize::MAX);
+        assert!(chunks.iter().all(|chunk| chunk.chars().count() <= 20));
+        // Overlap intentionally repeats characters in the last short chunk.
+        assert!(chunks.iter().map(|chunk| chunk.matches('x').count()).sum::<usize>() >= 101);
+        assert_eq!(chunks.len(), 6);
+    }
+
+    #[test]
+    fn filters_escape_apostrophes_in_valid_filenames() {
+        assert_eq!(source_filter("/tmp/O'Brien.pdf"), "source_path = '/tmp/O''Brien.pdf'");
+    }
+
+    #[test]
+    fn malformed_embedding_dimensions_fail_without_panicking() {
+        assert!(make_fslist(Float32Array::from(vec![0.0; 383])).is_err());
+        assert_eq!(make_fslist(Float32Array::from(vec![0.0; 384])).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn duplicate_context_does_not_fill_the_retrieval_budget() {
+        let chunks = vec![("The safety review is on Friday.".into(), "a.pdf".into()),
+            ("The safety review is on Friday.".into(), "a.pdf".into()),
+            ("The calibration interval is six months.".into(), "b.pdf".into())];
+        assert_eq!(dedup_chunks(chunks.clone(), 2).len(), 2);
+        assert!(dedup_chunks(chunks, 0).is_empty());
+    }
+
+    #[tokio::test]
+    async fn deleting_one_source_preserves_other_indexed_documents() {
+        let path = std::env::temp_dir().join(format!("docusage-index-test-{}", std::process::id()));
+        let db = init_lancedb(&path).await.unwrap();
+        let schema = documents_schema();
+        let batch = RecordBatch::try_new(schema.clone(), vec![
+            Arc::new(Int32Array::from(vec![0, 1])),
+            Arc::new(StringArray::from(vec!["/tmp/O'Brien.pdf", "/tmp/other.pdf"])),
+            Arc::new(Int32Array::from(vec![0, 0])),
+            Arc::new(StringArray::from(vec!["First document", "Other document"])),
+            Arc::new(make_fslist(Float32Array::from(vec![0.0; 768])).unwrap()),
+        ]).unwrap();
+        db.open_table(TABLE_NAME).execute().await.unwrap()
+            .add(Box::new(RecordBatchIterator::new(vec![Ok(batch)], schema)))
+            .execute().await.unwrap();
+        assert_eq!(indexed_documents(&path).await.unwrap().len(), 2);
+        delete_source(&path, "/tmp/O'Brien.pdf").await.unwrap();
+        let remaining = indexed_documents(&path).await.unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].path, "/tmp/other.pdf");
+        assert_eq!(remaining[0].chunk_count, 1);
+        drop(db);
+        std::fs::remove_dir_all(path).unwrap();
+    }
 }

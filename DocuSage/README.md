@@ -18,8 +18,10 @@
 
 ## Product preview
 
+Screenshots are from a Linux source build. See [audit evidence](docs/audit.md) for tested behavior and limitations.
+
 <p align="center">
-  <img src="public/media/dashboard-light.png" alt="DocuSage light mode dashboard with private document RAG" width="100%" />
+  <img src="public/media/desktop-light.webp" alt="DocuSage light mode dashboard with private document RAG" width="100%" />
 </p>
 
 DocuSage launches hidden, waits in the system tray, and opens with `Alt+Space`. It combines local GGUF inference, PDF extraction, local embeddings, LanceDB semantic retrieval, and optional cloud or remote providers in one desktop workspace.
@@ -52,7 +54,7 @@ flowchart LR
 
 ## Development dependencies
 
-- Node.js 18 or newer
+- Node.js 22.22.2+ or 24.15+
 - npm
 - Rust stable toolchain
 - Microsoft C++ Build Tools with Desktop development with C++ on Windows
@@ -140,9 +142,9 @@ DocuSage/
 
 ## Privacy and provider behavior
 
-Local mode keeps document extraction, embeddings, LanceDB retrieval, prompts, generation, model files, settings, and history on-device.
+Local mode keeps document extraction, embeddings, LanceDB retrieval, prompts, generation, model files, settings, and history storage on-device. The generation and embedding models need an initial download before offline use. Only text-based PDFs are supported; use external OCR for scans. AI answers and filename citations can be wrong.
 
-Provider mode performs retrieval locally first. Only the active prompt, relevant conversation context, and selected document excerpts are sent to the provider chosen in Settings.
+Provider mode performs retrieval locally first. Your active prompt, conversation history, and retrieved excerpts from the selected PDF are sent to the provider chosen in Settings.
 
 Supported profiles include Local, Gemini, OpenAI, Anthropic Claude, OpenRouter, Ollama Local/Remote, LM Studio Local/Remote, and custom OpenAI-compatible endpoints.
 
@@ -161,7 +163,7 @@ USE_GPU=0
 | --- | --- |
 | `Alt+Space` | Toggle assistant globally |
 | `Ctrl+Space` | Fallback global toggle |
-| `Escape` | Hide to tray |
+| `Escape` | Close settings, or hide to tray when settings are closed |
 | `Ctrl/Cmd + ,` | Open settings |
 | `Ctrl/Cmd + N` | New chat |
 | `Enter` | Send message |

@@ -12,11 +12,27 @@ use mistralrs::Model;
 /// RAG pipeline tuning parameters, editable at runtime from the Settings UI.
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct RagConfig {
     pub chunk_size: usize,
     pub chunk_overlap: usize,
     pub top_k: usize,
     pub show_context: bool,
+}
+
+impl RagConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        if !(200..=2000).contains(&self.chunk_size) {
+            return Err("Chunk size must be between 200 and 2000 characters.".into());
+        }
+        if self.chunk_overlap >= self.chunk_size {
+            return Err("Overlap must be smaller than the chunk size.".into());
+        }
+        if !(1..=20).contains(&self.top_k) {
+            return Err("Top-K must be between 1 and 20.".into());
+        }
+        Ok(())
+    }
 }
 
 impl Default for RagConfig {
@@ -195,7 +211,35 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
-        .setup(|app| assistant::setup(app))
+        .setup(|app| {
+            use tauri::Manager;
+            let models = app.path().app_data_dir()?.join("models");
+            // A forced process exit cannot run the download cleanup guard.
+            // Single-instance setup has already ensured no other downloader
+            // owns these app-created partials, so retries can start normally.
+            if let Ok(entries) = std::fs::read_dir(&models) {
+                for entry in entries.flatten() {
+                    if entry.file_name().to_string_lossy().to_lowercase().ends_with(".gguf.part")
+                        && entry.file_type().is_ok_and(|kind| kind.is_file())
+                    {
+                        if let Err(error) = std::fs::remove_file(entry.path()) {
+                            eprintln!("Cannot clean interrupted model download: {error}");
+                        }
+                    }
+                }
+            }
+            if path_has_gguf(&models) && !path_has_gguf(&app.state::<AppState>().model_path.read().map_err(|e| e.to_string())?) {
+                *app.state::<AppState>().model_path.write().map_err(|e| e.to_string())? = models;
+            }
+            let path = app.path().app_config_dir()?.join("rag-config.json");
+            if let Some(config) = std::fs::read_to_string(path).ok()
+                .and_then(|raw| serde_json::from_str::<RagConfig>(&raw).ok())
+                .filter(|config| config.validate().is_ok())
+            {
+                *app.state::<AppState>().rag_config.write().map_err(|e| e.to_string())? = config;
+            }
+            assistant::setup(app)
+        })
         .on_window_event(assistant::handle_window_event)
         .invoke_handler(tauri::generate_handler![
             assistant::get_assistant_status,
@@ -216,9 +260,10 @@ pub fn run() {
             commands::load_model,
             commands::chat_general,
             commands::chat_rag,
-            commands::chat_gemini_rag,
             commands::stop_chat,
             commands::ingest_document,
+            commands::delete_document,
+            commands::list_indexed_documents,
             commands::download_model,
             commands::list_downloaded_models,
             commands::connect_model,

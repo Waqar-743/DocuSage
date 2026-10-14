@@ -22,6 +22,8 @@ npm-debug.log*
 *.sln
 *.sw?
 *.local
+playwright-report/
+test-results/
 
 # Artifacts / junk
 11.11.0

@@ -37,6 +37,27 @@ jobs:
         env:
           VITE_BASE: /DocuSage/
 
+      - name: Run frontend regression tests
+        working-directory: DocuSage
+        run: npm test
+
+      - name: Install browser for website verification
+        working-directory: DocuSage
+        run: npx playwright install --with-deps chromium
+
+      - name: Serve and verify production website
+        working-directory: DocuSage
+        run: |
+          npm run preview -- --host 127.0.0.1 --port 1420 &
+          for attempt in {1..30}; do
+            if curl -fsS http://127.0.0.1:1420/DocuSage/ >/dev/null; then break; fi
+            sleep 1
+          done
+          npm run test:web
+        env:
+          VITE_BASE: /DocuSage/
+          WEB_BASE_URL: http://127.0.0.1:1420/DocuSage/
+
       - name: Disable Jekyll processing
         run: touch DocuSage/dist/.nojekyll
 

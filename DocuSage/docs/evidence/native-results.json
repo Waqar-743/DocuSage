@@ -1,0 +1,128 @@
+{
+  "date": "2026-10-14T17:04:50.213Z",
+  "platform": "linux",
+  "binaryProfile": "release",
+  "binarySha256": "7c156a42a664dccabcd9070a9f465c2b3769c8f96586211ea56da44e60f622d5",
+  "actualNativeBackend": true,
+  "completed": true,
+  "screenshots": [
+    "desktop-dark.png",
+    "desktop-light.png",
+    "desktop-models.png",
+    "desktop-providers.png",
+    "desktop-shortcuts.png"
+  ],
+  "livePaidProvidersVerified": false,
+  "checks": [
+    {
+      "name": "the production desktop stylesheet is applied",
+      "result": "passed",
+      "milliseconds": 9
+    },
+    {
+      "name": "production native bridge, hidden launch, and interrupted download recovery",
+      "result": "passed",
+      "milliseconds": 673
+    },
+    {
+      "name": "window sizes, global toggle, Escape, and single instance",
+      "result": "passed",
+      "milliseconds": 2228
+    },
+    {
+      "name": "local GGUF startup, general inference, and real streaming",
+      "result": "passed",
+      "milliseconds": 19753
+    },
+    {
+      "name": "the native PDF picker imports a document through the app UI",
+      "result": "passed",
+      "milliseconds": 7512
+    },
+    {
+      "name": "PDF extraction, local embeddings, and persistent LanceDB indexing",
+      "result": "passed",
+      "milliseconds": 96
+    },
+    {
+      "name": "re-import replaces chunks without duplicates",
+      "result": "passed",
+      "milliseconds": 45
+    },
+    {
+      "name": "invalid, missing, non-PDF, and scanned files return useful errors",
+      "result": "passed",
+      "milliseconds": 100
+    },
+    {
+      "name": "RAG uses the selected PDF and shows the actual context",
+      "result": "passed",
+      "milliseconds": 60650
+    },
+    {
+      "name": "Unicode queries do not panic and failed requests release their slot",
+      "result": "passed",
+      "milliseconds": 1958
+    },
+    {
+      "name": "document deletion removes retrieval data and preserves another PDF",
+      "result": "passed",
+      "milliseconds": 51
+    },
+    {
+      "name": "RAG settings validation and disk persistence",
+      "result": "passed",
+      "milliseconds": 45
+    },
+    {
+      "name": "native credentials survive fresh keyring reads and never enter settings JSON",
+      "result": "passed",
+      "milliseconds": 130
+    },
+    {
+      "name": "all remote adapters send correct requests to protocol fixtures",
+      "result": "passed",
+      "milliseconds": 2509
+    },
+    {
+      "name": "remote errors and cancellation recover without a stuck chat",
+      "result": "passed",
+      "milliseconds": 673
+    },
+    {
+      "name": "disabled providers and unsafe endpoints cannot become active",
+      "result": "passed",
+      "milliseconds": 214
+    },
+    {
+      "name": "model download validation, no partial catalog entries, and safe deletion",
+      "result": "passed",
+      "milliseconds": 98
+    },
+    {
+      "name": "a complete GGUF download enters the catalog and can be removed",
+      "result": "passed",
+      "milliseconds": 2644
+    },
+    {
+      "name": "local generation stops and the engine accepts another request",
+      "result": "passed",
+      "milliseconds": 22392
+    },
+    {
+      "name": "local disconnect, connection status, reconnect, and restart",
+      "result": "passed",
+      "milliseconds": 8515
+    },
+    {
+      "name": "persisted document chat, theme changes, and native settings screenshots",
+      "result": "passed",
+      "milliseconds": 68505
+    },
+    {
+      "name": "update check reaches the existing GitHub release",
+      "result": "passed",
+      "milliseconds": 348
+    }
+  ]
+}

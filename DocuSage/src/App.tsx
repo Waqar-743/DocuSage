@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Settings, Database, Plus, FileText, Send, Paperclip, AlertCircle, Trash2, X, MessageSquare, Square, CheckCircle, Key, Download, Cpu, HardDrive, Sliders, Link, Link2Off, FolderOpen, RotateCcw, Maximize2, Cloud, Keyboard, ShieldCheck, Eye, EyeOff, Monitor, Power, RefreshCw, Menu, Copy, Check, Search, Folder, Command, Palette, Wrench, Minimize2 } from 'lucide-react';
+import { Settings, Database, Plus, FileText, Send, Paperclip, AlertCircle, Trash2, X, MessageSquare, Square, CheckCircle, Key, Download, Cpu, HardDrive, Sliders, Link, Link2Off, FolderOpen, RotateCcw, Maximize2, Cloud, Keyboard, ShieldCheck, Eye, EyeOff, Monitor, Power, RefreshCw, Menu, Copy, Check, Search, Command, Palette, Wrench, Minimize2 } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import {
-  chatGeneral, chatRag, chatGeminiRag, ingestDocument, isTauri, loadModel, stopChat,
+  chatGeneral, chatRag, ingestDocument, deleteDocument, listIndexedDocuments, isTauri, loadModel, stopChat,
   downloadModel, listDownloadedModels, connectModel, disconnectModel, deleteModel,
   getConnectedModel, getRagConfig, saveRagConfig,
   chatCloud, chatCloudRag, restartAiEngine,
@@ -16,7 +17,6 @@ import {
   type AssistantSettings, type AssistantStatus, type AssistantWindowMode,
   type AiProviderConfig, type AiProviderConfigInput, type AiProviderKind, type ProviderList,
 } from './lib/api';
-import MarketingSite from './MarketingSite';
 import './App.css';
 
 type Message = {
@@ -42,7 +42,7 @@ type GeneralChat = {
 };
 
 type AppearanceTheme = 'dark' | 'light' | 'glass' | 'paper' | 'rose' | 'ocean';
-type SidebarTab = 'chats' | 'folders' | 'docs';
+type SidebarTab = 'chats' | 'docs';
 
 type PersistedAppState = {
   theme: AppearanceTheme;
@@ -112,8 +112,8 @@ const MODEL_CATALOG: ModelCatalogEntry[] = [
   {
     id: 'qwen2.5-0.5b',
     name: 'Qwen 2.5 0.5B',
-    size: '~380 MB',
-    description: 'Ultra-fast model for basic tasks. Great for low-end hardware and quick lookups when speed matters more than depth.',
+    size: '~469 MB',
+    description: 'Compact instruction model for trying local chat. Uses less memory than larger entries; document-answer quality is limited.',
     downloadUrl: 'https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF',
     directDownloadUrl: 'https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf',
     filename: 'qwen2.5-0.5b-instruct-q4_k_m.gguf',
@@ -141,7 +141,7 @@ const MODEL_CATALOG: ModelCatalogEntry[] = [
     id: 'smollm2-1.7b',
     name: 'SmolLM2 1.7B',
     size: '~1.0 GB',
-    description: "HuggingFace's own small language model, designed for efficiency. Punches above its weight with strong general knowledge and fast inference on mobile devices.",
+    description: "A small instruction model from HuggingFace. Try it for general local chat; speed and answer quality depend on your computer and question.",
     downloadUrl: 'https://huggingface.co/HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF',
     directDownloadUrl: 'https://huggingface.co/HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF/resolve/main/smollm2-1.7b-instruct-q4_k_m.gguf',
     filename: 'smollm2-1.7b-instruct-q4_k_m.gguf',
@@ -150,7 +150,7 @@ const MODEL_CATALOG: ModelCatalogEntry[] = [
     id: 'gemma-2-2b',
     name: 'Gemma 2 2B',
     size: '~1.5 GB',
-    description: "Google's lightweight model optimized specifically for on-device deployment. Excellent balance of quality and speed, built with mobile-first design.",
+    description: "Google's 2B instruction model. Requires more memory than the smallest entries in this catalog.",
     downloadUrl: 'https://huggingface.co/bartowski/gemma-2-2b-it-GGUF',
     directDownloadUrl: 'https://huggingface.co/bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf',
     filename: 'gemma-2-2b-it-Q4_K_M.gguf',
@@ -168,7 +168,7 @@ const MODEL_CATALOG: ModelCatalogEntry[] = [
     id: 'llama-3.2-3b',
     name: 'Llama 3.2 3B',
     size: '~2.0 GB',
-    description: "Meta's best small model for mobile. Strong reasoning, creative writing, and conversational ability. Recommended for most users with a modern laptop.",
+    description: "Meta's 3B instruction model. A larger option for local conversation; allow more memory and disk space than the 1B entry.",
     downloadUrl: 'https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF',
     directDownloadUrl: 'https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf',
     filename: 'Llama-3.2-3B-Instruct-Q4_K_M.gguf',
@@ -177,7 +177,7 @@ const MODEL_CATALOG: ModelCatalogEntry[] = [
     id: 'phi-3.5-mini',
     name: 'Phi-3.5 Mini',
     size: '~2.2 GB',
-    description: "Microsoft's compact powerhouse, trained on high-quality data including code. Exceptional at programming tasks, debugging, and technical explanations.",
+    description: "Microsoft's small instruction model with code training. A larger download for general and technical questions.",
     downloadUrl: 'https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF',
     directDownloadUrl: 'https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf',
     filename: 'Phi-3.5-mini-instruct-Q4_K_M.gguf',
@@ -200,7 +200,7 @@ const PROVIDER_LABELS: Record<AiProviderKind, string> = {
 const PROVIDER_DEFAULTS: Record<AiProviderKind, { baseUrl: string; model: string; needsKey: boolean }> = {
   local: { baseUrl: '', model: '', needsKey: false },
   openAi: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4.1-mini', needsKey: true },
-  anthropic: { baseUrl: 'https://api.anthropic.com/v1', model: 'claude-3-5-haiku-latest', needsKey: true },
+  anthropic: { baseUrl: 'https://api.anthropic.com/v1', model: 'claude-haiku-4-5-20251001', needsKey: true },
   googleGemini: { baseUrl: 'https://generativelanguage.googleapis.com/v1beta', model: 'gemini-2.5-flash', needsKey: true },
   openRouter: { baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4.1-mini', needsKey: true },
   ollamaLocal: { baseUrl: 'http://localhost:11434', model: 'llama3.2', needsKey: false },
@@ -209,18 +209,6 @@ const PROVIDER_DEFAULTS: Record<AiProviderKind, { baseUrl: string; model: string
   lmStudioRemote: { baseUrl: 'http://localhost:1234/v1', model: 'local-model', needsKey: false },
   customOpenAiCompatible: { baseUrl: 'https://example.com/v1', model: '', needsKey: true },
 };
-
-const MODEL_SELECTOR_GROUPS: { provider: AiProviderKind; heading: string; models: string[] }[] = [
-  { provider: 'local', heading: 'Local', models: ['Connected local model'] },
-  { provider: 'googleGemini', heading: 'Google Gemini', models: ['gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-2.5-pro'] },
-  { provider: 'openAi', heading: 'OpenAI', models: ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o-mini'] },
-  { provider: 'anthropic', heading: 'Anthropic Claude', models: ['claude-3-5-haiku-latest', 'claude-3-5-sonnet-latest', 'claude-3-opus-latest'] },
-  { provider: 'openRouter', heading: 'OpenRouter', models: ['openai/gpt-4.1-mini', 'anthropic/claude-3.5-sonnet', 'google/gemini-2.5-flash'] },
-  { provider: 'ollamaLocal', heading: 'Ollama Local', models: ['llama3.2', 'mistral', 'qwen2.5'] },
-  { provider: 'ollamaRemote', heading: 'Ollama Remote', models: ['llama3.2', 'mistral', 'qwen2.5'] },
-  { provider: 'lmStudio', heading: 'LM Studio', models: ['local-model'] },
-  { provider: 'customOpenAiCompatible', heading: 'Custom OpenAI-Compatible API', models: ['custom-model'] },
-];
 
 const APPEARANCE_OPTIONS: { key: AppearanceTheme; label: string; description: string }[] = [
   { key: 'dark', label: 'Dark', description: 'Low-glare charcoal interface.' },
@@ -297,6 +285,17 @@ const createEmptyChat = (id = DEFAULT_CHAT_ID): GeneralChat => ({
 
 const createRequestId = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}`;
 
+// Windows canonical paths can include the extended-length prefix while the
+// native picker returns the same file without it.
+const normalizeDocumentPath = (path: string) => path.replace(/^\\\\\?\\/, '').split('\\').join('/');
+
+const restoreMessages = (messages: Message[]): Message[] => Array.isArray(messages)
+  ? messages.filter(message => message && typeof message.text === 'string').map(message => ({
+      ...message, isStreaming: false,
+      text: message.isStreaming && !message.text ? 'Response interrupted when the app closed. Send your question again.' : message.text,
+    }))
+  : [];
+
 const loadPersistedState = (): PersistedAppState => {
   const fallback: PersistedAppState = {
     theme: 'dark',
@@ -329,8 +328,8 @@ const loadPersistedState = (): PersistedAppState => {
     const documents: Document[] = Array.isArray(parsed.documents)
       ? parsed.documents.map((doc) => ({
         ...doc,
-        status: doc.status === 'error' ? 'error' as const : 'ready' as const,
-        messages: Array.isArray(doc.messages) ? doc.messages : [],
+        status: doc.status === 'ready' ? 'ready' as const : 'error' as const,
+        messages: restoreMessages(doc.messages),
       }))
       : [];
 
@@ -342,10 +341,10 @@ const loadPersistedState = (): PersistedAppState => {
       documents,
       generalChats: generalChats.map((chat) => ({
         ...chat,
-        messages: Array.isArray(chat.messages) ? chat.messages : [],
+        messages: restoreMessages(chat.messages),
       })),
       selectedDocId: typeof parsed.selectedDocId === 'string' ? parsed.selectedDocId : null,
-      selectedGeneralChatId: typeof parsed.selectedGeneralChatId === 'string'
+      selectedGeneralChatId: typeof parsed.selectedGeneralChatId === 'string' && generalChats.some(chat => chat.id === parsed.selectedGeneralChatId)
         ? parsed.selectedGeneralChatId
         : generalChats[0].id,
       drafts: parsed.drafts && typeof parsed.drafts === 'object' ? parsed.drafts : {},
@@ -358,32 +357,13 @@ const loadPersistedState = (): PersistedAppState => {
           ? 'medium'
           : 'compact',
       sidebarCollapsed: Boolean(parsed.sidebarCollapsed),
-      sidebarTab: parsed.sidebarTab === 'folders' || parsed.sidebarTab === 'docs'
+      sidebarTab: parsed.sidebarTab === 'docs'
         ? parsed.sidebarTab
         : 'chats',
     };
   } catch {
     return fallback;
   }
-};
-
-const TypewriterEffect = ({ text, speed = 100 }: { text: string, speed?: number }) => {
-  const [displayedText, setDisplayedText] = useState('');
-
-  useEffect(() => {
-    let i = 0;
-    setDisplayedText('');
-    const timer = setInterval(() => {
-      i++;
-      setDisplayedText(text.slice(0, i));
-      if (i >= text.length) {
-        clearInterval(timer);
-      }
-    }, speed);
-    return () => clearInterval(timer);
-  }, [text, speed]);
-
-  return <span>{displayedText}</span>;
 };
 
 const parseCodeFence = (line: string) => {
@@ -520,6 +500,8 @@ const MarkdownMessage = ({ text, isDark }: { text: string; isDark: boolean }) =>
           flushList();
           if (!line.trim()) {
             groups.push(<div key={`space-${lineIndex}`} className="h-1" />);
+          } else if (/^\s*(---+|\*\*\*+|___+)\s*$/.test(line)) {
+            groups.push(<hr key={`rule-${lineIndex}`} className={`my-3 ${isDark ? 'border-zinc-600' : 'border-zinc-300'}`} />);
           } else {
             groups.push(
               <p key={`line-${lineIndex}`} className="leading-relaxed">
@@ -537,12 +519,7 @@ const MarkdownMessage = ({ text, isDark }: { text: string; isDark: boolean }) =>
 };
 
 export default function App() {
-  if (!isTauri() && import.meta.env.PROD) {
-    return <MarketingSite />;
-  }
-
-  const initialStateRef = useRef<PersistedAppState>(loadPersistedState());
-  const persistedState = initialStateRef.current;
+  const [persistedState] = useState(loadPersistedState);
 
   const [theme, setTheme] = useState<AppearanceTheme>(persistedState.theme);
   const [mode, setMode] = useState<'general' | 'rag'>(persistedState.mode);
@@ -552,7 +529,7 @@ export default function App() {
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
   const [toastError, setToastError] = useState<string | null>(null);
   const [toastSuccess, setToastSuccess] = useState<string | null>(null);
-  const [, setIsIngesting] = useState(false);
+  const [isIngesting, setIsIngesting] = useState(false);
   const [, setIngestFileName] = useState<string>('');
   const [ingestWidget, setIngestWidget] = useState<{ type: 'loading' | 'success'; fileName: string; chunkCount: number } | null>(null);
   const [isModelLoading, setIsModelLoading] = useState(false);
@@ -609,6 +586,13 @@ export default function App() {
 
   // Context ref for stable callbacks
   const contextRef = useRef({ mode, selectedDocId, selectedGeneralChatId });
+  const settingsRef = useRef<HTMLDivElement>(null);
+  const modelLoadRef = useRef(false);
+  const storageErrorRef = useRef(false);
+  const sendRef = useRef(false);
+  const pickRef = useRef(false);
+  const activeDocument = documents.find(doc => doc.id === selectedDocId);
+  const ragUnavailable = mode === 'rag' && activeDocument?.status !== 'ready';
   useEffect(() => {
     contextRef.current = { mode, selectedDocId, selectedGeneralChatId };
   }, [mode, selectedDocId, selectedGeneralChatId]);
@@ -621,14 +605,11 @@ export default function App() {
     ?? providerConfigs.find(provider => provider.id === 'local')
     ?? null;
   const isCloudMode = !!activeProvider && activeProvider.provider !== 'local';
-  const activeModelValue = activeProvider
-    ? `${activeProvider.provider}:${activeProvider.provider === 'local' ? 'Connected local model' : activeProvider.model ?? PROVIDER_DEFAULTS[activeProvider.provider].model}`
-    : 'local:Connected local model';
   const filteredChats = generalChats.filter(chat => chat.name.toLowerCase().includes(chatSearch.toLowerCase()));
   const filteredDocs = documents.filter(doc => doc.name.toLowerCase().includes(chatSearch.toLowerCase()));
 
-  const updateMessages = (updater: Message[] | ((prev: Message[]) => Message[])) => {
-    const { mode: currentMode, selectedDocId: currentDocId, selectedGeneralChatId: currentChatId } = contextRef.current;
+  const updateMessages = (updater: Message[] | ((prev: Message[]) => Message[]), target = contextRef.current) => {
+    const { mode: currentMode, selectedDocId: currentDocId, selectedGeneralChatId: currentChatId } = target;
 
     if (currentMode === 'rag' && currentDocId) {
       setDocuments(prev => prev.map(doc => {
@@ -672,7 +653,7 @@ export default function App() {
     const el = chatScrollRef.current;
     if (!el) return;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (distanceFromBottom < 180 || activeMessages.some(message => message.isStreaming)) {
+    if (distanceFromBottom < 180) {
       scrollToBottom();
     }
   }, [activeMessages]);
@@ -685,15 +666,32 @@ export default function App() {
     }
   }, [inputValue]);
 
+  useEffect(() => {
+    if (!showSettings) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const dialog = settingsRef.current;
+    dialog?.querySelector<HTMLElement>('button, input, select, textarea')?.focus();
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab' || !dialog) return;
+      const targets = [...dialog.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href]')]
+        .filter(element => element.getClientRects().length > 0);
+      const first = targets[0], last = targets[targets.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    window.addEventListener('keydown', trapFocus);
+    return () => { window.removeEventListener('keydown', trapFocus); previous?.focus(); };
+  }, [showSettings, settingsTab]);
+
   // Global shortcut for clearing chat (Ctrl+Shift+C)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'c') {
         e.preventDefault();
-        updateMessages([]);
+        if (!sendRef.current) updateMessages([]);
       } else if (e.key === 'Escape') {
         setShowSettings(false);
-        if (isTauri()) {
+        if (isTauri() && !showSettings) {
           e.preventDefault();
           hideAssistantWindow().catch(() => {});
         }
@@ -759,12 +757,20 @@ export default function App() {
   // Load the local GGUF model once on startup in desktop mode.
   // Browser preview mode uses mocked chat responses and does not need this.
   const ensureModelLoaded = async () => {
-    if (!isTauri() || isModelLoading) return;
+    if (!isTauri() || modelLoadRef.current) return;
+    modelLoadRef.current = true;
 
     setIsModelLoading(true);
     setModelStatus('Loading local model...');
 
     try {
+      const existing = await getConnectedModel();
+      if (existing) {
+        setConnectedModelFile(existing);
+        setIsModelReady(true);
+        setModelStatus(`Connected: ${existing}`);
+        return;
+      }
       const msg = await loadModel();
       setIsModelReady(true);
       setModelStatus(msg || 'Model loaded');
@@ -777,6 +783,7 @@ export default function App() {
       setModelStatus(errorMessage);
       showError(`Model load failed: ${errorMessage}`);
     } finally {
+      modelLoadRef.current = false;
       setIsModelLoading(false);
     }
   };
@@ -785,18 +792,34 @@ export default function App() {
     if (isTauri()) {
       refreshDownloadedModels();
       refreshProviderConfigs();
+      listIndexedDocuments().then(indexed => {
+        setDocuments(previous => {
+          const restored = previous.map(doc => {
+            const match = indexed.find(source => normalizeDocumentPath(source.path) === normalizeDocumentPath(doc.path));
+            return { ...doc, path: match?.path ?? doc.path, status: match ? 'ready' as const : 'error' as const };
+          });
+          for (const source of indexed) {
+            if (!restored.some(doc => normalizeDocumentPath(doc.path) === normalizeDocumentPath(source.path))) {
+              restored.push({ id: createRequestId(), name: source.path.split(/[\\/]/).pop() ?? source.path,
+                path: source.path, status: 'ready', messages: [] });
+            }
+          }
+          return restored;
+        });
+      }).catch(error => showError(`Could not read the document index: ${String(error)}`));
       getAssistantStatus().then(status => {
         setAssistantStatus(status);
         setAssistantSettings(status.settings);
         setAssistantShortcutDraft(status.settings.globalShortcut);
         if (status.settings.keepModelLoaded) {
-          ensureModelLoaded();
+          listDownloadedModels().then(models => { if (models.length) ensureModelLoaded(); });
         }
       }).catch(() => {});
       // Hydrate RAG config from backend
       getRagConfig().then(setRagConfig).catch(() => {});
       if (geminiKey.trim()) {
         const migrated = createProviderDraft('googleGemini');
+        migrated.id = 'legacy-gemini';
         migrated.name = 'Gemini';
         migrated.apiKey = geminiKey.trim();
         saveAiProviderConfig(draftToInput(migrated))
@@ -816,6 +839,7 @@ export default function App() {
   useEffect(() => {
     if (!isTauri()) return;
     let unlisten: (() => void) | null = null;
+    let disposed = false;
 
     listen<DownloadProgress>('download-progress', (event) => {
       const p = event.payload;
@@ -831,24 +855,25 @@ export default function App() {
           });
         }, 2500);
       }
-    }).then(fn => { unlisten = fn; });
+    }).then(fn => { if (disposed) fn(); else unlisten = fn; }).catch(() => {});
 
-    return () => { unlisten?.(); };
+    return () => { disposed = true; unlisten?.(); };
   }, [refreshDownloadedModels]);
 
   useEffect(() => {
     if (!isTauri()) return;
     const unlisteners: UnlistenFn[] = [];
+    let disposed = false;
 
     listen('assistant-focus-prompt', () => {
       setTimeout(() => textareaRef.current?.focus(), 50);
-    }).then(fn => unlisteners.push(fn));
+    }).then(fn => { if (disposed) fn(); else unlisteners.push(fn); }).catch(() => {});
 
     listen('assistant-open-settings', () => {
       setSettingsTab('providers');
       setShowSettings(true);
       setTimeout(() => textareaRef.current?.focus(), 50);
-    }).then(fn => unlisteners.push(fn));
+    }).then(fn => { if (disposed) fn(); else unlisteners.push(fn); }).catch(() => {});
 
     listen('assistant-check-updates', async () => {
       try {
@@ -857,7 +882,7 @@ export default function App() {
       } catch (err) {
         showError(`Update check failed: ${String(err)}`);
       }
-    }).then(fn => unlisteners.push(fn));
+    }).then(fn => { if (disposed) fn(); else unlisteners.push(fn); }).catch(() => {});
 
     listen('assistant-restart-ai-engine', async () => {
       try {
@@ -874,17 +899,18 @@ export default function App() {
       } finally {
         setIsModelLoading(false);
       }
-    }).then(fn => unlisteners.push(fn));
+    }).then(fn => { if (disposed) fn(); else unlisteners.push(fn); }).catch(() => {});
 
     listen<{ message: string }>('assistant-shortcut-error', (event) => {
       showError(event.payload.message);
-    }).then(fn => unlisteners.push(fn));
+    }).then(fn => { if (disposed) fn(); else unlisteners.push(fn); }).catch(() => {});
 
     listen<AssistantWindowMode>('assistant-window-mode', (event) => {
       setAssistantSettings(prev => ({ ...prev, windowMode: event.payload }));
-    }).then(fn => unlisteners.push(fn));
+    }).then(fn => { if (disposed) fn(); else unlisteners.push(fn); }).catch(() => {});
 
     return () => {
+      disposed = true;
       unlisteners.forEach(unlisten => unlisten());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -902,7 +928,8 @@ export default function App() {
       return;
     }
 
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    const timer = setTimeout(() => {
+    try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
       theme,
       mode,
       documents,
@@ -914,10 +941,20 @@ export default function App() {
       assistantWindowMode: assistantSettings.windowMode,
       sidebarCollapsed,
       sidebarTab,
-    } satisfies PersistedAppState));
+    } satisfies PersistedAppState)); } catch {
+      if (!storageErrorRef.current) {
+        storageErrorRef.current = true;
+        showError('Chat history could not be saved. Free storage space before closing the app.');
+      }
+    }
+    }, 250);
+    return () => clearTimeout(timer);
   }, [theme, mode, documents, generalChats, selectedDocId, selectedGeneralChatId, drafts, scrollPositions, assistantSettings.windowMode, sidebarCollapsed, sidebarTab]);
 
   const handlePickFile = async () => {
+    if (pickRef.current) return;
+    pickRef.current = true;
+    try {
     let filePath: string;
     let fileName: string;
 
@@ -953,16 +990,18 @@ export default function App() {
       fileName = filePath.split(/[\\/]/).pop() ?? filePath;
     }
 
+    const existingDoc = documents.find(doc => normalizeDocumentPath(doc.path) === normalizeDocumentPath(filePath));
     const newDoc: Document = {
-      id: Date.now().toString(),
+      id: existingDoc?.id ?? createRequestId(),
       name: fileName,
       path: filePath,
       status: 'ingesting',
-      messages: []
+      messages: existingDoc?.messages ?? []
     };
-    setDocuments(prev => [newDoc, ...prev]);
+    setDocuments(prev => [newDoc, ...prev.filter(doc => doc.id !== newDoc.id)]);
     setSelectedDocId(newDoc.id);
     setMode('rag');
+    setSidebarTab('docs');
 
     setIsIngesting(true);
     setIngestFileName(fileName);
@@ -970,7 +1009,7 @@ export default function App() {
     try {
       const result: IngestResult = await ingestDocument(filePath);
       setDocuments(prev => prev.map(d =>
-        d.id === newDoc.id ? { ...d, status: 'ready' } : d
+        d.id === newDoc.id ? { ...d, path: result.sourcePath ?? d.path, status: 'ready' } : d
       ));
       setIngestWidget({ type: 'success', fileName: result.fileName, chunkCount: result.chunkCount });
       setTimeout(() => setIngestWidget(null), 4000);
@@ -984,9 +1023,16 @@ export default function App() {
       setIsIngesting(false);
       setIngestFileName('');
     }
+    } finally { pickRef.current = false; }
   };
 
-  const handleDeleteDoc = (id: string) => {
+  const handleDeleteDoc = async (id: string) => {
+    const doc = documents.find(document => document.id === id);
+    if (!doc || doc.status === 'ingesting' || sendRef.current) return;
+    try { await deleteDocument(doc.path); } catch (error) {
+      showError(`Document removal failed: ${String(error)}`);
+      return;
+    }
     const filtered = documents.filter(d => d.id !== id);
     setDocuments(filtered);
     if (selectedDocId === id) {
@@ -995,6 +1041,7 @@ export default function App() {
   };
 
   const handleDeleteGeneralChat = (id: string) => {
+    if (sendRef.current) return;
     const filtered = generalChats.filter(c => c.id !== id);
     if (filtered.length === 0) {
       const newId = createRequestId();
@@ -1043,16 +1090,20 @@ export default function App() {
   };
 
   const handleSend = async () => {
-    if (!inputValue.trim() || isTyping) return;
+    if (!inputValue.trim() || sendRef.current) return;
+    if (ragUnavailable) { showError('Select a successfully indexed PDF before asking a document question.'); return; }
 
     // Cloud mode does not require a local GGUF model, but local RAG still
     // requires an indexed document selection.
-    const useLegacyGemini = mode === 'rag' && !!geminiKey.trim() && !isCloudMode;
-    if (!isModelReady && !isCloudMode && !useLegacyGemini) {
-      showError('Model is not loaded yet. Click Retry Model Load in the header, or choose a cloud provider in Settings.');
+    if (!isModelReady && !isCloudMode) {
+      setSettingsTab('models'); setShowSettings(true);
+      showError('Connect a downloaded model, or configure a provider in AI Providers.');
       return;
     }
 
+    sendRef.current = true;
+    const target = { ...contextRef.current };
+    const updateRequestMessages = (updater: Message[] | ((prev: Message[]) => Message[])) => updateMessages(updater, target);
     const userText = inputValue.trim();
     const requestId = createRequestId();
     const conversationHistory = getConversationHistory();
@@ -1064,7 +1115,7 @@ export default function App() {
     const newUserMsg: Message = { id: `${requestId}-user`, text: userText, sender: 'user' };
     const botMsgId = `${requestId}-assistant`;
 
-    updateMessages(prev => [...prev, newUserMsg, { id: botMsgId, text: '', sender: 'bot', isStreaming: true }]);
+    updateRequestMessages(prev => [...prev, newUserMsg, { id: botMsgId, text: '', sender: 'bot', isStreaming: true }]);
     setIsTyping(true);
     setIsStopping(false);
     setActiveRequestId(requestId);
@@ -1081,7 +1132,7 @@ export default function App() {
 
           const { token } = event.payload;
           if (token) {
-            updateMessages(prev => prev.map(msg =>
+            updateRequestMessages(prev => prev.map(msg =>
               msg.id === botMsgId
                 ? { ...msg, text: msg.text + token, isStreaming: true }
                 : msg
@@ -1098,18 +1149,16 @@ export default function App() {
       if (isCloudMode && mode === 'general') {
         response = await chatCloud(userText, conversationHistory, requestId);
       } else if (isCloudMode && mode === 'rag') {
-        response = await chatCloudRag(userText, conversationHistory, requestId);
+        response = await chatCloudRag(userText, conversationHistory, requestId, activeDocument!.path);
       } else if (mode === 'general') {
         response = await chatGeneral(userText, conversationHistory, requestId);
-      } else if (geminiKey.trim()) {
-        // Hybrid mode: use Gemini API for RAG when key is set
-        response = await chatGeminiRag(geminiKey.trim(), userText, conversationHistory);
+
       } else {
-        response = await chatRag(userText, conversationHistory, requestId);
+        response = await chatRag(userText, conversationHistory, requestId, activeDocument!.path);
       }
 
       // Set final text from the invoke return value for consistency.
-      updateMessages(prev => prev.map(msg =>
+      updateRequestMessages(prev => prev.map(msg =>
         msg.id === botMsgId
           ? { ...msg, text: response, isStreaming: false }
           : msg
@@ -1117,14 +1166,15 @@ export default function App() {
     } catch (error: unknown) {
       console.error("Error generating response:", error);
       const errorMessage = error instanceof Error ? error.message : String(error);
-      updateMessages(prev => prev.map(msg =>
+      updateRequestMessages(prev => prev.map(msg =>
         msg.id === botMsgId
           ? { ...msg, text: errorMessage, isError: true, isStreaming: false }
           : msg
       ));
-      showError("Failed to generate response. Please check your connection.");
+      showError(errorMessage);
     } finally {
       unlistenFn?.();
+      sendRef.current = false;
       setIsTyping(false);
       setIsStopping(false);
       setActiveRequestId(null);
@@ -1134,7 +1184,7 @@ export default function App() {
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && (!e.shiftKey || e.ctrlKey || e.metaKey)) {
       e.preventDefault();
-      if (mode === 'rag' && !selectedDocId) {
+      if (ragUnavailable) {
         showError("Please select or ingest a document first to use RAG mode.");
         return;
       }
@@ -1162,38 +1212,11 @@ export default function App() {
     }
   };
 
-  const handleSelectModel = async (value: string) => {
-    const separator = value.indexOf(':');
-    if (separator === -1) return;
-
-    const providerKind = value.slice(0, separator) as AiProviderKind;
-    const modelName = value.slice(separator + 1);
-
-    if (providerKind === 'local') {
-      try {
-        await setActiveAiProvider('local');
-        setActiveProviderId('local');
-        showSuccess('Active provider: Local');
-      } catch (err) {
-        showError(`Provider switch failed: ${String(err)}`);
-      }
-      return;
-    }
-
-    const existing = providerConfigs.find(provider => provider.provider === providerKind);
-    const baseDraft = existing ? providerToDraft(existing) : createProviderDraft(providerKind);
-    const nextDraft = { ...baseDraft, model: modelName };
-
+  const handleSelectModel = async (providerId: string) => {
     try {
-      const saved = await saveAiProviderConfig(draftToInput(nextDraft));
-      await setActiveAiProvider(saved.id);
-      setActiveProviderId(saved.id);
-      setProviderDraft(providerToDraft(saved));
-      await refreshProviderConfigs();
-      showSuccess(`Selected model: ${modelName}`);
-    } catch (err) {
-      showError(`Model selection failed: ${String(err)}`);
-    }
+      await setActiveAiProvider(providerId);
+      setActiveProviderId(providerId);
+    } catch (error) { showError(`Provider switch failed: ${String(error)}`); }
   };
 
   const providerKeyLink = (kind: AiProviderKind): string | null => {
@@ -1228,11 +1251,12 @@ export default function App() {
     : activeProvider?.model ?? 'Choose model';
 
   return (
-    <div className={`flex flex-col h-screen overflow-hidden font-sans transition-colors duration-200 relative rounded-[18px] ${rootSurfaceClass}`}>
+    <div data-desktop-app style={{ colorScheme: isDark ? 'dark' : 'light' }} className={`flex flex-col h-screen overflow-hidden font-sans transition-colors duration-200 relative rounded-[18px] ${rootSurfaceClass}`}>
 
+      {!isTauri() && <div role="status" className="bg-amber-100 text-amber-950 px-3 py-2 text-xs">Desktop UI preview · AI, indexing, and system controls are simulated.</div>}
       {/* Toast Notification for Errors */}
       {toastError && (
-        <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-3 rounded-xl bg-red-500 text-white shadow-xl transition-all duration-300 ease-out">
+        <div role="status" className="absolute top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-3 rounded-xl bg-red-500 text-white shadow-xl transition-all duration-300 ease-out">
           <AlertCircle size={18} />
           <span className="text-sm font-medium">{toastError}</span>
         </div>
@@ -1240,7 +1264,7 @@ export default function App() {
 
       {/* Toast Notification for Success */}
       {toastSuccess && (
-        <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-3 rounded-xl bg-emerald-500 text-white shadow-xl transition-all duration-300 ease-out">
+        <div role="status" className="absolute top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-3 rounded-xl bg-emerald-500 text-white shadow-xl transition-all duration-300 ease-out">
           <Database size={18} />
           <span className="text-sm font-medium">{toastSuccess}</span>
         </div>
@@ -1287,24 +1311,18 @@ export default function App() {
 
         <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
           <select
-            value={activeModelValue}
+            aria-label="Active AI provider"
+            value={activeProviderId}
             onChange={e => handleSelectModel(e.target.value)}
             className={`min-w-0 max-w-[220px] rounded-lg border px-2.5 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 ${
               isDark ? 'bg-[#1d1d20] border-white/10 text-zinc-100 focus:ring-white/20' : 'bg-white border-zinc-200 text-zinc-800 focus:ring-[#0F2854]/20'
             }`}
             title={`Selected model: ${activeModelLabel}`}
           >
-            {!MODEL_SELECTOR_GROUPS.some(group => group.models.some(modelName => `${group.provider}:${modelName}` === activeModelValue)) && (
-              <option value={activeModelValue}>{activeModelLabel}</option>
-            )}
-            {MODEL_SELECTOR_GROUPS.map(group => (
-              <optgroup key={group.heading} label={group.heading}>
-                {group.models.map(modelName => (
-                  <option key={`${group.provider}:${modelName}`} value={`${group.provider}:${modelName}`}>
-                    {modelName}
-                  </option>
-                ))}
-              </optgroup>
+            {(providerConfigs.length ? providerConfigs : [{ id: 'local', name: 'Local', provider: 'local', enabled: true, model: null }]).map(provider => (
+              <option key={provider.id} value={provider.id} disabled={!provider.enabled}>
+                {provider.name}{provider.provider === 'local' ? (connectedModelFile ? ` · ${connectedModelFile}` : ' · choose a model') : ` · ${provider.model ?? 'set model'}`}
+              </option>
             ))}
           </select>
 
@@ -1334,6 +1352,7 @@ export default function App() {
           <button
             onClick={() => { setSettingsTab('providers'); setShowSettings(true); }}
             className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-white/10 text-zinc-400 hover:text-zinc-100 hover:bg-white/10' : 'border-zinc-200 text-zinc-500 hover:text-zinc-800 hover:bg-zinc-100'}`}
+            aria-label="Settings"
             title="Settings"
           >
             <Settings size={16} />
@@ -1369,12 +1388,13 @@ export default function App() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => setShowSettings(false)}>
           <div
             className={`w-full max-w-2xl max-h-[88vh] flex flex-col rounded-2xl shadow-2xl border ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c]' : 'bg-white border-zinc-200'}`}
+            role="dialog" aria-modal="true" aria-label="Settings" ref={settingsRef}
             onClick={e => e.stopPropagation()}
           >
             {/* Header */}
             <div className={`flex items-center justify-between px-6 py-4 border-b shrink-0 ${isDark ? 'border-[#2a2a2c]' : 'border-zinc-200'}`}>
               <h2 className="text-lg font-semibold">Settings</h2>
-              <button onClick={() => setShowSettings(false)} className={`p-1.5 rounded-lg transition-colors ${isDark ? 'hover:bg-[#2a2a2c]' : 'hover:bg-zinc-100'}`}><X size={18} /></button>
+              <button aria-label="Close settings" onClick={() => setShowSettings(false)} className={`p-1.5 rounded-lg transition-colors ${isDark ? 'hover:bg-[#2a2a2c]' : 'hover:bg-zinc-100'}`}><X size={18} /></button>
             </div>
 
             {/* Tabs */}
@@ -1496,7 +1516,7 @@ export default function App() {
                       ['launchHidden', 'Launch hidden', 'Start with no visible window and wait for the shortcut or tray.'],
                       ['hideOnClose', 'Close hides to tray', 'The window close button preserves backend state instead of quitting.'],
                       ['hideFromTaskbar', 'Hide taskbar entry while hidden', 'Best effort on Windows and Linux; macOS follows Dock activation rules.'],
-                      ['keepModelLoaded', 'Keep local model loaded', 'Preserves instant activation when memory allows.'],
+                      ['keepModelLoaded', 'Load a model at startup', 'Loads a discovered GGUF model at launch. Connected models remain loaded until you disconnect or quit.'],
                     ].map(([key, label, description]) => (
                       <label
                         key={key}
@@ -1520,6 +1540,7 @@ export default function App() {
                     <div>
                       <label className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>Global Shortcut</label>
                       <input
+                        aria-label="Global shortcut"
                         value={assistantShortcutDraft}
                         onChange={e => setAssistantShortcutDraft(e.target.value)}
                         placeholder="Alt+Space"
@@ -1594,6 +1615,7 @@ export default function App() {
                           const msg = await restartAiEngine();
                           setIsModelReady(true);
                           setModelStatus(msg);
+                          setConnectedModelFile(await getConnectedModel());
                           showSuccess('AI engine restarted');
                         } catch (err) {
                           setIsModelReady(false);
@@ -1735,20 +1757,23 @@ export default function App() {
                           <div className="flex flex-col items-end gap-2 shrink-0">
                             <span className={`text-xs font-medium ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>{m.size}</span>
                             <button
-                              disabled={isDownloading}
+                              disabled={isDownloading || isAlreadyDownloaded}
                               onClick={async () => {
-                                if (isDownloading) return;
+                                if (isDownloading || isAlreadyDownloaded) return;
                                 if (isTauri()) {
                                   try {
+                                    setDownloadProgress(prev => ({ ...prev, [m.filename]: { filename: m.filename, downloaded: 0, total: 0, percent: 0, done: false } }));
                                     await downloadModel(m.directDownloadUrl, m.filename);
                                   } catch (err) {
+                                    setDownloadProgress(prev => ({ ...prev, [m.filename]: { filename: m.filename, downloaded: 0, total: 0, percent: 0, done: true, error: String(err) } }));
                                     showError(`Download failed: ${err}`);
                                   }
                                 } else {
                                   try { window.open(m.downloadUrl, '_blank', 'noopener,noreferrer'); } catch {}
                                 }
                               }}
-                              title={isDownloading ? 'Downloading…' : `Download ${m.name}`}
+                              title={isAlreadyDownloaded ? `${m.name} is downloaded` : isDownloading ? 'Downloading…' : `Download ${m.name}`}
+                              aria-label={isAlreadyDownloaded ? `${m.name} is downloaded` : `Download ${m.name}`}
                               className={`p-2 rounded-lg border transition-colors disabled:cursor-not-allowed ${
                                 isDownloading
                                   ? isDark ? 'border-[#3a3a3c] text-zinc-600' : 'border-zinc-200 text-zinc-300'
@@ -1902,9 +1927,10 @@ export default function App() {
                       <span className={`text-sm font-mono tabular-nums ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>{ragConfig.chunkSize} chars</span>
                     </div>
                     <input
+                      aria-label="Chunk size"
                       type="range" min={200} max={2000} step={50}
                       value={ragConfig.chunkSize}
-                      onChange={e => setRagConfig(prev => ({ ...prev, chunkSize: +e.target.value }))}
+                      onChange={e => setRagConfig(prev => ({ ...prev, chunkSize: +e.target.value, chunkOverlap: Math.min(prev.chunkOverlap, +e.target.value - 25) }))}
                       className="w-full accent-emerald-500"
                     />
                     <p className={`text-xs mt-1 ${isDark ? 'text-zinc-600' : 'text-zinc-400'}`}>
@@ -1919,13 +1945,14 @@ export default function App() {
                       <span className={`text-sm font-mono tabular-nums ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>{ragConfig.chunkOverlap} chars</span>
                     </div>
                     <input
-                      type="range" min={0} max={500} step={25}
+                      aria-label="Chunk overlap"
+                      type="range" min={0} max={Math.min(500, ragConfig.chunkSize - 25)} step={25}
                       value={ragConfig.chunkOverlap}
                       onChange={e => setRagConfig(prev => ({ ...prev, chunkOverlap: +e.target.value }))}
                       className="w-full accent-emerald-500"
                     />
                     <p className={`text-xs mt-1 ${isDark ? 'text-zinc-600' : 'text-zinc-400'}`}>
-                      Characters repeated between adjacent chunks. Higher overlap ensures facts spanning chunk boundaries are never split irretrievably.
+                      Characters repeated between adjacent chunks. Overlap helps preserve context around chunk boundaries.
                     </p>
                   </div>
 
@@ -1936,6 +1963,7 @@ export default function App() {
                       <span className={`text-sm font-mono tabular-nums ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>{ragConfig.topK} chunks</span>
                     </div>
                     <input
+                      aria-label="Top-K retrieval"
                       type="range" min={1} max={20} step={1}
                       value={ragConfig.topK}
                       onChange={e => setRagConfig(prev => ({ ...prev, topK: +e.target.value }))}
@@ -1982,9 +2010,13 @@ export default function App() {
                     </button>
                     <button
                       onClick={async () => {
-                        setRagConfig({ ...RAG_CONFIG_DEFAULTS });
-                        try { await saveRagConfig({ ...RAG_CONFIG_DEFAULTS }); } catch {}
-                        showSuccess('Reset to defaults');
+                        try {
+                          await saveRagConfig({ ...RAG_CONFIG_DEFAULTS });
+                          setRagConfig({ ...RAG_CONFIG_DEFAULTS });
+                          showSuccess('Reset to defaults');
+                        } catch (err) {
+                          showError(`Failed to reset RAG settings: ${String(err)}`);
+                        }
                       }}
                       className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-medium border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-400 hover:text-zinc-200 hover:bg-[#232325]' : 'border-zinc-200 text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50'}`}
                     >
@@ -2101,6 +2133,7 @@ export default function App() {
                       <div>
                         <label className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>Name</label>
                         <input
+                          aria-label="Provider name"
                           value={providerDraft.name}
                           onChange={e => setProviderDraft(prev => ({ ...prev, name: e.target.value }))}
                           className={`w-full px-3 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c] text-zinc-100 focus:ring-white/30' : 'bg-white border-zinc-200 text-zinc-900 focus:ring-[#0F2854]/30'}`}
@@ -2109,6 +2142,7 @@ export default function App() {
                       <div>
                         <label className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>Provider</label>
                         <select
+                          aria-label="Provider type"
                           value={providerDraft.provider}
                           onChange={e => {
                             const nextKind = e.target.value as AiProviderKind;
@@ -2136,7 +2170,8 @@ export default function App() {
                           <div>
                             <label className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>Base URL</label>
                             <input
-                              value={providerDraft.baseUrl}
+                              aria-label="Base URL"
+                          value={providerDraft.baseUrl}
                               onChange={e => setProviderDraft(prev => ({ ...prev, baseUrl: e.target.value }))}
                               className={`w-full px-3 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c] text-zinc-100 focus:ring-white/30' : 'bg-white border-zinc-200 text-zinc-900 focus:ring-[#0F2854]/30'}`}
                             />
@@ -2144,7 +2179,8 @@ export default function App() {
                           <div>
                             <label className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>Model</label>
                             <input
-                              value={providerDraft.model}
+                              aria-label="Provider model"
+                          value={providerDraft.model}
                               onChange={e => setProviderDraft(prev => ({ ...prev, model: e.target.value }))}
                               className={`w-full px-3 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c] text-zinc-100 focus:ring-white/30' : 'bg-white border-zinc-200 text-zinc-900 focus:ring-[#0F2854]/30'}`}
                             />
@@ -2156,7 +2192,8 @@ export default function App() {
                           <div className="flex gap-2">
                             <input
                               type={showProviderKey ? 'text' : 'password'}
-                              value={providerDraft.apiKey}
+                              aria-label="API key"
+                          value={providerDraft.apiKey}
                               onChange={e => setProviderDraft(prev => ({ ...prev, apiKey: e.target.value, deleteApiKey: false }))}
                               placeholder={providerDraft.id ? 'Leave blank to keep saved key' : 'Enter API key'}
                               className={`flex-1 px-3 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c] text-zinc-100 placeholder:text-zinc-600 focus:ring-white/30' : 'bg-white border-zinc-200 text-zinc-900 placeholder:text-zinc-400 focus:ring-[#0F2854]/30'}`}
@@ -2183,6 +2220,13 @@ export default function App() {
                           {providerKeyLink(providerDraft.provider) && (
                             <a
                               href={providerKeyLink(providerDraft.provider) ?? undefined}
+                              onClick={event => {
+                                if (isTauri()) {
+                                  event.preventDefault();
+                                  const url = providerKeyLink(providerDraft.provider);
+                                  if (url) openUrl(url).catch(error => showError(`Could not open browser: ${String(error)}`));
+                                }
+                              }}
                               target="_blank"
                               rel="noreferrer"
                               className={`inline-flex mt-2 text-xs font-medium ${isDark ? 'text-emerald-400 hover:text-emerald-300' : 'text-[#0F2854] hover:text-[#0a1b38]'}`}
@@ -2196,7 +2240,8 @@ export default function App() {
                           <div className="sm:col-span-2">
                             <label className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>Organization</label>
                             <input
-                              value={providerDraft.organization}
+                              aria-label="Organization"
+                          value={providerDraft.organization}
                               onChange={e => setProviderDraft(prev => ({ ...prev, organization: e.target.value }))}
                               className={`w-full px-3 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c] text-zinc-100 focus:ring-white/30' : 'bg-white border-zinc-200 text-zinc-900 focus:ring-[#0F2854]/30'}`}
                             />
@@ -2207,7 +2252,8 @@ export default function App() {
                               type="number"
                               min={1}
                               max={600}
-                              value={providerDraft.timeoutSecs}
+                              aria-label="Timeout in seconds"
+                          value={providerDraft.timeoutSecs}
                               onChange={e => setProviderDraft(prev => ({ ...prev, timeoutSecs: Number(e.target.value) || 60 }))}
                               className={`w-full px-3 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c] text-zinc-100 focus:ring-white/30' : 'bg-white border-zinc-200 text-zinc-900 focus:ring-[#0F2854]/30'}`}
                             />
@@ -2219,7 +2265,8 @@ export default function App() {
                               min={0}
                               max={2}
                               step={0.1}
-                              value={providerDraft.temperature}
+                              aria-label="Temperature"
+                          value={providerDraft.temperature}
                               onChange={e => setProviderDraft(prev => ({ ...prev, temperature: Number(e.target.value) || 0 }))}
                               className={`w-full px-3 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c] text-zinc-100 focus:ring-white/30' : 'bg-white border-zinc-200 text-zinc-900 focus:ring-[#0F2854]/30'}`}
                             />
@@ -2299,7 +2346,6 @@ export default function App() {
           <nav className={`flex w-14 shrink-0 flex-col items-center gap-2 border-r py-3 ${isDark ? 'border-white/10' : 'border-zinc-200'}`}>
             {[
               { key: 'chats' as SidebarTab, icon: <MessageSquare size={17} />, title: 'Chats' },
-              { key: 'folders' as SidebarTab, icon: <Folder size={17} />, title: 'Folders' },
               { key: 'docs' as SidebarTab, icon: <FileText size={17} />, title: 'Docs' },
             ].map(item => (
               <button
@@ -2342,16 +2388,15 @@ export default function App() {
               </div>
 
               <button
-                onClick={handlePickFile}
+                disabled={isIngesting} onClick={handlePickFile}
                 className={`flex items-center justify-center gap-2 w-full py-2.5 px-4 rounded-lg transition-colors font-medium text-sm shadow-sm ${isDark ? 'bg-white hover:bg-zinc-200 text-zinc-900' : 'bg-[#0F2854] hover:bg-[#0a1b38] text-white'}`}
               >
                 <Plus size={16} /> Ingest PDF
               </button>
 
-              <div className={`grid grid-cols-3 gap-1 rounded-lg border p-1 ${isDark ? 'border-white/10 bg-[#1c1c1f]' : 'border-zinc-200 bg-zinc-100'}`}>
+              <div className={`grid grid-cols-2 gap-1 rounded-lg border p-1 ${isDark ? 'border-white/10 bg-[#1c1c1f]' : 'border-zinc-200 bg-zinc-100'}`}>
                 {[
                   { key: 'chats' as SidebarTab, label: 'Chats', icon: <MessageSquare size={13} /> },
-                  { key: 'folders' as SidebarTab, label: 'Folders', icon: <Folder size={13} /> },
                   { key: 'docs' as SidebarTab, label: 'Docs', icon: <FileText size={13} /> },
                 ].map(tab => (
                   <button
@@ -2375,6 +2420,7 @@ export default function App() {
               <div className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${isDark ? 'border-white/10 bg-[#1c1c1f]' : 'border-zinc-200 bg-white'}`}>
                 <Search size={14} className={isDark ? 'text-zinc-500' : 'text-zinc-400'} />
                 <input
+                  aria-label="Search chats or documents"
                   value={chatSearch}
                   onChange={e => setChatSearch(e.target.value)}
                   placeholder="Search"
@@ -2389,13 +2435,13 @@ export default function App() {
                   {filteredChats.length === 0 ? (
                     <p className="px-3 py-4 text-center text-xs text-zinc-500">No chats found.</p>
                   ) : filteredChats.map(chat => (
+                    <div key={chat.id} className="relative">
                     <button
-                      key={chat.id}
                       onClick={() => {
                         setMode('general');
                         setSelectedGeneralChatId(chat.id);
                       }}
-                      className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors text-left group ${
+                      className={`w-full flex items-center justify-between pl-3 pr-10 py-2.5 rounded-lg text-sm transition-colors text-left group ${
                         selectedGeneralChatId === chat.id && mode === 'general'
                           ? (isDark ? 'bg-white/10 text-white' : 'bg-zinc-100 text-zinc-900 font-medium')
                           : (isDark ? 'text-zinc-400 hover:bg-white/5 hover:text-zinc-200' : 'text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900')
@@ -2405,34 +2451,20 @@ export default function App() {
                         <MessageSquare size={16} className="shrink-0" />
                         <span className="truncate">{chat.name}</span>
                       </div>
+                    </button>
                       {selectedGeneralChatId === chat.id && (
-                        <span
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteGeneralChat(chat.id);
-                          }}
-                          className={`p-1.5 rounded-md transition-colors ${isDark ? 'hover:bg-red-900/30 text-red-400' : 'hover:bg-red-100 text-red-500'}`}
+                        <button
+                          onClick={() => handleDeleteGeneralChat(chat.id)}
+                          aria-label={`Delete chat ${chat.name}`}
+                          className={`absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-md transition-colors ${isDark ? 'hover:bg-red-900/30 text-red-400' : 'hover:bg-red-100 text-red-500'}`}
                           title="Delete chat"
                         >
                           <Trash2 size={14} />
-                        </span>
+                        </button>
                       )}
-                    </button>
+                    </div>
                   ))}
                 </>
-              )}
-
-              {sidebarTab === 'folders' && (
-                <div className="space-y-2 px-2">
-                  {['Recent', 'Pinned', 'Research'].map(folder => (
-                    <button
-                      key={folder}
-                      className={`w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition-colors ${isDark ? 'text-zinc-400 hover:bg-white/5 hover:text-zinc-200' : 'text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900'}`}
-                    >
-                      <Folder size={16} /> {folder}
-                    </button>
-                  ))}
-                </div>
               )}
 
               {sidebarTab === 'docs' && (
@@ -2440,13 +2472,13 @@ export default function App() {
                   {filteredDocs.length === 0 ? (
                     <p className="px-3 py-4 text-center text-xs text-zinc-500">No documents found.</p>
                   ) : filteredDocs.map(doc => (
+                    <div key={doc.id} className="relative">
                     <button
-                      key={doc.id}
                       onClick={() => {
                         setMode('rag');
                         setSelectedDocId(doc.id);
                       }}
-                      className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors text-left group ${
+                      className={`w-full flex items-center justify-between pl-3 pr-10 py-2.5 rounded-lg text-sm transition-colors text-left group ${
                         selectedDocId === doc.id && mode === 'rag'
                           ? (isDark ? 'bg-white/10 text-white' : 'bg-zinc-100 text-zinc-900 font-medium')
                           : (isDark ? 'text-zinc-400 hover:bg-white/5 hover:text-zinc-200' : 'text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900')
@@ -2461,19 +2493,18 @@ export default function App() {
                         }`} />
                         <span className="truncate">{doc.name}</span>
                       </div>
+                    </button>
                       {selectedDocId === doc.id && (
-                        <span
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteDoc(doc.id);
-                          }}
-                          className={`p-1.5 rounded-md transition-colors ${isDark ? 'hover:bg-red-900/30 text-red-400' : 'hover:bg-red-100 text-red-500'}`}
+                        <button
+                          onClick={() => handleDeleteDoc(doc.id)}
+                          aria-label={`Delete document ${doc.name}`}
+                          className={`absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-md transition-colors ${isDark ? 'hover:bg-red-900/30 text-red-400' : 'hover:bg-red-100 text-red-500'}`}
                           title="Delete document"
                         >
                           <Trash2 size={14} />
-                        </span>
+                        </button>
                       )}
-                    </button>
+                    </div>
                   ))}
                 </>
               )}
@@ -2494,7 +2525,7 @@ export default function App() {
                 onClick={() => { setSettingsTab('advanced'); setShowSettings(true); }}
                 className={`mt-3 flex w-full items-center justify-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${isDark ? 'border-white/10 hover:bg-white/10 text-zinc-300' : 'border-zinc-200 hover:bg-white text-zinc-700'}`}
               >
-                <Command size={13} /> Command Palette
+                <Command size={13} /> App controls
               </button>
             </div>
           </aside>
@@ -2506,7 +2537,7 @@ export default function App() {
           <div className={`flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b shrink-0 transition-colors duration-200 ${isDark ? 'border-white/10' : 'border-zinc-200'}`}>
             <div className="flex items-center gap-3 min-w-0">
               <h1 className={`${isCompactMode ? 'text-sm' : 'text-base'} font-semibold`}>
-                {isCompactMode ? 'Assistant' : <TypewriterEffect key={`${theme}-${mode}`} text="Your Private Assistant" speed={100} />}
+                {isCompactMode ? 'Assistant' : 'Your document workspace'}
               </h1>
               <span className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md font-medium ${isDark ? 'bg-white/10 text-zinc-300' : 'bg-zinc-100 text-zinc-600'}`}>
                 <Database size={12} />
@@ -2548,13 +2579,14 @@ export default function App() {
                   <Plus size={16} />
                 </button>
                 <button
-                  onClick={handlePickFile}
+                  disabled={isIngesting} onClick={handlePickFile}
                   className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-white/10 text-zinc-300 hover:bg-white/10' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
                   title="Ingest PDF"
                 >
                   <Paperclip size={16} />
                 </button>
                 <select
+                  aria-label={mode === 'rag' ? 'Selected document' : 'Selected chat'}
                   value={mode === 'rag' ? (selectedDocId ?? '') : selectedGeneralChatId}
                   onChange={e => {
                     if (mode === 'rag') setSelectedDocId(e.target.value || null);
@@ -2619,11 +2651,17 @@ export default function App() {
                         : "Ask any general question to get started."}
                     </p>
                   )}
+                  {!isModelReady && !isCloudMode && (
+                    <div className="mt-5 space-y-3 text-sm">
+                      <p className="text-zinc-400">Start with a local model or an AI provider. PDF search also downloads a small embedding model on first use. Scanned PDFs need text recognition before importing.</p>
+                      <button onClick={() => { setSettingsTab('models'); setShowSettings(true); }} className="rounded-lg bg-emerald-700 text-white px-4 py-2">Set up AI</button>
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (
               activeMessages.map((msg) => (
-                <div key={msg.id} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div key={msg.id} data-message-sender={msg.sender} data-streaming={Boolean(msg.isStreaming)} data-error={Boolean(msg.isError)} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
                   <div
                     className={`px-5 py-3.5 rounded-2xl ${isCompactMode ? 'max-w-[92%]' : 'max-w-[86%]'} text-sm shadow-sm leading-relaxed ${
                       msg.sender === 'user'
@@ -2663,27 +2701,29 @@ export default function App() {
           {/* Input Area */}
           <div className={`${isCompactMode ? 'p-3 pb-4' : 'p-4 pb-6'} shrink-0`}>
             <div className="max-w-4xl mx-auto relative">
+              {isCloudMode && <p className="mb-2 text-xs text-zinc-500">Sending to {activeProvider?.name}: your message and chat history{mode === 'rag' ? ', plus retrieved PDF excerpts' : ''}.</p>}
               <div className={`flex items-end gap-2 p-2 rounded-2xl border transition-all shadow-sm ${
                 isDark
                   ? 'bg-[#232325] border-white/10 focus-within:border-white focus-within:ring-1 focus-within:ring-white'
                   : 'bg-white border-zinc-200 focus-within:border-[#0F2854] focus-within:ring-1 focus-within:ring-[#0F2854]'
               }`}>
                 <button
-                  onClick={handlePickFile}
+                  disabled={isIngesting} onClick={handlePickFile}
                   className={`p-2.5 rounded-xl transition-colors shrink-0 mb-0.5 ${
                     isDark ? 'text-zinc-400 hover:text-zinc-200 hover:bg-[#2a2a2c]' : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100'
                   }`}
-                  title="Attach file"
+                  title="Ingest PDF"
                 >
                   <Paperclip size={20} />
                 </button>
 
                 <textarea
+                  aria-label="Message"
                   ref={textareaRef}
                   value={inputValue}
                   onChange={(e) => updateInputValue(e.target.value)}
                   onKeyDown={handleInputKeyDown}
-                  disabled={isTyping || (mode === 'rag' && !selectedDocId)}
+                  disabled={isTyping || ragUnavailable}
                   placeholder={mode === 'rag' ? (selectedDocId ? "Ask about this document..." : "Select or ingest a document first...") : "Ask a general question..."}
                   className="flex-1 bg-transparent border-none focus:ring-0 resize-none py-3 px-2 text-sm placeholder:text-zinc-500 disabled:opacity-50 max-h-[200px] overflow-y-auto focus:outline-none"
                   rows={1}
@@ -2691,7 +2731,7 @@ export default function App() {
 
                 <button
                   onClick={isTyping ? handleStop : handleSend}
-                  disabled={isTyping ? isStopping : (!inputValue.trim() || (mode === 'rag' && !selectedDocId))}
+                  disabled={isTyping ? isStopping : (!inputValue.trim() || ragUnavailable)}
                   className={`p-2.5 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition-colors shrink-0 mb-0.5 ${isDark ? 'bg-white hover:bg-zinc-200 text-zinc-900' : 'bg-[#0F2854] hover:bg-[#0a1b38] text-white'}`}
                   title={isTyping ? (isStopping ? 'Stopping response...' : 'Stop response') : 'Send message'}
                 >

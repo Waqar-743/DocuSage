@@ -1,0 +1,65 @@
+name: Verify Windows Desktop
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: DocuSage/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: "28.x"
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: DocuSage/src-tauri -> target
+      - name: Install and test frontend
+        working-directory: DocuSage
+        run: |
+          npm ci
+          npm test
+      - name: Build production desktop executable
+        working-directory: DocuSage
+        run: npm run tauri build -- --no-bundle
+      - name: Run Rust regression tests
+        working-directory: DocuSage/src-tauri
+        run: cargo test --locked --release --lib --features tauri/custom-protocol
+      - name: Smoke-test production executable startup
+        shell: pwsh
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP 'docusage-startup-smoke'
+          $env:APPDATA = Join-Path $fixture 'config'
+          $env:LOCALAPPDATA = Join-Path $fixture 'data'
+          $env:MODEL_PATH = Join-Path $fixture 'models'
+          New-Item -ItemType Directory -Force $env:APPDATA, $env:LOCALAPPDATA, $env:MODEL_PATH | Out-Null
+          $process = Start-Process -FilePath 'DocuSage/src-tauri/target/release/docusage.exe' -PassThru
+          try {
+            Start-Sleep -Seconds 10
+            if ($process.HasExited) {
+              throw "Desktop exited during startup with code $($process.ExitCode)"
+            }
+            Write-Output 'Production executable remained running after native startup. This is a launch smoke test, not an installer or UI certification.'
+          } finally {
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-source-build
+          path: DocuSage/src-tauri/target/release/docusage.exe

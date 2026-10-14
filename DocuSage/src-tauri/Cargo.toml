@@ -1,8 +1,8 @@
 [package]
 name = "docusage"
 version = "0.5.3"
-description = "A Tauri App"
-authors = ["you"]
+description = "Private PDF chat and local AI for your desktop"
+authors = ["Waqar Ahmed"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -44,3 +44,12 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"], defau
 # Static linking for lzma-sys (transitive dep from lancedb) to avoid
 # dynamic linking issues on Windows and in CI environments.
 lzma-sys = { version = "*", features = ["static"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }

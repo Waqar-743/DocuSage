@@ -55,6 +55,7 @@ pub struct IngestResult {
     pub file_name: String,
     pub chunk_count: usize,
     pub char_count: usize,
+    pub source_path: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -159,31 +160,32 @@ fn sanitize_token(raw: &str) -> String {
     out
 }
 
-fn start_request(state: &AppState, request_id: &str) -> Result<(), String> {
-    state.cancel_current_response.store(false, Ordering::Relaxed);
-    let mut active_request = state
-        .active_request_id
-        .lock()
-        .map_err(|e| format!("Active request lock failed: {e}"))?;
-    *active_request = Some(request_id.to_string());
-    Ok(())
-}
+pub(crate) struct RequestGuard<'a> { state: &'a AppState, request_id: String }
 
-fn finish_request(state: &AppState, request_id: &str) -> Result<(), String> {
-    state.cancel_current_response.store(false, Ordering::Relaxed);
-    let mut active_request = state
-        .active_request_id
-        .lock()
-        .map_err(|e| format!("Active request lock failed: {e}"))?;
-    if active_request.as_deref() == Some(request_id) {
-        *active_request = None;
+impl Drop for RequestGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut active) = self.state.active_request_id.lock() {
+            if active.as_deref() == Some(self.request_id.as_str()) {
+                *active = None;
+                self.state.cancel_current_response.store(false, Ordering::Relaxed);
+            }
+        }
     }
-    Ok(())
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// load_model
-// ─────────────────────────────────────────────────────────────────────────────
+pub(crate) fn start_request<'a>(state: &'a AppState, request_id: &str) -> Result<RequestGuard<'a>, String> {
+    let mut active = state.active_request_id.lock().map_err(|e| e.to_string())?;
+    if active.is_some() { return Err("A response is already running. Stop it before sending another message.".into()); }
+    state.cancel_current_response.store(false, Ordering::Relaxed);
+    *active = Some(request_id.to_owned());
+    Ok(RequestGuard { state, request_id: request_id.to_owned() })
+}
+
+pub(crate) async fn wait_for_cancel(state: &AppState) {
+    while !state.cancel_current_response.load(Ordering::Relaxed) {
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+}
 
 /// Load a GGUF model from disk using `mistralrs`.
 ///
@@ -232,7 +234,7 @@ pub async fn load_model(
     }
 
     // ── 2. Discover .gguf files in the directory ────────────────────────
-    let gguf_files: Vec<String> = std::fs::read_dir(&resolved)
+    let mut gguf_files: Vec<String> = std::fs::read_dir(&resolved)
         .map_err(|e| format!("Cannot read model directory: {e}"))?
         .filter_map(|entry| {
             let name = entry.ok()?.file_name().to_string_lossy().to_string();
@@ -244,6 +246,13 @@ pub async fn load_model(
         })
         .collect();
 
+    gguf_files.sort();
+    let connected = state.connected_model_file.read().map_err(|e| e.to_string())?.clone();
+    if let Some(selected) = connected.filter(|name| gguf_files.contains(name)) {
+        gguf_files = vec![selected];
+    } else {
+        gguf_files.truncate(1);
+    }
     if gguf_files.is_empty() {
         return Err(format!(
             "No .gguf files found in: {}",
@@ -276,16 +285,14 @@ pub async fn load_model(
         }
     }
 
+    let mut model_guard = state.model.lock().await;
     let model = builder
         .build()
         .await
         .map_err(|e| format!("Failed to load model: {e}"))?;
 
     // ── 4. Store in AppState ────────────────────────────────────────────
-    {
-        let mut guard = state.model.lock().await;
-        *guard = Some(model);
-    }
+    *model_guard = Some(model);
 
     // Track which file is connected so the UI can highlight it.
     if let Some(first) = gguf_files.first() {
@@ -318,7 +325,7 @@ pub async fn chat_general(
     history: Vec<HistoryMessage>,
     request_id: String,
 ) -> Result<String, String> {
-    start_request(&state, &request_id)?;
+    let _request = start_request(&state, &request_id)?;
 
     let model_guard = state.model.lock().await;
     let model = model_guard
@@ -348,7 +355,10 @@ pub async fn chat_general(
     let mut full_reply = String::new();
     let mut stopped = false;
 
-    while let Some(chunk) = stream.next().await {
+    while let Some(chunk) = tokio::select! {
+        chunk = stream.next() => chunk,
+        _ = wait_for_cancel(&state) => { stopped = true; None }
+    } {
         if state.cancel_current_response.load(Ordering::Relaxed) {
             stopped = true;
             break;
@@ -377,15 +387,12 @@ pub async fn chat_general(
             }
             Response::Done(_) => break,
             Response::ModelError(msg, _) => {
-                finish_request(&state, &request_id)?;
                 return Err(msg);
             }
             Response::InternalError(e) => {
-                finish_request(&state, &request_id)?;
                 return Err(e.to_string());
             }
             Response::ValidationError(e) => {
-                finish_request(&state, &request_id)?;
                 return Err(e.to_string());
             }
             _ => {}
@@ -400,8 +407,6 @@ pub async fn chat_general(
             done: true,
         },
     );
-
-    finish_request(&state, &request_id)?;
 
     let full_reply = full_reply.trim().to_string();
 
@@ -433,8 +438,9 @@ pub async fn chat_rag(
     prompt: String,
     history: Vec<HistoryMessage>,
     request_id: String,
+    source_path: String,
 ) -> Result<String, String> {
-    start_request(&state, &request_id)?;
+    let _request = start_request(&state, &request_id)?;
 
     // ── 1. Resolve DB path (no model lock needed) ───────────────────────
     let db_dir = app
@@ -454,12 +460,12 @@ pub async fn chat_rag(
 
     // ── 2. Retrieve relevant chunks BEFORE acquiring the model lock ─────
     println!("[chat_rag] DB dir for retrieval: {}", db_dir.display());
-    let chunks = crate::rag::query_similar(&prompt, &db_dir, top_k).await?;
+    let source = crate::rag::canonical_source(&source_path);
+    let chunks = crate::rag::query_similar(&prompt, &db_dir, top_k, Some(&source)).await?;
     println!("[chat_rag] Retrieved {} chunks from vector search", chunks.len());
 
     // ── STRICT: fail loudly if no chunks found ──────────────────────────
     if chunks.is_empty() {
-        finish_request(&state, &request_id)?;
         return Err(format!(
             "RAG Error: LanceDB searched the database at '{}' but retrieved 0 matching chunks. \
              The documents table may be empty or the db_path may be incorrect.",
@@ -522,7 +528,10 @@ pub async fn chat_rag(
     let mut full_reply = String::new();
     let mut stopped = false;
 
-    while let Some(chunk) = stream.next().await {
+    while let Some(chunk) = tokio::select! {
+        chunk = stream.next() => chunk,
+        _ = wait_for_cancel(&state) => { stopped = true; None }
+    } {
         if state.cancel_current_response.load(Ordering::Relaxed) {
             stopped = true;
             break;
@@ -551,15 +560,12 @@ pub async fn chat_rag(
             }
             Response::Done(_) => break,
             Response::ModelError(msg, _) => {
-                finish_request(&state, &request_id)?;
                 return Err(msg);
             }
             Response::InternalError(e) => {
-                finish_request(&state, &request_id)?;
                 return Err(e.to_string());
             }
             Response::ValidationError(e) => {
-                finish_request(&state, &request_id)?;
                 return Err(e.to_string());
             }
             _ => {}
@@ -575,8 +581,6 @@ pub async fn chat_rag(
         },
     );
 
-    finish_request(&state, &request_id)?;
-
     let mut full_reply = full_reply.trim().to_string();
 
     if full_reply.is_empty() {
@@ -589,17 +593,7 @@ pub async fn chat_rag(
 
     // Optionally append the retrieved chunks for transparency / auditing.
     if show_context && !stopped {
-        let mut ctx_block = String::from("\n\n---\n📚 Retrieved Context\n");
-        for (i, (text, source)) in chunks.iter().enumerate() {
-            let preview_len = text.len().min(300);
-            let preview = &text[..preview_len];
-            let ellipsis = if text.len() > 300 { "…" } else { "" };
-            ctx_block.push_str(&format!(
-                "\n[{}] {}\n{}{}\n",
-                i + 1, source, preview, ellipsis
-            ));
-        }
-        full_reply.push_str(&ctx_block);
+        full_reply.push_str(&crate::rag::context_appendix(&chunks));
     }
 
     Ok(full_reply)
@@ -608,128 +602,6 @@ pub async fn chat_rag(
 // ─────────────────────────────────────────────────────────────────────────────
 // chat_gemini_rag  –  Hybrid mode: local RAG retrieval + Gemini API for answer
 // ─────────────────────────────────────────────────────────────────────────────
-
-#[tauri::command]
-pub async fn chat_gemini_rag(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-    api_key: String,
-    prompt: String,
-    history: Vec<HistoryMessage>,
-) -> Result<String, String> {
-    // ── 1. Resolve DB path ──────────────────────────────────────────────
-    let db_dir = app
-        .path()
-        .app_data_dir()
-        .ok()
-        .map(|p| p.join("lancedb"))
-        .or_else(|| dirs::data_local_dir().map(|p| p.join("DocuSage").join("lancedb")))
-        .ok_or_else(|| "Cannot determine data directory.".to_string())?;
-
-    let top_k = state.rag_config.read()
-        .map_err(|e| format!("rag_config lock: {e}"))?
-        .top_k;
-
-    // ── 2. Retrieve relevant chunks ─────────────────────────────────────
-    println!("[chat_gemini_rag] DB dir: {}", db_dir.display());
-    let chunks = crate::rag::query_similar(&prompt, &db_dir, top_k).await?;
-    println!("[chat_gemini_rag] Retrieved {} chunks", chunks.len());
-
-    if chunks.is_empty() {
-        return Err(format!(
-            "RAG Error: 0 matching chunks from '{}'. The documents table may be empty.",
-            db_dir.display()
-        ));
-    }
-
-    // ── 3. Build context ────────────────────────────────────────────────
-    let chunk_count = chunks.len();
-    let mut context = String::new();
-    for (i, (text, source)) in chunks.iter().enumerate() {
-        context.push_str(&format!(
-            "[{}] Source: {}\n{}\n\n",
-            i + 1,
-            source,
-            text.trim()
-        ));
-    }
-
-    // Build conversation history for Gemini
-    let mut parts_text = String::new();
-    for msg in &history {
-        let role = if msg.sender == "user" { "User" } else { "Assistant" };
-        parts_text.push_str(&format!("{}: {}\n", role, msg.text));
-    }
-
-    let full_prompt = format!(
-        "You are DocuSage, a private document assistant. You answer questions \
-         using ONLY the excerpts retrieved from the user's documents below.\n\n\
-         GROUNDING RULES — non-negotiable:\n\
-         1. Use ONLY information present in the EXCERPTS section. No outside \
-            knowledge. No guessing.\n\
-         2. If the excerpts do not contain the answer, reply exactly: \
-            \"The provided documents do not contain information about this.\"\n\
-         3. Every factual statement must be followed by a citation in the \
-            form [Source: filename] using the filename shown in the excerpt header.\n\
-         4. Do NOT mention the rules, the number of excerpts, or the retrieval \
-            process.\n\
-         5. Respect any length/format constraint in the user's question.\n\
-         6. Produce exactly one answer, then stop.\n\n\
-         EXCERPTS ({chunk_count} retrieved, ranked by relevance):\n\
-         ─────────────────────────────────────────────\n\
-         {context}\
-         ─────────────────────────────────────────────\n\n\
-         CONVERSATION HISTORY:\n{parts_text}\n\
-         User Question: {prompt}"
-    );
-    println!(
-        "[chat_gemini_rag] Full prompt length: {} chars",
-        full_prompt.len()
-    );
-
-    // ── 4. Call Gemini API ──────────────────────────────────────────────
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
-        api_key
-    );
-
-    let body = serde_json::json!({
-        "contents": [{
-            "parts": [{ "text": full_prompt }]
-        }]
-    });
-
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Gemini request failed: {e}"))?;
-
-    let status = resp.status();
-    let resp_text = resp
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read Gemini response: {e}"))?;
-
-    if !status.is_success() {
-        println!("[chat_gemini_rag] Gemini error {}: {}", status, resp_text);
-        return Err(format!("Gemini API error ({}): {}", status, resp_text));
-    }
-
-    let parsed: serde_json::Value =
-        serde_json::from_str(&resp_text).map_err(|e| format!("Invalid JSON from Gemini: {e}"))?;
-
-    let answer = parsed["candidates"][0]["content"]["parts"][0]["text"]
-        .as_str()
-        .unwrap_or("No response from Gemini.")
-        .to_string();
-
-    println!("[chat_gemini_rag] Answer length: {} chars", answer.len());
-    Ok(answer)
-}
 
 #[tauri::command]
 pub fn stop_chat(
@@ -746,6 +618,18 @@ pub fn stop_chat(
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_document(app: tauri::AppHandle, file_path: String) -> Result<(), String> {
+    let db = app.path().app_data_dir().map_err(|e| e.to_string())?.join("lancedb");
+    crate::rag::delete_source(&db, &crate::rag::canonical_source(&file_path)).await
+}
+
+#[tauri::command]
+pub async fn list_indexed_documents(app: tauri::AppHandle) -> Result<Vec<crate::rag::IndexedDocument>, String> {
+    let db = app.path().app_data_dir().map_err(|e| e.to_string())?.join("lancedb");
+    crate::rag::indexed_documents(&db).await
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -833,7 +717,7 @@ pub async fn ingest_document(
         // 3a. Extract text
         println!("[ingest] Extracting text from PDF...");
         let text = crate::rag::extract_text_from_pdf(&pdf_path)?;
-        let char_count = text.len();
+        let char_count = text.chars().count();
         let trimmed_len = text.trim().len();
         println!("[ingest] Extracted text: {} chars total, {} chars trimmed", char_count, trimmed_len);
         if trimmed_len == 0 {
@@ -844,8 +728,6 @@ pub async fn ingest_document(
             ));
         }
         println!("SUCCESS: Extracted {} characters from {}", char_count, pdf_path.display());
-        // Log first 200 chars as preview
-        println!("[ingest] Text preview: {:?}", &text[..text.len().min(200)]);
 
         // 3b. Chunk — sentence-aware with configurable size and overlap.
         let chunks = crate::rag::chunk_text(&text, chunk_size, chunk_overlap);
@@ -889,10 +771,10 @@ pub async fn ingest_document(
     let file_name = PathBuf::from(&pdf_display)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or(pdf_display);
+        .unwrap_or_else(|| pdf_display.clone());
 
     println!("[ingest] Returning to frontend: file='{}', chunks={}, chars={}", file_name, chunk_count, char_count);
-    Ok(IngestResult { file_name, chunk_count, char_count })
+    Ok(IngestResult { file_name, chunk_count, char_count, source_path: pdf_display })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -901,6 +783,11 @@ pub async fn ingest_document(
 
 /// Download a GGUF model file directly into the app's models directory,
 /// emitting `download-progress` events so the UI can show a live progress bar.
+struct PartialDownload(PathBuf);
+impl Drop for PartialDownload {
+    fn drop(&mut self) { let _ = std::fs::remove_file(&self.0); }
+}
+
 #[tauri::command]
 pub async fn download_model(
     app: tauri::AppHandle,
@@ -908,116 +795,66 @@ pub async fn download_model(
     url: String,
     filename: String,
 ) -> Result<String, String> {
-    // Always download into the Tauri app-data models directory so the path is
-    // deterministic across sessions and the loader can find the file on startup.
-    let models_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Cannot resolve app data directory: {e}"))?
-        .join("models");
-
-    std::fs::create_dir_all(&models_dir)
-        .map_err(|e| format!("Cannot create models directory: {e}"))?;
-
-    // Keep model_path in sync so load_model / list_downloaded_models see it.
-    {
-        let mut mp = state
-            .model_path
-            .write()
-            .map_err(|e| format!("model_path lock: {e}"))?;
-        *mp = models_dir.clone();
+    if filename.is_empty() || filename.contains(['/', '\\']) || !filename.to_lowercase().ends_with(".gguf") {
+        return Err("Use a plain .gguf filename without directory components.".into());
     }
-
+    let parsed_url = reqwest::Url::parse(&url).map_err(|_| "Invalid download URL")?;
+    if !matches!(parsed_url.scheme(), "http" | "https") { return Err("Download URL must use HTTP or HTTPS.".into()); }
+    let models_dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("models");
+    tokio::fs::create_dir_all(&models_dir).await.map_err(|e| e.to_string())?;
     let dest = models_dir.join(&filename);
-
-    // Helper to emit error progress event and return early.
-    let emit_error = |msg: String| -> Result<String, String> {
-        let _ = app.emit(
-            "download-progress",
-            DownloadProgressPayload {
-                filename: filename.clone(),
-                downloaded: 0,
-                total: 0,
-                percent: 0.0,
-                done: true,
-                error: Some(msg.clone()),
-            },
-        );
-        Err(msg)
-    };
-
-    let client = reqwest::Client::builder()
-        .build()
-        .map_err(|e| emit_error(format!("HTTP client error: {e}")).unwrap_err())?;
-
-    let resp = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| emit_error(format!("Request failed: {e}")).unwrap_err())?;
-
-    if !resp.status().is_success() {
-        return emit_error(format!("HTTP {} from server", resp.status()));
+    if dest.exists() { return Err("This model already exists. Delete it first to download again.".into()); }
+    let partial = models_dir.join(format!("{filename}.part"));
+    let mut file = tokio::fs::OpenOptions::new().write(true).create_new(true).open(&partial)
+        .await.map_err(|e| format!("Cannot start download (another download may be running): {e}"))?;
+    let cleanup = PartialDownload(partial.clone());
+    let result = async {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let client = reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(30))
+            .read_timeout(std::time::Duration::from_secs(60)).build().map_err(|e| e.to_string())?;
+        let response = client.get(parsed_url).send().await.map_err(|e| format!("Download request failed: {}", e.without_url()))?;
+        if !response.status().is_success() { return Err(format!("Download returned HTTP {}", response.status())); }
+        let total = response.content_length().unwrap_or(0);
+        let mut stream = response.bytes_stream();
+        let mut downloaded = 0u64;
+        let mut last_event = std::time::Instant::now();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| format!("Download interrupted: {}", e.without_url()))?;
+            file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+            downloaded += chunk.len() as u64;
+            if last_event.elapsed() >= std::time::Duration::from_millis(100) {
+                let _ = app.emit("download-progress", DownloadProgressPayload {
+                    filename: filename.clone(), downloaded, total,
+                    percent: if total > 0 { downloaded as f32 / total as f32 * 100.0 } else { 0.0 },
+                    done: false, error: None,
+                });
+                last_event = std::time::Instant::now();
+            }
+        }
+        if downloaded < 4 || (total > 0 && downloaded != total) { return Err("Model download is incomplete.".into()); }
+        file.flush().await.map_err(|e| e.to_string())?;
+        file.sync_all().await.map_err(|e| e.to_string())?;
+        drop(file);
+        let mut header = [0u8; 4];
+        tokio::fs::File::open(&partial).await.map_err(|e| e.to_string())?
+            .read_exact(&mut header).await.map_err(|e| e.to_string())?;
+        if &header != b"GGUF" { return Err("The server response is not a GGUF model.".into()); }
+        tokio::fs::rename(&partial, &dest).await.map_err(|e| e.to_string())?;
+        let _ = app.emit("download-progress", DownloadProgressPayload {
+            filename: filename.clone(), downloaded, total, percent: 100.0, done: true, error: None,
+        });
+        Ok(dest.to_string_lossy().into_owned())
+    }.await;
+    drop(cleanup);
+    if let Err(ref error) = result {
+        let _ = app.emit("download-progress", DownloadProgressPayload {
+            filename, downloaded: 0, total: 0, percent: 0.0, done: true, error: Some(error.clone()),
+        });
     }
-
-    let total = resp.content_length().unwrap_or(0);
-
-    let mut file = tokio::fs::File::create(&dest)
-        .await
-        .map_err(|e| emit_error(format!("Cannot create file: {e}")).unwrap_err())?;
-
-    let mut downloaded = 0u64;
-    let mut byte_stream = resp.bytes_stream();
-
-    use tokio::io::AsyncWriteExt as _;
-    while let Some(chunk_result) = byte_stream.next().await {
-        let chunk = chunk_result
-            .map_err(|e| emit_error(format!("Download stream error: {e}")).unwrap_err())?;
-
-        file.write_all(&chunk)
-            .await
-            .map_err(|e| emit_error(format!("File write error: {e}")).unwrap_err())?;
-
-        downloaded += chunk.len() as u64;
-        let percent = if total > 0 {
-            downloaded as f32 / total as f32 * 100.0
-        } else {
-            0.0
-        };
-
-        let _ = app.emit(
-            "download-progress",
-            DownloadProgressPayload {
-                filename: filename.clone(),
-                downloaded,
-                total,
-                percent,
-                done: false,
-                error: None,
-            },
-        );
-    }
-
-    file.flush()
-        .await
-        .map_err(|e| emit_error(format!("Flush error: {e}")).unwrap_err())?;
-
-    let final_path = dest.to_string_lossy().to_string();
-
-    let _ = app.emit(
-        "download-progress",
-        DownloadProgressPayload {
-            filename: filename.clone(),
-            downloaded,
-            total,
-            percent: 100.0,
-            done: true,
-            error: None,
-        },
-    );
-
-    println!("[download_model] Saved to: {final_path}");
-    Ok(final_path)
+    // Preserve the selected model directory; downloaded files are separately
+    // enumerated from the app data directory.
+    let _ = state;
+    result
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1113,15 +950,6 @@ pub async fn connect_model(
         .to_string_lossy()
         .to_string();
 
-    // Point model_path at this directory.
-    {
-        let mut mp = state
-            .model_path
-            .write()
-            .map_err(|e| format!("model_path lock: {e}"))?;
-        *mp = dir.clone();
-    }
-
     let model_id = dir.to_string_lossy().to_string();
     let mut builder =
         GgufModelBuilder::new(model_id, vec![filename.clone()]).with_logging();
@@ -1140,15 +968,23 @@ pub async fn connect_model(
         }
     }
 
+    let mut model_guard = state.model.lock().await;
     let model = builder
         .build()
         .await
         .map_err(|e| format!("Failed to load model: {e}"))?;
 
+    *model_guard = Some(model);
+    // Point model_path at this directory.
     {
-        let mut guard = state.model.lock().await;
-        *guard = Some(model);
+        let mut mp = state
+            .model_path
+            .write()
+            .map_err(|e| format!("model_path lock: {e}"))?;
+        *mp = dir.clone();
     }
+
+
 
     {
         let mut cf = state
@@ -1186,27 +1022,30 @@ pub async fn disconnect_model(state: tauri::State<'_, AppState>) -> Result<(), S
 #[tauri::command]
 pub async fn restart_ai_engine(state: tauri::State<'_, AppState>) -> Result<String, String> {
     state.cancel_current_response.store(true, Ordering::Relaxed);
-    {
-        let mut active_request = state
-            .active_request_id
-            .lock()
-            .map_err(|e| format!("Active request lock failed: {e}"))?;
-        *active_request = None;
+    // Let the request release its own slot before unloading its model. In
+    // particular, a remote request does not hold the local model mutex.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if state.active_request_id.lock().map_err(|e| e.to_string())?.is_none() {
+            break;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err("The response is still stopping. Try restarting again shortly.".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
+    let _restart = start_request(&state, "engine-restart")?;
     {
         let mut guard = state.model.lock().await;
         *guard = None;
     }
-    {
-        let mut cf = state
-            .connected_model_file
-            .write()
-            .map_err(|e| format!("connected_model_file lock: {e}"))?;
-        *cf = None;
+    // load_model uses the connected filename to preserve the user's choice
+    // when the directory contains several models.
+    let result = load_model(state.clone(), None).await;
+    if result.is_err() {
+        *state.connected_model_file.write().map_err(|e| e.to_string())? = None;
     }
-    state.cancel_current_response.store(false, Ordering::Relaxed);
-
-    load_model(state, None).await
+    result
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1220,6 +1059,9 @@ pub fn delete_model(
 ) -> Result<(), String> {
     let path = PathBuf::from(&file_path);
 
+    if !path.is_file() || !path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("gguf")) {
+        return Err("Only a GGUF model file can be deleted.".into());
+    }
     let filename = path
         .file_name()
         .and_then(|n| n.to_str())
@@ -1286,9 +1128,14 @@ pub fn get_rag_config(state: tauri::State<'_, AppState>) -> Result<crate::RagCon
 
 #[tauri::command]
 pub fn save_rag_config(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     config: crate::RagConfig,
 ) -> Result<(), String> {
+    config.validate()?;
+    let path = app.path().app_config_dir().map_err(|e| e.to_string())?.join("rag-config.json");
+    std::fs::create_dir_all(path.parent().ok_or("Invalid config directory")?).map_err(|e| e.to_string())?;
+    std::fs::write(path, serde_json::to_vec_pretty(&config).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     let mut cfg = state
         .rag_config
         .write()
@@ -1299,4 +1146,38 @@ pub fn save_rag_config(
         cfg.chunk_size, cfg.chunk_overlap, cfg.top_k, cfg.show_context
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn state() -> AppState {
+        AppState {
+            model_path: std::sync::RwLock::new(PathBuf::new()), model: tokio::sync::Mutex::new(None),
+            active_request_id: std::sync::Mutex::new(None), cancel_current_response: std::sync::atomic::AtomicBool::new(false),
+            rag_config: std::sync::RwLock::new(crate::RagConfig::default()),
+            connected_model_file: std::sync::RwLock::new(None),
+        }
+    }
+    #[test]
+    fn failed_requests_release_the_slot_and_duplicate_requests_are_rejected() {
+        let state = state();
+        let request = start_request(&state, "first").unwrap();
+        assert!(start_request(&state, "second").is_err());
+        state.cancel_current_response.store(true, Ordering::Relaxed);
+        drop(request);
+        assert!(state.active_request_id.lock().unwrap().is_none());
+        assert!(!state.cancel_current_response.load(Ordering::Relaxed));
+        assert!(start_request(&state, "third").is_ok());
+    }
+    #[test]
+    fn rag_config_rejects_settings_that_can_overflow_or_stall_chunking() {
+        let mut config = crate::RagConfig::default();
+        config.top_k = 0;
+        assert!(config.validate().is_err());
+        config.top_k = 8; config.chunk_overlap = config.chunk_size;
+        assert!(config.validate().is_err());
+        config.chunk_size = usize::MAX;
+        assert!(config.validate().is_err());
+    }
 }

@@ -124,7 +124,7 @@ fn provider_defaults(kind: &AiProviderKind) -> (Option<String>, Option<String>) 
         ),
         AiProviderKind::Anthropic => (
             Some("https://api.anthropic.com/v1".to_string()),
-            Some("claude-3-5-haiku-latest".to_string()),
+            Some("claude-haiku-4-5-20251001".to_string()),
         ),
         AiProviderKind::GoogleGemini => (
             Some("https://generativelanguage.googleapis.com/v1beta".to_string()),
@@ -195,7 +195,7 @@ fn delete_api_key(provider_id: &str) -> Result<(), String> {
 }
 
 fn secure_storage_available() -> bool {
-    keyring_entry("__probe__").is_ok()
+    matches!(keyring_entry("__probe__").map(|entry| entry.get_password()), Ok(Ok(_)) | Ok(Err(keyring::Error::NoEntry)))
 }
 
 fn read_store(app: &AppHandle) -> ProviderStore {
@@ -215,13 +215,13 @@ fn read_store(app: &AppHandle) -> ProviderStore {
     if !store
         .providers
         .iter()
-        .any(|provider| provider.id == store.active_provider_id)
+        .any(|provider| provider.id == store.active_provider_id && provider.enabled)
     {
         store.active_provider_id = LOCAL_PROVIDER_ID.to_string();
     }
 
     for provider in &mut store.providers {
-        provider.api_key_set = read_api_key(&provider.id).is_some() || provider.api_key_set;
+        provider.api_key_set = read_api_key(&provider.id).is_some();
     }
 
     store
@@ -260,7 +260,19 @@ fn validate_provider(config: &AiProviderConfigInput) -> Result<(), String> {
         return Err("Temperature must be between 0 and 2.".to_string());
     }
 
+    if config.id.as_deref() == Some(LOCAL_PROVIDER_ID) && config.provider != AiProviderKind::Local {
+        return Err("The local profile cannot be changed into a remote provider.".into());
+    }
+    if config.provider == AiProviderKind::Local && (!config.enabled || config.id.as_deref().is_some_and(|id| id != LOCAL_PROVIDER_ID)) {
+        return Err("The local profile must stay enabled and use its reserved ID.".into());
+    }
     if config.provider != AiProviderKind::Local {
+        let (default_base, _) = provider_defaults(&config.provider);
+        let raw = config.base_url.as_deref().filter(|v| !v.trim().is_empty()).or(default_base.as_deref()).unwrap_or_default();
+        let url = reqwest::Url::parse(raw.trim()).map_err(|_| "Enter a valid HTTP or HTTPS base URL.")?;
+        if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() || !url.username().is_empty() || url.password().is_some() || url.query().is_some() || url.fragment().is_some() {
+            return Err("Use an HTTP or HTTPS base URL without embedded credentials, query parameters, or fragments.".into());
+        }
         let (_, default_model) = provider_defaults(&config.provider);
         let model = config.model.as_deref().or(default_model.as_deref());
         if model.unwrap_or_default().trim().is_empty() {
@@ -360,7 +372,8 @@ fn api_key_for(config: &AiProviderConfig) -> Result<String, String> {
         AiProviderKind::OllamaLocal
         | AiProviderKind::OllamaRemote
         | AiProviderKind::LmStudio
-        | AiProviderKind::LmStudioRemote => {
+        | AiProviderKind::LmStudioRemote
+        | AiProviderKind::CustomOpenAiCompatible => {
             Ok(read_api_key(&config.id).unwrap_or_default())
         }
         AiProviderKind::Local => Ok(String::new()),
@@ -434,7 +447,7 @@ async fn openai_compatible_chat(
     let status = resp.status();
     let text = resp.text().await.map_err(|e| format!("Cannot read provider response: {e}"))?;
     if !status.is_success() {
-        return Err(format!("Provider returned HTTP {status}: {text}"));
+        return Err(format!("Provider returned HTTP {status}. Check the model, endpoint, and credentials."));
     }
 
     let parsed: Value = serde_json::from_str(&text)
@@ -490,7 +503,7 @@ async fn anthropic_chat(
     let status = resp.status();
     let text = resp.text().await.map_err(|e| format!("Cannot read Anthropic response: {e}"))?;
     if !status.is_success() {
-        return Err(format!("Anthropic returned HTTP {status}: {text}"));
+        return Err(format!("Anthropic returned HTTP {status}. Check the model and credentials."));
     }
 
     let parsed: Value = serde_json::from_str(&text)
@@ -511,10 +524,9 @@ async fn gemini_chat(
     history: &[CloudHistoryMessage],
 ) -> Result<String, String> {
     let url = format!(
-        "{}/models/{}:generateContent?key={}",
+        "{}/models/{}:generateContent",
         base_url(config)?,
-        model(config)?,
-        api_key
+        model(config)?
     );
 
     let mut transcript = String::new();
@@ -534,15 +546,16 @@ async fn gemini_chat(
     let resp = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
+        .header("x-goog-api-key", api_key)
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("Gemini request failed: {e}"))?;
+        .map_err(|e| format!("Gemini request failed: {}", e.without_url()))?;
 
     let status = resp.status();
     let text = resp.text().await.map_err(|e| format!("Cannot read Gemini response: {e}"))?;
     if !status.is_success() {
-        return Err(format!("Gemini returned HTTP {status}: {text}"));
+        return Err(format!("Gemini returned HTTP {status}. Check the model and credentials."));
     }
 
     let parsed: Value = serde_json::from_str(&text)
@@ -556,6 +569,7 @@ async fn gemini_chat(
 async fn ollama_chat(
     client: &reqwest::Client,
     config: &AiProviderConfig,
+    api_key: &str,
     system_prompt: &str,
     prompt: &str,
     history: &[CloudHistoryMessage],
@@ -570,7 +584,7 @@ async fn ollama_chat(
 
     let resp = client
         .post(url)
-        .header(CONTENT_TYPE, "application/json")
+        .headers(bearer_headers(config, api_key)?)
         .json(&body)
         .send()
         .await
@@ -579,7 +593,7 @@ async fn ollama_chat(
     let status = resp.status();
     let text = resp.text().await.map_err(|e| format!("Cannot read Ollama response: {e}"))?;
     if !status.is_success() {
-        return Err(format!("Ollama returned HTTP {status}: {text}"));
+        return Err(format!("Ollama returned HTTP {status}. Check the endpoint and installed model."));
     }
 
     let parsed: Value = serde_json::from_str(&text)
@@ -624,7 +638,7 @@ async fn send_chat(
             gemini_chat(&client, config, &api_key, system_prompt, prompt, history).await
         }
         AiProviderKind::OllamaLocal | AiProviderKind::OllamaRemote => {
-            ollama_chat(&client, config, system_prompt, prompt, history).await
+            ollama_chat(&client, config, &api_key, system_prompt, prompt, history).await
         }
         AiProviderKind::Local => unreachable!(),
     }
@@ -639,7 +653,8 @@ async fn test_provider(config: &AiProviderConfig) -> Result<String, String> {
                 .build()
                 .map_err(|e| format!("Cannot create HTTP client: {e}"))?;
             let url = format!("{}/api/tags", base_url(config)?);
-            let resp = client.get(url).send().await.map_err(|e| format!("Ollama test failed: {e}"))?;
+            let key = api_key_for(config)?;
+            let resp = client.get(url).headers(bearer_headers(config, &key)?).send().await.map_err(|e| format!("Ollama test failed: {e}"))?;
             if resp.status().is_success() {
                 Ok("Ollama remote connection succeeded.".to_string())
             } else {
@@ -652,8 +667,8 @@ async fn test_provider(config: &AiProviderConfig) -> Result<String, String> {
                 .timeout(Duration::from_secs(config.timeout_secs.max(1)))
                 .build()
                 .map_err(|e| format!("Cannot create HTTP client: {e}"))?;
-            let url = format!("{}/models?key={}", base_url(config)?, api_key);
-            let resp = client.get(url).send().await.map_err(|e| format!("Gemini test failed: {e}"))?;
+            let url = format!("{}/models", base_url(config)?);
+            let resp = client.get(url).header("x-goog-api-key", api_key).send().await.map_err(|e| format!("Gemini test failed: {}", e.without_url()))?;
             if resp.status().is_success() {
                 Ok("Gemini connection succeeded.".to_string())
             } else {
@@ -730,13 +745,16 @@ pub fn save_ai_provider_config(
         write_api_key(&config.id, incoming_key.trim())?;
         config.api_key_set = true;
     } else {
-        config.api_key_set = read_api_key(&config.id).is_some() || config.api_key_set;
+        config.api_key_set = read_api_key(&config.id).is_some();
     }
 
     if let Some(idx) = store.providers.iter().position(|provider| provider.id == config.id) {
         store.providers[idx] = config.clone();
     } else {
         store.providers.push(config.clone());
+    }
+    if !config.enabled && store.active_provider_id == config.id {
+        store.active_provider_id = LOCAL_PROVIDER_ID.to_string();
     }
 
     write_store(&app, &store)?;
@@ -764,6 +782,9 @@ pub fn set_active_ai_provider(app: AppHandle, provider_id: String) -> Result<Str
     if !store.providers.iter().any(|provider| provider.id == provider_id) {
         return Err("Provider does not exist.".to_string());
     }
+    if !store.providers.iter().any(|provider| provider.id == provider_id && provider.enabled) {
+        return Err("Enable this provider before making it active.".into());
+    }
     store.active_provider_id = provider_id.clone();
     write_store(&app, &store)?;
     Ok(provider_id)
@@ -772,6 +793,7 @@ pub fn set_active_ai_provider(app: AppHandle, provider_id: String) -> Result<Str
 #[tauri::command]
 pub async fn test_ai_provider_connection(
     app: AppHandle,
+    state: tauri::State<'_, AppState>,
     provider_id: String,
 ) -> Result<ProviderTestResult, String> {
     let store = read_store(&app);
@@ -780,6 +802,14 @@ pub async fn test_ai_provider_connection(
         .into_iter()
         .find(|provider| provider.id == provider_id)
         .ok_or_else(|| "Provider does not exist.".to_string())?;
+
+    if config.provider == AiProviderKind::Local {
+        let ready = state.model.lock().await.is_some();
+        return Ok(ProviderTestResult {
+            ok: ready,
+            message: if ready { "A local GGUF model is connected." } else { "Connect a local GGUF model before testing inference." }.into(),
+        });
+    }
 
     match test_provider(&config).await {
         Ok(message) => Ok(ProviderTestResult { ok: true, message }),
@@ -790,12 +820,17 @@ pub async fn test_ai_provider_connection(
 #[tauri::command]
 pub async fn chat_cloud(
     app: AppHandle,
+    state: tauri::State<'_, AppState>,
     prompt: String,
     history: Vec<CloudHistoryMessage>,
     request_id: String,
 ) -> Result<String, String> {
+    let _request = crate::commands::start_request(&state, &request_id)?;
     let config = active_provider(&app)?;
-    let response = send_chat(&config, general_system_prompt(), &prompt, &history).await?;
+    let response = tokio::select! {
+        result = send_chat(&config, general_system_prompt(), &prompt, &history) => result?,
+        _ = crate::commands::wait_for_cancel(&state) => "Generation stopped.".to_owned(),
+    };
     let _ = app.emit(
         "chat-token",
         serde_json::json!({ "requestId": request_id, "token": "", "done": true }),
@@ -810,7 +845,9 @@ pub async fn chat_cloud_rag(
     prompt: String,
     history: Vec<CloudHistoryMessage>,
     request_id: String,
+    source_path: String,
 ) -> Result<String, String> {
+    let _request = crate::commands::start_request(&state, &request_id)?;
     let db_dir = app
         .path()
         .app_data_dir()
@@ -825,7 +862,8 @@ pub async fn chat_cloud_rag(
         .map_err(|e| format!("rag_config lock: {e}"))?
         .top_k;
 
-    let chunks = crate::rag::query_similar(&prompt, &db_dir, top_k).await?;
+    let source = crate::rag::canonical_source(&source_path);
+    let chunks = crate::rag::query_similar(&prompt, &db_dir, top_k, Some(&source)).await?;
     if chunks.is_empty() {
         return Err(format!(
             "RAG Error: 0 matching chunks from '{}'. The documents table may be empty.",
@@ -835,7 +873,13 @@ pub async fn chat_cloud_rag(
 
     let config = active_provider(&app)?;
     let system_prompt = rag_system_prompt(&chunks);
-    let response = send_chat(&config, &system_prompt, &prompt, &history).await?;
+    let mut response = tokio::select! {
+        result = send_chat(&config, &system_prompt, &prompt, &history) => result?,
+        _ = crate::commands::wait_for_cancel(&state) => return Ok("Generation stopped.".into()),
+    };
+    if state.rag_config.read().map_err(|e| e.to_string())?.show_context {
+        response.push_str(&crate::rag::context_appendix(&chunks));
+    }
     let _ = app.emit(
         "chat-token",
         serde_json::json!({ "requestId": request_id, "token": "", "done": true }),

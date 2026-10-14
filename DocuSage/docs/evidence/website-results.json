@@ -1,0 +1,24 @@
+{
+  "date": "2026-10-14T17:10:00.663Z",
+  "scope": "Local production preview; network timings are not a public-host benchmark.",
+  "results": [
+    {
+      "name": "desktop",
+      "width": 1440,
+      "horizontalOverflow": false,
+      "layoutShift": 0.011005432098765432,
+      "transferredBytes": 546694,
+      "resourceRequests": 19,
+      "brokenImages": []
+    },
+    {
+      "name": "mobile",
+      "width": 390,
+      "horizontalOverflow": false,
+      "layoutShift": 0.03873557634714589,
+      "transferredBytes": 546694,
+      "resourceRequests": 19,
+      "brokenImages": []
+    }
+  ]
+}
