@@ -46,6 +46,19 @@ if ($nsis.Count -ne 1 -or $msi.Count -ne 1) { throw 'Expected exactly one instal
 $originalAppData = $env:APPDATA
 $originalLocalAppData = $env:LOCALAPPDATA
 try {
+    # The MSI check must run first: Tauri's AppSearch ignores a custom INSTALLDIR
+    # when any earlier DocuSage install (including the NSIS one) is registered,
+    # so running NSIS first makes the MSI install into the NSIS directory.
+    $msiDir = Join-Path $env:RUNNER_TEMP 'docusage-msi-installed'
+    $log = Join-Path $evidence 'msi-install.log'
+    $install = Start-Process msiexec.exe -ArgumentList "/i `"$($msi[0].FullName)`" /qn /norestart INSTALLDIR=`"$msiDir`" /L*v `"$log`"" -Wait -PassThru
+    if ($install.ExitCode -notin @(0, 3010)) { throw "MSI installation failed: $($install.ExitCode)" }
+    Test-InstalledApp $msiDir 'msi'
+    $env:APPDATA = $originalAppData
+    $env:LOCALAPPDATA = $originalLocalAppData
+    $uninstall = Start-Process msiexec.exe -ArgumentList "/x `"$($msi[0].FullName)`" /qn /norestart" -Wait -PassThru
+    if ($uninstall.ExitCode -notin @(0, 3010)) { throw "MSI uninstall failed: $($uninstall.ExitCode)" }
+
     $nsisDir = Join-Path $env:RUNNER_TEMP 'docusage-nsis-installed'
     $install = Start-Process -FilePath $nsis[0].FullName -ArgumentList "/S /D=$nsisDir" -Wait -PassThru
     if ($install.ExitCode -ne 0) { throw "NSIS installation failed: $($install.ExitCode)" }
@@ -56,16 +69,6 @@ try {
     if ($uninstaller.Count -ne 1) { throw 'NSIS uninstaller is missing' }
     $uninstall = Start-Process -FilePath $uninstaller[0].FullName -ArgumentList "/S _?=$nsisDir" -Wait -PassThru
     if ($uninstall.ExitCode -ne 0) { throw "NSIS uninstall failed: $($uninstall.ExitCode)" }
-
-    $msiDir = Join-Path $env:RUNNER_TEMP 'docusage-msi-installed'
-    $log = Join-Path $evidence 'msi-install.log'
-    $install = Start-Process msiexec.exe -ArgumentList "/i `"$($msi[0].FullName)`" /qn /norestart INSTALLDIR=`"$msiDir`" /L*v `"$log`"" -Wait -PassThru
-    if ($install.ExitCode -notin @(0, 3010)) { throw "MSI installation failed: $($install.ExitCode)" }
-    Test-InstalledApp $msiDir 'msi'
-    $env:APPDATA = $originalAppData
-    $env:LOCALAPPDATA = $originalLocalAppData
-    $uninstall = Start-Process msiexec.exe -ArgumentList "/x `"$($msi[0].FullName)`" /qn /norestart" -Wait -PassThru
-    if ($uninstall.ExitCode -notin @(0, 3010)) { throw "MSI uninstall failed: $($uninstall.ExitCode)" }
     @{ completed = $true; scope = 'Installation, startup, single instance, and visible native window; no inference or interactive UI certification'; checks = $results.ToArray() } |
         ConvertTo-Json -Depth 5 | Set-Content (Join-Path $evidence 'results.json') -Encoding utf8NoBOM
 } finally {
