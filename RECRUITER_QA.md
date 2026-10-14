@@ -20,17 +20,17 @@ Rust gave me better control over performance, native integration, structured err
 
 The pipeline is straightforward but production-oriented: extract text from PDF files, split that text into chunks, generate embeddings locally with `fastembed`, store the vectors in LanceDB, embed the user question, retrieve the top matching chunks, and then assemble a grounded prompt from those chunks before answer generation.
 
-## 6. What is the hybrid Gemini mode?
+## 6. How does the cloud-assisted mode work?
 
-Hybrid mode keeps indexing, storage, embeddings, and retrieval local, but uses Gemini 2.5 Flash for final answer synthesis. I added this because the local retrieval was working, but smaller local models were still inconsistent at composing high-quality answers from the retrieved context.
+Cloud-assisted mode keeps indexing, storage, embeddings, and retrieval local, but sends only the retrieved excerpts plus the conversation to a provider of the user's choice — Gemini, OpenAI, Anthropic, OpenRouter, Ollama, LM Studio, or any OpenAI-compatible endpoint. I added this because local retrieval was working, but smaller local models were still inconsistent at composing high-quality answers from the retrieved context.
 
 ## 7. How do you handle privacy in this design?
 
-The privacy boundary is explicit. In local mode, everything stays on-device. In hybrid mode, the app still performs ingestion and retrieval locally, and only the retrieved excerpts plus the user question are sent to Gemini. That is a more controlled and explainable privacy model than uploading full documents by default.
+The privacy boundary is explicit. In local mode, everything stays on-device. In cloud-assisted mode, the app still performs ingestion and retrieval locally, and only the retrieved excerpts plus the user question are sent to the chosen provider. That is a more controlled and explainable privacy model than uploading full documents by default.
 
 ## 8. What was the hardest technical challenge?
 
-The hardest part was proving whether the failure was in retrieval or generation. At first the system looked like a broken RAG pipeline, but deeper debugging showed the retriever was returning relevant chunks and the local model was the weaker link. That led directly to the hybrid architecture and stronger retrieval observability.
+The hardest part was proving whether the failure was in retrieval or generation. At first the system looked like a broken RAG pipeline, but deeper debugging showed the retriever was returning relevant chunks and the local model was the weaker link. That led directly to the optional cloud-assisted architecture and stronger retrieval observability.
 
 ## 9. How did you debug hallucination and grounding issues?
 
@@ -38,11 +38,15 @@ I made the retrieval path loud instead of silent. I added explicit logging aroun
 
 ## 10. What are the strongest engineering decisions in this project?
 
-The strongest decisions are the local-first architecture, the optional hybrid upgrade instead of a full cloud dependency, and using Tauri plus Rust for a native-feeling desktop product. Those choices keep the project grounded in real-world tradeoffs between privacy, performance, cost, and answer quality.
+The strongest decisions are the local-first architecture, the optional cloud-assisted upgrade instead of a full cloud dependency, and using Tauri plus Rust for a native-feeling desktop product. Those choices keep the project grounded in real-world tradeoffs between privacy, performance, cost, and answer quality.
+
+## 10. How is the release pipeline verified?
+
+The release workflow builds both Windows installer formats, runs the React and Rust regression suites, installs each package, and confirms the installed app starts, enforces single-instance behavior, and shows a native window before a release is published, with SHA-256 checksums attached. Website deploys run browser tests, including accessibility checks, before publishing.
 
 ## 11. What would you improve next?
 
-I would add stronger automated evaluation for retrieval quality, support more document types, improve release artifact consistency, and expand observability around prompt assembly and answer quality. I would also make the hybrid routing more configurable so users can choose local-only, hybrid, or quality-first behavior explicitly.
+I would add stronger automated evaluation for retrieval quality, support more document types, improve release artifact consistency, and expand observability around prompt assembly and answer quality. I would also make the routing more configurable so users can choose local-only, cloud-assisted, or quality-first behavior explicitly.
 
 ## 12. What does this project say about your engineering style?
 
@@ -50,7 +54,7 @@ It shows that I like building end-to-end systems rather than isolated demos. I a
 
 ## 13. How would you explain this project in one sentence?
 
-DocuSage is a local-first desktop AI assistant that turns private documents into a conversational knowledge base, with an optional hybrid reasoning layer for better answer quality.
+DocuSage is a local-first desktop AI assistant that turns private documents into a conversational knowledge base, with an optional cloud-assisted layer for better answer quality.
 
 ## 14. How would you summarize this project for a recruiter?
 

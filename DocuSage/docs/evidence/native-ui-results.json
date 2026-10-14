@@ -1,0 +1,22 @@
+{
+  "completed": true,
+  "fixtureMessagesAreAuthored": true,
+  "checks": [
+    {
+      "name": "native Markdown and code copying reach the system clipboard",
+      "result": "passed"
+    },
+    {
+      "name": "six appearance themes render and the selected theme survives reload",
+      "result": "passed"
+    },
+    {
+      "name": "drafts and chat search work across native sessions",
+      "result": "passed"
+    },
+    {
+      "name": "custom global shortcuts persist and invalid replacements preserve the valid shortcut",
+      "result": "passed"
+    }
+  ]
+}

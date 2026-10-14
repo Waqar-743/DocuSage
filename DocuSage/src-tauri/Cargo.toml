@@ -1,6 +1,6 @@
 [package]
 name = "docusage"
-version = "0.5.3"
+version = "0.5.4"
 description = "Private PDF chat and local AI for your desktop"
 authors = ["Waqar Ahmed"]
 edition = "2021"

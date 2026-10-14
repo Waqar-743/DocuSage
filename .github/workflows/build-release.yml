@@ -1,61 +1,89 @@
-name: Build & Upload Windows Installer
+name: Verify & Publish Windows Installers
 
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to build and upload assets for
+        description: Existing release tag to build and publish
         required: true
+        type: string
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
 
 permissions:
   contents: write
 
-jobs:
-  build-windows:
-    runs-on: windows-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+concurrency:
+  group: windows-release-${{ inputs.tag }}
+  cancel-in-progress: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - name: Checkout the release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - name: Check tag, version, and release notes
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          $version = (Get-Content DocuSage/package.json -Raw | ConvertFrom-Json).version
+          if ($env:RELEASE_TAG -ne "v$version") { throw 'Tag does not match the application version' }
+          if (-not (Test-Path "DocuSage/docs/releases/$env:RELEASE_TAG.md")) { throw 'Release notes are missing' }
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: DocuSage/package-lock.json
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install Protobuf compiler
-        uses: arduino/setup-protoc@v3
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: arduino/setup-protoc@v3
         with:
           version: "28.x"
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@v2
         with:
+          shared-key: windows
           workspaces: DocuSage/src-tauri -> target
-
-      - name: Install frontend dependencies
-        working-directory: DocuSage
-        run: npm ci
-
-      - name: Verify frontend
+      - name: Install and test frontend
         working-directory: DocuSage
         run: |
+          npm ci
           npm test
-          npm run build
-
-      - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build production Windows installers
+        working-directory: DocuSage
+        run: npm run tauri build -- --ci
+      - name: Run Rust regression tests
+        working-directory: DocuSage/src-tauri
+        run: cargo test --locked --release --lib --features tauri/custom-protocol
+      - name: Install and launch both Windows packages
+        shell: pwsh
+        run: ./.github/scripts/test-windows-installers.ps1
+      - name: Retain installer verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          projectPath: DocuSage
-          tagName: ${{ inputs.tag }}
-          releaseName: "DocuSage ${{ inputs.tag }}"
-          releaseBody: ""
-          releaseDraft: false
-          prerelease: false
-          includeUpdaterJson: false
+          name: windows-installer-verification
+          path: ${{ runner.temp }}/docusage-installer-evidence
+          if-no-files-found: warn
+      - name: Publish the verified installers
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          $assets = @(Get-ChildItem DocuSage/src-tauri/target/release/bundle/nsis/*-setup.exe)
+          $assets += @(Get-ChildItem DocuSage/src-tauri/target/release/bundle/msi/*.msi)
+          if ($assets.Count -ne 2) { throw 'Expected one NSIS and one MSI installer' }
+          $checksums = Join-Path $env:RUNNER_TEMP 'SHA256SUMS.txt'
+          $lines = $assets | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name }
+          Set-Content -Path $checksums -Value $lines -Encoding utf8NoBOM
+          gh release create $env:RELEASE_TAG @($assets.FullName) $checksums --repo $env:GITHUB_REPOSITORY --verify-tag --title "DocuSage $env:RELEASE_TAG" --notes-file "DocuSage/docs/releases/$env:RELEASE_TAG.md"
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }

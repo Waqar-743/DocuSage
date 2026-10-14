@@ -36,7 +36,7 @@ It is designed as the assistant that stays beside the work instead. DocuSage sta
 
 Captured from the verified Linux source build. Windows release behavior can differ. See [audit and test evidence](DocuSage/docs/audit.md) for the verification scope.
 
-The current source includes improvements that may not yet be in the published Windows installer.
+Read the release notes for the changes and Windows package checks included in each published version.
 
 <p align="center">
   <img src="DocuSage/public/media/desktop-light.webp" alt="DocuSage light mode dashboard with private RAG document chat" width="100%" />
