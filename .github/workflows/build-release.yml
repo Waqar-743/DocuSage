@@ -23,7 +23,9 @@ concurrency:
 jobs:
   windows:
     runs-on: windows-latest
-    timeout-minutes: 90
+    # LTO + single-codegen-unit release builds of the mistralrs/lancedb
+    # dependency tree exceed the previous 90-minute budget on 2-core runners.
+    timeout-minutes: 240
     env:
       CARGO_BUILD_JOBS: 2
     steps:
