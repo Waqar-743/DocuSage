@@ -12,6 +12,15 @@ export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
   base,
 
+  // Smaller, faster production bundle for the packaged desktop app
+  build: {
+    target: "es2021",
+    minify: "esbuild",
+    cssMinify: "esbuild",
+    sourcemap: false,
+    chunkSizeWarningLimit: 900,
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

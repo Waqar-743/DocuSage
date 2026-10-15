@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Settings, Database, Plus, FileText, Send, Paperclip, AlertCircle, Trash2, X, MessageSquare, Square, CheckCircle, Key, Download, Cpu, HardDrive, Sliders, Link, Link2Off, FolderOpen, RotateCcw, Maximize2, Cloud, Keyboard, ShieldCheck, Eye, EyeOff, Monitor, Power, RefreshCw, Menu, Copy, Check, Search, Command, Palette, Wrench, Minimize2 } from 'lucide-react';
+import { Settings, Database, Plus, FileText, Send, Paperclip, AlertCircle, Trash2, X, MessageSquare, Square, CheckCircle, Key, Download, Cpu, HardDrive, Sliders, Link, Link2Off, FolderOpen, RotateCcw, Maximize2, Cloud, Keyboard, ShieldCheck, Eye, EyeOff, Monitor, Power, RefreshCw, Copy, Check, Search, Command, Palette, Wrench, Minimize2, MoreHorizontal, PanelLeftClose, PanelLeftOpen, KeyRound, Sparkles, CircleUser, Zap } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
@@ -67,7 +67,14 @@ type DownloadProgress = {
   error?: string;
 };
 
-type SettingsTab = 'providers' | 'appearance' | 'shortcuts' | 'advanced' | 'models' | 'downloaded' | 'ragTuning';
+type SettingsTab = 'quickSetup' | 'providers' | 'appearance' | 'shortcuts' | 'advanced' | 'models' | 'downloaded' | 'ragTuning';
+
+type QuickSetupState = {
+  provider: AiProviderKind;
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+};
 
 type ProviderDraft = {
   id?: string;
@@ -276,6 +283,36 @@ const conversationKeyFor = (
 ) => currentMode === 'rag'
   ? `rag:${currentDocId ?? 'none'}`
   : `general:${currentChatId}`;
+
+const KEY_PROVIDERS: AiProviderKind[] = ['openAi', 'anthropic', 'googleGemini', 'openRouter', 'customOpenAiCompatible'];
+
+const MORE_MENU: { key: SettingsTab; label: string }[] = [
+  { key: 'models', label: 'Model Catalog' },
+  { key: 'downloaded', label: 'Downloaded Models' },
+  { key: 'providers', label: 'AI Providers' },
+  { key: 'appearance', label: 'Appearance' },
+  { key: 'shortcuts', label: 'Shortcuts' },
+  { key: 'ragTuning', label: 'RAG Tuning' },
+  { key: 'advanced', label: 'Advanced' },
+];
+
+const SUGGESTIONS: Record<'general' | 'rag', string[]> = {
+  general: [
+    'Summarize this in simple words',
+    'Help me brainstorm ideas',
+    'Explain step by step',
+  ],
+  rag: [
+    'Summarize this document',
+    'What are the key points?',
+    'List any dates, names and numbers',
+  ],
+};
+
+const createQuickSetupState = (provider: AiProviderKind = 'openAi'): QuickSetupState => {
+  const defaults = PROVIDER_DEFAULTS[provider];
+  return { provider, apiKey: '', baseUrl: defaults.baseUrl, model: defaults.model };
+};
 
 const createEmptyChat = (id = DEFAULT_CHAT_ID): GeneralChat => ({
   id,
@@ -536,7 +573,12 @@ export default function App() {
   const [isModelReady, setIsModelReady] = useState(!isTauri());
   const [modelStatus, setModelStatus] = useState<string>(isTauri() ? 'Model not loaded' : 'Browser preview mode');
   const [showSettings, setShowSettings] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>('providers');
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('quickSetup');
+  const [navMenuOpen, setNavMenuOpen] = useState(false);
+  const [quickSetup, setQuickSetup] = useState<QuickSetupState>(() => createQuickSetupState('openAi'));
+  const [isQuickBusy, setIsQuickBusy] = useState(false);
+  const [quickStatus, setQuickStatus] = useState<{ ok: boolean; message: string } | null>(null);
+  const [showQuickKey, setShowQuickKey] = useState(false);
   const [geminiKey, setGeminiKey] = useState<string>(() => {
     try { return window.localStorage.getItem(GEMINI_KEY_STORAGE) ?? ''; } catch { return ''; }
   });
@@ -715,6 +757,76 @@ export default function App() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
+  const navMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!navMenuOpen) return;
+    const onPointerDown = (event: MouseEvent | TouchEvent) => {
+      if (!navMenuRef.current?.contains(event.target as globalThis.Node)) {
+        setNavMenuOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setNavMenuOpen(false);
+    };
+    window.addEventListener('mousedown', onPointerDown);
+    window.addEventListener('touchstart', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('mousedown', onPointerDown);
+      window.removeEventListener('touchstart', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [navMenuOpen]);
+
+  const openSettingsTab = (tab: SettingsTab) => {
+    setNavMenuOpen(false);
+    setSettingsTab(tab);
+    setShowSettings(true);
+  };
+
+  // One-step API key onboarding: same key only needs to be pasted once.
+  // Save → test → activate, and surface immediate success/failure feedback.
+  const runQuickSetup = async () => {
+    const key = quickSetup.apiKey.trim();
+    if (isQuickBusy) return;
+    setQuickStatus(null);
+    if (!key) {
+      setQuickStatus({ ok: false, message: 'Paste your API key first, then press Test & Save.' });
+      return;
+    }
+    setIsQuickBusy(true);
+    try {
+      const existing = providerConfigs.find(provider => provider.provider === quickSetup.provider && provider.id !== 'local');
+      const draft = existing ? providerToDraft(existing) : createProviderDraft(quickSetup.provider);
+      draft.name = PROVIDER_LABELS[quickSetup.provider];
+      draft.enabled = true;
+      draft.baseUrl = quickSetup.baseUrl.trim() || PROVIDER_DEFAULTS[quickSetup.provider].baseUrl;
+      draft.model = quickSetup.model.trim() || PROVIDER_DEFAULTS[quickSetup.provider].model;
+      draft.apiKey = key;
+      const saved = await saveAiProviderConfig(draftToInput(draft));
+      const result = await testAiProviderConnection(saved.id);
+      setQuickStatus(result);
+      if (result.ok) {
+        await setActiveAiProvider(saved.id);
+        setQuickSetup(prev => ({ ...prev, apiKey: '' }));
+        await refreshProviderConfigs();
+        showSuccess('Key works — DocuSage is ready to chat');
+      } else {
+        showError(result.message);
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setQuickStatus({ ok: false, message: errorMessage });
+    } finally {
+      setIsQuickBusy(false);
+    }
+  };
+
+  const applySuggestion = (text: string) => {
+    updateInputValue(text);
+    textareaRef.current?.focus();
+  };
+
   const showError = (msg: string) => {
     setToastError(msg);
     setTimeout(() => setToastError(null), 5000);
@@ -870,7 +982,7 @@ export default function App() {
     }).then(fn => { if (disposed) fn(); else unlisteners.push(fn); }).catch(() => {});
 
     listen('assistant-open-settings', () => {
-      setSettingsTab('providers');
+      setSettingsTab('quickSetup');
       setShowSettings(true);
       setTimeout(() => textareaRef.current?.focus(), 50);
     }).then(fn => { if (disposed) fn(); else unlisteners.push(fn); }).catch(() => {});
@@ -1298,8 +1410,9 @@ export default function App() {
               onClick={() => setSidebarCollapsed(prev => !prev)}
               className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-white/10 text-zinc-400 hover:text-zinc-100 hover:bg-white/10' : 'border-zinc-200 text-zinc-500 hover:text-zinc-800 hover:bg-zinc-100'}`}
               title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
+              aria-label={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
             >
-              <Menu size={16} />
+              {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
             </button>
           )}
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={`shrink-0 ${isDark ? 'text-white' : 'text-[#0F2854]'}`}>
@@ -1309,7 +1422,60 @@ export default function App() {
           {!isCompactMode && <span className="font-semibold text-base tracking-normal">DocuSage</span>}
         </div>
 
-        <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          {/* Primary navigation: sits at the center of the header and extends right. */}
+          {!isCompactMode && (
+            <nav aria-label="Primary" className="mx-auto hidden items-center gap-1 sm:flex">
+              {([
+                { key: 'general', label: 'Chat', icon: <MessageSquare size={15} />, onClick: () => setMode('general') },
+                { key: 'rag', label: 'Documents', icon: <FileText size={15} />, onClick: () => { setMode('rag'); setSidebarTab('docs'); } },
+              ] as const).map(item => (
+                <button
+                  key={item.key}
+                  onClick={item.onClick}
+                  aria-current={mode === item.key ? 'page' : undefined}
+                  className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                    mode === item.key
+                      ? isDark ? 'bg-white/10 text-white' : 'bg-[#0F2854]/10 text-[#0F2854]'
+                      : isDark ? 'text-zinc-400 hover:bg-white/5 hover:text-zinc-100' : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900'
+                  }`}
+                >
+                  {item.icon} {item.label}
+                </button>
+              ))}
+              <button
+                onClick={() => openSettingsTab('quickSetup')}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${isDark ? 'text-zinc-400 hover:bg-white/5 hover:text-zinc-100' : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900'}`}
+              >
+                <KeyRound size={15} /> AI Setup
+              </button>
+              <div className="relative" ref={navMenuRef}>
+                <button
+                  onClick={() => setNavMenuOpen(open => !open)}
+                  aria-haspopup="menu"
+                  aria-expanded={navMenuOpen}
+                  aria-label="More features"
+                  className={`p-2 rounded-lg transition-colors ${isDark ? 'text-zinc-400 hover:bg-white/5 hover:text-zinc-100' : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900'}`}
+                >
+                  <MoreHorizontal size={16} />
+                </button>
+                {navMenuOpen && (
+                  <div role="menu" className={`absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden rounded-xl border py-1 shadow-2xl ${isDark ? 'border-[#2a2a2c] bg-[#1e1e20]' : 'border-zinc-200 bg-white'}`}>
+                    <button role="menuitem" onClick={handleNewChat} className={`block w-full px-4 py-2 text-left text-sm transition-colors ${isDark ? 'text-zinc-300 hover:bg-white/10' : 'text-zinc-700 hover:bg-zinc-50'}`}>New chat</button>
+                    <button role="menuitem" onClick={() => { setNavMenuOpen(false); handlePickFile(); }} className={`block w-full px-4 py-2 text-left text-sm transition-colors ${isDark ? 'text-zinc-300 hover:bg-white/10' : 'text-zinc-700 hover:bg-zinc-50'}`}>Ingest PDF</button>
+                    <div className={`my-1 h-px ${isDark ? 'bg-white/10' : 'bg-zinc-100'}`} />
+                    {MORE_MENU.map(item => (
+                      <button key={item.key} role="menuitem" onClick={() => openSettingsTab(item.key)} className={`block w-full px-4 py-2 text-left text-sm transition-colors ${isDark ? 'text-zinc-300 hover:bg-white/10' : 'text-zinc-700 hover:bg-zinc-50'}`}>
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </nav>
+          )}
+
+          <div className="ml-auto flex min-w-0 items-center gap-2">
           <select
             aria-label="Active AI provider"
             value={activeProviderId}
@@ -1350,7 +1516,7 @@ export default function App() {
           </button>
 
           <button
-            onClick={() => { setSettingsTab('providers'); setShowSettings(true); }}
+            onClick={() => { setSettingsTab('quickSetup'); setShowSettings(true); }}
             className={`p-2 rounded-lg border transition-colors ${isDark ? 'border-white/10 text-zinc-400 hover:text-zinc-100 hover:bg-white/10' : 'border-zinc-200 text-zinc-500 hover:text-zinc-800 hover:bg-zinc-100'}`}
             aria-label="Settings"
             title="Settings"
@@ -1380,6 +1546,7 @@ export default function App() {
           >
             <X size={16} />
           </button>
+          </div>
         </div>
       </header>
 
@@ -1401,6 +1568,7 @@ export default function App() {
             <div className={`flex gap-0.5 px-4 pt-2 border-b shrink-0 overflow-x-auto ${isDark ? 'border-[#2a2a2c]' : 'border-zinc-200'}`}>
               {(
                 [
+                  { key: 'quickSetup', icon: <KeyRound size={13} />, label: 'Quick Setup' },
                   { key: 'providers', icon: <Cloud size={13} />, label: 'AI Providers' },
                   { key: 'appearance', icon: <Palette size={13} />, label: 'Appearance' },
                   { key: 'shortcuts', icon: <Keyboard size={13} />, label: 'Shortcuts' },
@@ -2026,6 +2194,146 @@ export default function App() {
                 </div>
               )}
 
+              {/* ── Quick API key setup ── */}
+              {settingsTab === 'quickSetup' && (
+                <div className="space-y-5">
+                  <div className={`p-4 rounded-xl border ${isDark ? 'bg-[#232325] border-[#2a2a2c]' : 'bg-zinc-50 border-zinc-200'}`}>
+                    <h3 className={`text-sm font-semibold ${isDark ? 'text-zinc-100' : 'text-zinc-900'}`}>Connect an AI in three steps</h3>
+                    <p className={`text-xs mt-1 leading-relaxed ${isDark ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                      Pick a provider, paste your API key, press <strong>Test &amp; Save</strong>. If the key works, DocuSage configures everything else for you.
+                    </p>
+                  </div>
+
+                  {providerConfigs.filter(provider => provider.id !== 'local' && provider.apiKeySet).length > 0 && (
+                    <div className={`flex flex-wrap items-center gap-2 text-xs p-3 rounded-xl border ${isDark ? 'bg-emerald-500/5 border-emerald-500/30 text-emerald-300' : 'bg-emerald-50 border-emerald-200 text-emerald-700'}`}>
+                      <CheckCircle size={14} />
+                      Keys already saved for:
+                      {providerConfigs.filter(provider => provider.id !== 'local' && provider.apiKeySet).map(provider => (
+                        <span key={provider.id} className={`px-1.5 py-0.5 rounded font-medium ${isDark ? 'bg-emerald-500/15' : 'bg-emerald-100'}`}>{provider.name}</span>
+                      ))}
+                    </div>
+                  )}
+
+                  <div>
+                    <label htmlFor="quick-provider" className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>1 · Choose provider</label>
+                    <select
+                      id="quick-provider"
+                      value={quickSetup.provider}
+                      onChange={e => { setQuickSetup(createQuickSetupState(e.target.value as AiProviderKind)); setQuickStatus(null); }}
+                      className={`w-full px-3 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c] text-zinc-100 focus:ring-white/30' : 'bg-white border-zinc-200 text-zinc-900 focus:ring-[#0F2854]/30'}`}
+                    >
+                      {KEY_PROVIDERS.map(kind => <option key={kind} value={kind}>{PROVIDER_LABELS[kind]}</option>)}
+                    </select>
+                    {providerKeyLink(quickSetup.provider) && (
+                      <a
+                        href={providerKeyLink(quickSetup.provider) ?? undefined}
+                        onClick={event => {
+                          if (isTauri()) {
+                            event.preventDefault();
+                            const url = providerKeyLink(quickSetup.provider);
+                            if (url) openUrl(url).catch(error => showError(`Could not open browser: ${String(error)}`));
+                          }
+                        }}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={`inline-flex mt-2 text-xs font-medium ${isDark ? 'text-emerald-400 hover:text-emerald-300' : 'text-[#0F2854] hover:text-[#0a1b38]'}`}
+                      >
+                        Get a {PROVIDER_LABELS[quickSetup.provider]} key →
+                      </a>
+                    )}
+                  </div>
+
+                  <div>
+                    <label htmlFor="quick-key" className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>2 · Paste API key</label>
+                    <div className="flex gap-2">
+                      <input
+                        id="quick-key"
+                        type={showQuickKey ? 'text' : 'password'}
+                        autoComplete="off"
+                        value={quickSetup.apiKey}
+                        onChange={e => { setQuickSetup(prev => ({ ...prev, apiKey: e.target.value })); setQuickStatus(null); }}
+                        placeholder="Paste your API key here"
+                        className={`flex-1 px-3 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c] text-zinc-100 placeholder:text-zinc-600 focus:ring-white/30' : 'bg-white border-zinc-200 text-zinc-900 placeholder:text-zinc-400 focus:ring-[#0F2854]/30'}`}
+                      />
+                      <button
+                        onClick={() => setShowQuickKey(prev => !prev)}
+                        className={`p-2.5 rounded-xl border transition-colors ${isDark ? 'border-[#2a2a2c] text-zinc-400 hover:text-zinc-200' : 'border-zinc-200 text-zinc-500 hover:text-zinc-700'}`}
+                        title={showQuickKey ? 'Hide API key' : 'Show API key'}
+                      >
+                        {showQuickKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>3 · Test &amp; go</p>
+                    <button
+                      disabled={isQuickBusy}
+                      onClick={runQuickSetup}
+                      className={`flex w-full items-center justify-center gap-2 py-3 rounded-xl text-sm font-medium transition-colors disabled:opacity-60 ${
+                        isDark ? 'bg-white text-zinc-900 hover:bg-zinc-200' : 'bg-[#0F2854] text-white hover:bg-[#0a1b38]'
+                      }`}
+                    >
+                      {isQuickBusy
+                        ? <><div className="h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" /> Testing…</>
+                        : <><Zap size={16} /> Test &amp; Save</>}
+                    </button>
+
+                    {quickStatus && (
+                      <p className={`mt-3 flex items-start gap-2 rounded-lg px-3 py-2 text-xs ${quickStatus.ok
+                        ? (isDark ? 'bg-emerald-500/10 text-emerald-300' : 'bg-emerald-50 text-emerald-700')
+                        : (isDark ? 'bg-red-500/10 text-red-400' : 'bg-red-50 text-red-600')}
+                      `}>
+                        {quickStatus.ok ? <CheckCircle size={14} className="shrink-0 mt-0.5" /> : <AlertCircle size={14} className="shrink-0 mt-0.5" />}
+                        <span>{quickStatus.ok ? `${quickStatus.message} You can start chatting now.` : quickStatus.message}</span>
+                      </p>
+                    )}
+
+                    {quickStatus?.ok && (
+                      <button
+                        onClick={() => { setShowSettings(false); setMode('general'); }}
+                        className={`mt-3 w-full py-2.5 rounded-xl text-sm font-medium border transition-colors ${isDark ? 'border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10' : 'border-emerald-300 text-emerald-700 hover:bg-emerald-50'}`}
+                      >
+                        Start chatting →
+                      </button>
+                    )}
+                  </div>
+
+                  <p className={`text-xs leading-relaxed ${isDark ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                    Using Ollama, LM Studio or a downloaded local model? No API key is needed —{' '}
+                    <button onClick={() => openSettingsTab('providers')} className={`underline ${isDark ? 'text-emerald-400' : 'text-[#0F2854]'}`}>switch providers here</button>.
+                  </p>
+
+                  <details className={`rounded-xl border px-4 py-3 ${isDark ? 'bg-[#232325] border-[#2a2a2c]' : 'bg-zinc-50 border-zinc-200'}`}>
+                    <summary className={`cursor-pointer select-none text-sm font-medium ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>
+                      Advanced options (optional)
+                    </summary>
+                    <div className="mt-4 grid sm:grid-cols-2 gap-3">
+                      <div className="sm:col-span-2">
+                        <label htmlFor="quick-model" className={`block text-xs font-medium mb-1.5 ${isDark ? 'text-zinc-400' : 'text-zinc-600'}`}>Model</label>
+                        <input
+                          id="quick-model"
+                          value={quickSetup.model}
+                          onChange={e => setQuickSetup(prev => ({ ...prev, model: e.target.value }))}
+                          placeholder={PROVIDER_DEFAULTS[quickSetup.provider].model || 'Model id'}
+                          className={`w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c] text-zinc-100 focus:ring-white/30' : 'bg-white border-zinc-200 text-zinc-900 focus:ring-[#0F2854]/30'}`}
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label htmlFor="quick-baseurl" className={`block text-xs font-medium mb-1.5 ${isDark ? 'text-zinc-400' : 'text-zinc-600'}`}>Base URL</label>
+                        <input
+                          id="quick-baseurl"
+                          value={quickSetup.baseUrl}
+                          onChange={e => setQuickSetup(prev => ({ ...prev, baseUrl: e.target.value }))}
+                          placeholder={PROVIDER_DEFAULTS[quickSetup.provider].baseUrl || 'https://…'}
+                          className={`w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 ${isDark ? 'bg-[#1e1e20] border-[#2a2a2c] text-zinc-100 focus:ring-white/30' : 'bg-white border-zinc-200 text-zinc-900 focus:ring-[#0F2854]/30'}`}
+                        />
+                      </div>
+                    </div>
+                  </details>
+                </div>
+              )}
+
               {/* ── AI Providers ── */}
               {settingsTab === 'providers' && (
                 <div className="space-y-5">
@@ -2343,25 +2651,36 @@ export default function App() {
 
       <div className="flex flex-1 overflow-hidden">
         {!isCompactMode && sidebarCollapsed && (
-          <nav className={`flex w-14 shrink-0 flex-col items-center gap-2 border-r py-3 ${isDark ? 'border-white/10' : 'border-zinc-200'}`}>
-            {[
-              { key: 'chats' as SidebarTab, icon: <MessageSquare size={17} />, title: 'Chats' },
-              { key: 'docs' as SidebarTab, icon: <FileText size={17} />, title: 'Docs' },
-            ].map(item => (
-              <button
-                key={item.key}
-                onClick={() => {
-                  setSidebarCollapsed(false);
-                  setSidebarTab(item.key);
-                  if (item.key === 'chats') setMode('general');
-                  if (item.key === 'docs') setMode('rag');
-                }}
-                className={`p-2 rounded-lg transition-colors ${isDark ? 'text-zinc-400 hover:bg-white/10 hover:text-zinc-100' : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800'}`}
-                title={item.title}
-              >
-                {item.icon}
-              </button>
-            ))}
+          <nav className={`flex w-14 shrink-0 flex-col items-center justify-between border-r py-3 ${isDark ? 'border-white/10' : 'border-zinc-200'}`}>
+            <div className="flex flex-col items-center gap-2">
+              {[
+                { key: 'chats' as SidebarTab, icon: <MessageSquare size={17} />, title: 'Chats' },
+                { key: 'docs' as SidebarTab, icon: <FileText size={17} />, title: 'Docs' },
+              ].map(item => (
+                <button
+                  key={item.key}
+                  onClick={() => {
+                    setSidebarCollapsed(false);
+                    setSidebarTab(item.key);
+                    if (item.key === 'chats') setMode('general');
+                    if (item.key === 'docs') setMode('rag');
+                  }}
+                  className={`p-2 rounded-lg transition-colors ${isDark ? 'text-zinc-400 hover:bg-white/10 hover:text-zinc-100' : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800'}`}
+                  title={item.title}
+                  aria-label={item.title}
+                >
+                  {item.icon}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setSidebarCollapsed(false)}
+              className={`p-2 rounded-lg transition-colors ${isDark ? 'text-zinc-400 hover:bg-white/10 hover:text-zinc-100' : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800'}`}
+              title="Show sidebar"
+              aria-label="Show sidebar"
+            >
+              <PanelLeftOpen size={17} />
+            </button>
           </nav>
         )}
 
@@ -2382,8 +2701,9 @@ export default function App() {
                   onClick={() => setSidebarCollapsed(true)}
                   className={`p-2.5 rounded-lg border transition-colors ${isDark ? 'border-white/10 text-zinc-400 hover:bg-white/10 hover:text-zinc-100' : 'border-zinc-200 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800'}`}
                   title="Collapse sidebar"
+                  aria-label="Collapse sidebar"
                 >
-                  <Menu size={16} />
+                  <PanelLeftClose size={16} />
                 </button>
               </div>
 
@@ -2654,16 +2974,40 @@ export default function App() {
                   {!isModelReady && !isCloudMode && (
                     <div className="mt-5 space-y-3 text-sm">
                       <p className="text-zinc-400">Start with a local model or an AI provider. PDF search also downloads a small embedding model on first use. Scanned PDFs need text recognition before importing.</p>
-                      <button onClick={() => { setSettingsTab('models'); setShowSettings(true); }} className="rounded-lg bg-emerald-700 text-white px-4 py-2">Set up AI</button>
+                      <button onClick={() => openSettingsTab('quickSetup')} className="rounded-lg bg-emerald-700 text-white px-4 py-2">Set up AI</button>
+                    </div>
+                  )}
+                  {(isModelReady || isCloudMode) && (
+                    <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+                      {SUGGESTIONS[mode].map(suggestion => (
+                        <button
+                          key={suggestion}
+                          onClick={() => { if (!ragUnavailable) applySuggestion(suggestion); }}
+                          disabled={ragUnavailable || isTyping}
+                          className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-40 ${
+                            isDark ? 'border-white/10 text-zinc-300 hover:border-white/25 hover:bg-white/5' : 'border-zinc-200 text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50'
+                          }`}
+                        >
+                          {suggestion}
+                        </button>
+                      ))}
                     </div>
                   )}
                 </div>
               </div>
             ) : (
               activeMessages.map((msg) => (
-                <div key={msg.id} data-message-sender={msg.sender} data-streaming={Boolean(msg.isStreaming)} data-error={Boolean(msg.isError)} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div key={msg.id} data-message-sender={msg.sender} data-streaming={Boolean(msg.isStreaming)} data-error={Boolean(msg.isError)} className={`flex items-end gap-2.5 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  {msg.sender === 'bot' && (
+                    <div aria-hidden="true" className={`w-7 h-7 shrink-0 rounded-full flex items-center justify-center ${msg.isError
+                      ? (isDark ? 'bg-red-500/15 text-red-400' : 'bg-red-100 text-red-500')
+                      : (isDark ? 'bg-emerald-500/15 text-emerald-300' : 'bg-emerald-100 text-emerald-700')}`}
+                    >
+                      <Sparkles size={14} />
+                    </div>
+                  )}
                   <div
-                    className={`px-5 py-3.5 rounded-2xl ${isCompactMode ? 'max-w-[92%]' : 'max-w-[86%]'} text-sm shadow-sm leading-relaxed ${
+                    className={`px-4 py-3 rounded-2xl ${isCompactMode ? 'max-w-[88%]' : 'max-w-[82%]'} text-sm shadow-sm leading-relaxed ${
                       msg.sender === 'user'
                         ? (isDark ? 'bg-white text-zinc-900 rounded-tr-sm whitespace-pre-wrap' : 'bg-[#0F2854] text-white rounded-tr-sm whitespace-pre-wrap')
                         : msg.isError
@@ -2692,6 +3036,11 @@ export default function App() {
                       </>
                     )}
                   </div>
+                  {msg.sender === 'user' && (
+                    <div aria-hidden="true" className={`w-7 h-7 shrink-0 rounded-full flex items-center justify-center ${isDark ? 'bg-white/10 text-zinc-300' : 'bg-zinc-100 text-zinc-500'}`}>
+                      <CircleUser size={16} />
+                    </div>
+                  )}
                 </div>
               ))
             )}
@@ -2737,6 +3086,16 @@ export default function App() {
                 >
                   {isTyping ? <Square size={20} /> : <Send size={20} />}
                 </button>
+              </div>
+              <div className={`mt-2 flex items-center justify-between gap-2 px-1 text-[11px] ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                <span className="min-w-0 truncate">
+                  {mode === 'rag'
+                    ? (selectedDocId ? 'Answers use the selected document only.' : 'Select or ingest a PDF to enable document chat.')
+                    : isCloudMode
+                      ? `Private chat with ${activeProvider?.name}.`
+                      : 'Local model — everything stays on this device.'}
+                </span>
+                <span className="hidden sm:block shrink-0">Enter to send · Shift + Enter for a new line</span>
               </div>
             </div>
           </div>
