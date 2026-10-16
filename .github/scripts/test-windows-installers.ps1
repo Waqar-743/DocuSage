@@ -3,6 +3,19 @@ $evidence = Join-Path $env:RUNNER_TEMP 'docusage-installer-evidence'
 New-Item -ItemType Directory -Force $evidence | Out-Null
 $results = [System.Collections.Generic.List[object]]::new()
 
+function Save-CrashEvidence([string] $Package) {
+    # Windows Event Log keeps WER entries (1000=crash, 1001=report, 1002=hang)
+    # that name the faulting module and offset when a packaged app dies.
+    try {
+        $events = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Id = 1000, 1001, 1002; StartTime = (Get-Date).AddMinutes(-30) } -ErrorAction SilentlyContinue |
+            Where-Object { $_.Message -match 'docusage' })
+        if ($events.Count -gt 0) {
+            $events | ForEach-Object { "{0} [{1}] {2}" -f $_.TimeCreated, $_.Id, $_.Message } |
+                Set-Content (Join-Path $evidence "$Package-crashes.log") -Encoding utf8NoBOM
+        }
+    } catch { }
+}
+
 function Test-InstalledApp([string] $Directory, [string] $Package) {
     $executable = Join-Path $Directory 'docusage.exe'
     if (-not (Test-Path $executable)) { throw "Installed executable is missing: $executable" }
@@ -11,10 +24,13 @@ function Test-InstalledApp([string] $Directory, [string] $Package) {
     $env:LOCALAPPDATA = Join-Path $profile 'data'
     $env:MODEL_PATH = Join-Path $profile 'models'
     New-Item -ItemType Directory -Force $env:APPDATA, $env:LOCALAPPDATA, $env:MODEL_PATH | Out-Null
-    $process = Start-Process -FilePath $executable -PassThru
+    $stdoutLog = Join-Path $evidence "$Package-app-stdout.log"
+    $stderrLog = Join-Path $evidence "$Package-app-stderr.log"
+    $process = Start-Process -FilePath $executable -PassThru `
+        -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
     try {
         Start-Sleep -Seconds 10
-        if ($process.HasExited) { throw "$Package app exited during startup: $($process.ExitCode)" }
+        if ($process.HasExited) { throw "$Package app exited during startup: exit code $($process.ExitCode)" }
         # A second invocation should show the first instance's hidden window.
         $second = Start-Process -FilePath $executable -PassThru
         if (-not $second.WaitForExit(15000)) {
@@ -25,7 +41,7 @@ function Test-InstalledApp([string] $Directory, [string] $Package) {
         $visible = $false
         for ($attempt = 0; $attempt -lt 30; $attempt++) {
             $process.Refresh()
-            if ($process.HasExited) { throw "$Package app exited while showing its window" }
+            if ($process.HasExited) { throw "$Package app exited while showing its window: exit code $($process.ExitCode); see $Package-app-stderr.log and $Package-crashes.log" }
             if ($process.MainWindowHandle -ne [IntPtr]::Zero) { $visible = $true; break }
             Start-Sleep -Milliseconds 500
         }
@@ -33,6 +49,8 @@ function Test-InstalledApp([string] $Directory, [string] $Package) {
         $results.Add(@{ package = $Package; installed = $true; launch = 'passed'; singleInstance = 'passed'; visibleWindow = 'passed' })
         Write-Output "$Package installation, native startup, single instance, and visible window passed."
     } finally {
+        $process.Refresh()
+        if ($process.HasExited) { Save-CrashEvidence $Package }
         if (-not $process.HasExited) {
             Stop-Process -Id $process.Id
             $process.WaitForExit()
