@@ -1,15 +1,20 @@
+//! AI Provider registry and OS keyring credential storage.
+//!
+//! API keys are stored exclusively in the OS keyring (`keyring` crate) and never
+//! written to JSON config files on disk.
+
 use std::fs;
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
-use crate::AppState;
+use crate::services::ai_client::{fetch_provider_models, ProviderModelInfo};
+use crate::state::AppState;
 
-const LOCAL_PROVIDER_ID: &str = "local";
+pub const LOCAL_PROVIDER_ID: &str = "local";
 const KEYRING_SERVICE: &str = "DocuSage";
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -82,19 +87,13 @@ pub struct ProviderList {
 pub struct ProviderTestResult {
     pub ok: bool,
     pub message: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CloudHistoryMessage {
-    sender: String,
-    text: String,
+    pub models: Vec<ProviderModelInfo>,
 }
 
 fn default_local_provider() -> AiProviderConfig {
     AiProviderConfig {
         id: LOCAL_PROVIDER_ID.to_string(),
-        name: "Local".to_string(),
+        name: "Built-in Local (GGUF)".to_string(),
         provider: AiProviderKind::Local,
         enabled: true,
         base_url: None,
@@ -102,7 +101,7 @@ fn default_local_provider() -> AiProviderConfig {
         organization: None,
         project: None,
         timeout_secs: 60,
-        temperature: 0.2,
+        temperature: 0.3,
         api_key_set: false,
         options: Value::Object(Default::default()),
     }
@@ -115,7 +114,7 @@ fn default_store() -> ProviderStore {
     }
 }
 
-fn provider_defaults(kind: &AiProviderKind) -> (Option<String>, Option<String>) {
+pub fn provider_defaults(kind: &AiProviderKind) -> (Option<String>, Option<String>) {
     match kind {
         AiProviderKind::Local => (None, None),
         AiProviderKind::OpenAi => (
@@ -134,46 +133,33 @@ fn provider_defaults(kind: &AiProviderKind) -> (Option<String>, Option<String>) 
             Some("https://openrouter.ai/api/v1".to_string()),
             Some("openai/gpt-4.1-mini".to_string()),
         ),
-        AiProviderKind::OllamaLocal => (
+        AiProviderKind::OllamaLocal | AiProviderKind::OllamaRemote => (
             Some("http://localhost:11434".to_string()),
             Some("llama3.2".to_string()),
         ),
-        AiProviderKind::OllamaRemote => (
-            Some("http://localhost:11434".to_string()),
-            Some("llama3.2".to_string()),
-        ),
-        AiProviderKind::LmStudio => (
+        AiProviderKind::LmStudio | AiProviderKind::LmStudioRemote => (
             Some("http://localhost:1234/v1".to_string()),
             Some("local-model".to_string()),
         ),
-        AiProviderKind::LmStudioRemote => (
-            Some("http://localhost:1234/v1".to_string()),
-            Some("local-model".to_string()),
-        ),
-        AiProviderKind::CustomOpenAiCompatible => (Some("https://example.com/v1".to_string()), None),
+        AiProviderKind::CustomOpenAiCompatible => {
+            (Some("https://example.com/v1".to_string()), None)
+        }
     }
 }
 
-fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
+fn store_path(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_config_dir()
+        .map(|d| d.join("ai-providers.json"))
         .map_err(|e| format!("Cannot resolve app config directory: {e}"))
 }
 
-fn store_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(config_dir(app)?.join("ai-providers.json"))
-}
-
-fn keyring_account(provider_id: &str) -> String {
-    format!("ai-provider:{provider_id}:api-key")
-}
-
 fn keyring_entry(provider_id: &str) -> Result<keyring::Entry, String> {
-    keyring::Entry::new(KEYRING_SERVICE, &keyring_account(provider_id))
+    keyring::Entry::new(KEYRING_SERVICE, &format!("ai-provider:{provider_id}:api-key"))
         .map_err(|e| format!("Secure credential storage is unavailable: {e}"))
 }
 
-fn read_api_key(provider_id: &str) -> Option<String> {
+pub fn read_api_key(provider_id: &str) -> Option<String> {
     keyring_entry(provider_id)
         .ok()
         .and_then(|entry| entry.get_password().ok())
@@ -188,19 +174,21 @@ fn write_api_key(provider_id: &str, api_key: &str) -> Result<(), String> {
 
 fn delete_api_key(provider_id: &str) -> Result<(), String> {
     match keyring_entry(provider_id)?.delete_credential() {
-        Ok(()) => Ok(()),
-        Err(keyring::Error::NoEntry) => Ok(()),
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(format!("Failed to delete API key from secure storage: {e}")),
     }
 }
 
 fn secure_storage_available() -> bool {
-    matches!(keyring_entry("__probe__").map(|entry| entry.get_password()), Ok(Ok(_)) | Ok(Err(keyring::Error::NoEntry)))
+    matches!(
+        keyring_entry("__probe__").map(|entry| entry.get_password()),
+        Ok(Ok(_)) | Ok(Err(keyring::Error::NoEntry))
+    )
 }
 
 fn read_store(app: &AppHandle) -> ProviderStore {
     let path = match store_path(app) {
-        Ok(path) => path,
+        Ok(p) => p,
         Err(_) => return default_store(),
     };
 
@@ -209,13 +197,13 @@ fn read_store(app: &AppHandle) -> ProviderStore {
         .and_then(|raw| serde_json::from_str::<ProviderStore>(&raw).ok())
         .unwrap_or_else(default_store);
 
-    if !store.providers.iter().any(|provider| provider.id == LOCAL_PROVIDER_ID) {
+    if !store.providers.iter().any(|p| p.id == LOCAL_PROVIDER_ID) {
         store.providers.insert(0, default_local_provider());
     }
     if !store
         .providers
         .iter()
-        .any(|provider| provider.id == store.active_provider_id && provider.enabled)
+        .any(|p| p.id == store.active_provider_id && p.enabled)
     {
         store.active_provider_id = LOCAL_PROVIDER_ID.to_string();
     }
@@ -223,7 +211,6 @@ fn read_store(app: &AppHandle) -> ProviderStore {
     for provider in &mut store.providers {
         provider.api_key_set = read_api_key(&provider.id).is_some();
     }
-
     store
 }
 
@@ -235,55 +222,98 @@ fn write_store(app: &AppHandle, store: &ProviderStore) -> Result<(), String> {
     }
     let payload = serde_json::to_string_pretty(store)
         .map_err(|e| format!("Cannot serialize provider settings: {e}"))?;
-    fs::write(&path, payload)
-        .map_err(|e| format!("Cannot write provider settings {}: {e}", path.display()))
+    fs::write(&path, payload).map_err(|e| format!("Cannot write provider settings: {e}"))
 }
 
 fn generate_provider_id() -> String {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
+        .map(|d| d.as_millis())
         .unwrap_or_default();
     format!("provider-{millis}")
+}
+
+pub fn resolve_provider(app: &AppHandle, provider_id: Option<&str>) -> Result<AiProviderConfig, String> {
+    let store = read_store(app);
+    let target_id = provider_id.unwrap_or(&store.active_provider_id);
+    if let Some(provider) = store.providers.iter().find(|p| p.id == target_id) {
+        if !provider.enabled {
+            return Err(format!("Provider '{}' is disabled.", provider.name));
+        }
+        return Ok(provider.clone());
+    }
+    store
+        .providers
+        .into_iter()
+        .find(|p| p.id == LOCAL_PROVIDER_ID)
+        .ok_or_else(|| "No AI provider configured.".to_string())
+}
+
+pub fn api_key_for(config: &AiProviderConfig) -> Result<String, String> {
+    match config.provider {
+        AiProviderKind::Local => Ok(String::new()),
+        AiProviderKind::OllamaLocal
+        | AiProviderKind::OllamaRemote
+        | AiProviderKind::LmStudio
+        | AiProviderKind::LmStudioRemote
+        | AiProviderKind::CustomOpenAiCompatible => Ok(read_api_key(&config.id).unwrap_or_default()),
+        _ => read_api_key(&config.id)
+            .ok_or_else(|| format!("No API key is saved for {}. Add one in Settings -> Providers.", config.name)),
+    }
 }
 
 fn validate_provider(config: &AiProviderConfigInput) -> Result<(), String> {
     if config.name.trim().is_empty() {
         return Err("Provider name is required.".to_string());
     }
-
     if config.timeout_secs == 0 || config.timeout_secs > 600 {
         return Err("Timeout must be between 1 and 600 seconds.".to_string());
     }
-
     if !(0.0..=2.0).contains(&config.temperature) {
         return Err("Temperature must be between 0 and 2.".to_string());
     }
-
     if config.id.as_deref() == Some(LOCAL_PROVIDER_ID) && config.provider != AiProviderKind::Local {
         return Err("The local profile cannot be changed into a remote provider.".into());
     }
-    if config.provider == AiProviderKind::Local && (!config.enabled || config.id.as_deref().is_some_and(|id| id != LOCAL_PROVIDER_ID)) {
+    if config.provider == AiProviderKind::Local
+        && (!config.enabled || config.id.as_deref().is_some_and(|id| id != LOCAL_PROVIDER_ID))
+    {
         return Err("The local profile must stay enabled and use its reserved ID.".into());
     }
     if config.provider != AiProviderKind::Local {
-        let (default_base, _) = provider_defaults(&config.provider);
-        let raw = config.base_url.as_deref().filter(|v| !v.trim().is_empty()).or(default_base.as_deref()).unwrap_or_default();
-        let url = reqwest::Url::parse(raw.trim()).map_err(|_| "Enter a valid HTTP or HTTPS base URL.")?;
-        if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() || !url.username().is_empty() || url.password().is_some() || url.query().is_some() || url.fragment().is_some() {
-            return Err("Use an HTTP or HTTPS base URL without embedded credentials, query parameters, or fragments.".into());
+        let (default_base, default_model) = provider_defaults(&config.provider);
+        let raw = config
+            .base_url
+            .as_deref()
+            .filter(|v| !v.trim().is_empty())
+            .or(default_base.as_deref())
+            .unwrap_or_default();
+        let url = reqwest::Url::parse(raw.trim())
+            .map_err(|_| "Enter a valid HTTP or HTTPS base URL.")?;
+        if !matches!(url.scheme(), "http" | "https")
+            || url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(
+                "Use an HTTP or HTTPS base URL without embedded credentials, query parameters, or fragments."
+                    .into(),
+            );
         }
-        let (_, default_model) = provider_defaults(&config.provider);
         let model = config.model.as_deref().or(default_model.as_deref());
         if model.unwrap_or_default().trim().is_empty() {
             return Err("Model is required for cloud and remote providers.".to_string());
         }
     }
-
     Ok(())
 }
 
-fn normalize_config(input: AiProviderConfigInput, existing: Option<&AiProviderConfig>) -> AiProviderConfig {
+fn normalize_config(
+    input: AiProviderConfigInput,
+    existing: Option<&AiProviderConfig>,
+) -> AiProviderConfig {
     let id = input.id.unwrap_or_else(generate_provider_id);
     let (default_base, default_model) = provider_defaults(&input.provider);
 
@@ -294,416 +324,18 @@ fn normalize_config(input: AiProviderConfigInput, existing: Option<&AiProviderCo
         enabled: input.enabled,
         base_url: input
             .base_url
-            .filter(|value| !value.trim().is_empty())
+            .filter(|v| !v.trim().is_empty())
             .or(default_base),
         model: input
             .model
-            .filter(|value| !value.trim().is_empty())
+            .filter(|v| !v.trim().is_empty())
             .or(default_model),
-        organization: input.organization.filter(|value| !value.trim().is_empty()),
-        project: input.project.filter(|value| !value.trim().is_empty()),
+        organization: input.organization.filter(|v| !v.trim().is_empty()),
+        project: input.project.filter(|v| !v.trim().is_empty()),
         timeout_secs: input.timeout_secs,
         temperature: input.temperature,
-        api_key_set: existing.map(|provider| provider.api_key_set).unwrap_or(false),
+        api_key_set: existing.map(|p| p.api_key_set).unwrap_or(false),
         options: input.options,
-    }
-}
-
-fn active_provider(app: &AppHandle) -> Result<AiProviderConfig, String> {
-    let store = read_store(app);
-    if let Some(provider) = store
-        .providers
-        .iter()
-        .find(|provider| provider.id == store.active_provider_id)
-    {
-        return Ok(provider.clone());
-    }
-    store
-        .providers
-        .into_iter()
-        .find(|provider| provider.id == LOCAL_PROVIDER_ID)
-        .ok_or_else(|| "No active AI provider is configured.".to_string())
-}
-
-fn bearer_headers(config: &AiProviderConfig, api_key: &str) -> Result<HeaderMap, String> {
-    let mut headers = HeaderMap::new();
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    headers.insert(
-        AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {api_key}"))
-            .map_err(|e| format!("Invalid API key header value: {e}"))?,
-    );
-    if let Some(org) = config.organization.as_deref() {
-        headers.insert(
-            "OpenAI-Organization",
-            HeaderValue::from_str(org).map_err(|e| format!("Invalid organization header: {e}"))?,
-        );
-    }
-    if let Some(project) = config.project.as_deref() {
-        headers.insert(
-            "OpenAI-Project",
-            HeaderValue::from_str(project).map_err(|e| format!("Invalid project header: {e}"))?,
-        );
-    }
-    Ok(headers)
-}
-
-fn base_url(config: &AiProviderConfig) -> Result<String, String> {
-    config
-        .base_url
-        .as_deref()
-        .map(|url| url.trim_end_matches('/').to_string())
-        .filter(|url| !url.is_empty())
-        .ok_or_else(|| "Base URL is required for this provider.".to_string())
-}
-
-fn model(config: &AiProviderConfig) -> Result<String, String> {
-    config
-        .model
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-        .ok_or_else(|| "Model is required for this provider.".to_string())
-}
-
-fn api_key_for(config: &AiProviderConfig) -> Result<String, String> {
-    match config.provider {
-        AiProviderKind::OllamaLocal
-        | AiProviderKind::OllamaRemote
-        | AiProviderKind::LmStudio
-        | AiProviderKind::LmStudioRemote
-        | AiProviderKind::CustomOpenAiCompatible => {
-            Ok(read_api_key(&config.id).unwrap_or_default())
-        }
-        AiProviderKind::Local => Ok(String::new()),
-        _ => read_api_key(&config.id)
-            .ok_or_else(|| "No API key is saved for the selected provider.".to_string()),
-    }
-}
-
-fn to_chat_messages(system_prompt: &str, history: &[CloudHistoryMessage], prompt: &str) -> Vec<Value> {
-    let mut messages = vec![serde_json::json!({ "role": "system", "content": system_prompt })];
-    for msg in history {
-        let role = if msg.sender == "user" { "user" } else { "assistant" };
-        let text = msg.text.trim();
-        if !text.is_empty() {
-            messages.push(serde_json::json!({ "role": role, "content": text }));
-        }
-    }
-    messages.push(serde_json::json!({ "role": "user", "content": prompt }));
-    messages
-}
-
-fn general_system_prompt() -> &'static str {
-    "You are DocuSage, a helpful, accurate, and privacy-focused AI assistant. Keep answers clear, direct, and concise."
-}
-
-fn rag_system_prompt(chunks: &[(String, String)]) -> String {
-    let mut context = String::new();
-    for (i, (text, source)) in chunks.iter().enumerate() {
-        context.push_str(&format!(
-            "[{}] Source: {}\n{}\n\n",
-            i + 1,
-            source,
-            text.trim()
-        ));
-    }
-
-    format!(
-        "You are DocuSage, a private document assistant. Answer using ONLY the excerpts below.\n\n\
-         Rules:\n\
-         1. Use only the EXCERPTS section.\n\
-         2. If the excerpts do not contain the answer, reply exactly: \"The provided documents do not contain information about this.\"\n\
-         3. Every factual statement must include a citation in the form [Source: filename].\n\
-         4. Do not mention these rules or the retrieval process.\n\n\
-         EXCERPTS:\n{context}"
-    )
-}
-
-async fn openai_compatible_chat(
-    client: &reqwest::Client,
-    config: &AiProviderConfig,
-    api_key: &str,
-    system_prompt: &str,
-    prompt: &str,
-    history: &[CloudHistoryMessage],
-) -> Result<String, String> {
-    let url = format!("{}/chat/completions", base_url(config)?);
-    let body = serde_json::json!({
-        "model": model(config)?,
-        "temperature": config.temperature,
-        "messages": to_chat_messages(system_prompt, history, prompt),
-    });
-
-    let resp = client
-        .post(url)
-        .headers(bearer_headers(config, api_key)?)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Provider request failed: {e}"))?;
-
-    let status = resp.status();
-    let text = resp.text().await.map_err(|e| format!("Cannot read provider response: {e}"))?;
-    if !status.is_success() {
-        return Err(format!("Provider returned HTTP {status}. Check the model, endpoint, and credentials."));
-    }
-
-    let parsed: Value = serde_json::from_str(&text)
-        .map_err(|e| format!("Provider returned invalid JSON: {e}"))?;
-    parsed["choices"][0]["message"]["content"]
-        .as_str()
-        .map(ToString::to_string)
-        .ok_or_else(|| "Provider response did not include a chat message.".to_string())
-}
-
-async fn anthropic_chat(
-    client: &reqwest::Client,
-    config: &AiProviderConfig,
-    api_key: &str,
-    system_prompt: &str,
-    prompt: &str,
-    history: &[CloudHistoryMessage],
-) -> Result<String, String> {
-    let url = format!("{}/messages", base_url(config)?);
-    let mut messages = Vec::new();
-    for msg in history {
-        let role = if msg.sender == "user" { "user" } else { "assistant" };
-        if !msg.text.trim().is_empty() {
-            messages.push(serde_json::json!({ "role": role, "content": msg.text }));
-        }
-    }
-    messages.push(serde_json::json!({ "role": "user", "content": prompt }));
-
-    let body = serde_json::json!({
-        "model": model(config)?,
-        "max_tokens": 1024,
-        "temperature": config.temperature,
-        "system": system_prompt,
-        "messages": messages,
-    });
-
-    let mut headers = HeaderMap::new();
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    headers.insert(
-        "x-api-key",
-        HeaderValue::from_str(api_key).map_err(|e| format!("Invalid API key header: {e}"))?,
-    );
-    headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
-
-    let resp = client
-        .post(url)
-        .headers(headers)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Anthropic request failed: {e}"))?;
-
-    let status = resp.status();
-    let text = resp.text().await.map_err(|e| format!("Cannot read Anthropic response: {e}"))?;
-    if !status.is_success() {
-        return Err(format!("Anthropic returned HTTP {status}. Check the model and credentials."));
-    }
-
-    let parsed: Value = serde_json::from_str(&text)
-        .map_err(|e| format!("Anthropic returned invalid JSON: {e}"))?;
-    parsed["content"]
-        .as_array()
-        .and_then(|items| items.iter().find_map(|item| item["text"].as_str()))
-        .map(ToString::to_string)
-        .ok_or_else(|| "Anthropic response did not include text content.".to_string())
-}
-
-async fn gemini_chat(
-    client: &reqwest::Client,
-    config: &AiProviderConfig,
-    api_key: &str,
-    system_prompt: &str,
-    prompt: &str,
-    history: &[CloudHistoryMessage],
-) -> Result<String, String> {
-    let url = format!(
-        "{}/models/{}:generateContent",
-        base_url(config)?,
-        model(config)?
-    );
-
-    let mut transcript = String::new();
-    transcript.push_str(system_prompt);
-    transcript.push_str("\n\n");
-    for msg in history {
-        let role = if msg.sender == "user" { "User" } else { "Assistant" };
-        transcript.push_str(&format!("{role}: {}\n", msg.text));
-    }
-    transcript.push_str(&format!("User: {prompt}"));
-
-    let body = serde_json::json!({
-        "contents": [{ "parts": [{ "text": transcript }] }],
-        "generationConfig": { "temperature": config.temperature }
-    });
-
-    let resp = client
-        .post(url)
-        .header(CONTENT_TYPE, "application/json")
-        .header("x-goog-api-key", api_key)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Gemini request failed: {}", e.without_url()))?;
-
-    let status = resp.status();
-    let text = resp.text().await.map_err(|e| format!("Cannot read Gemini response: {e}"))?;
-    if !status.is_success() {
-        return Err(format!("Gemini returned HTTP {status}. Check the model and credentials."));
-    }
-
-    let parsed: Value = serde_json::from_str(&text)
-        .map_err(|e| format!("Gemini returned invalid JSON: {e}"))?;
-    parsed["candidates"][0]["content"]["parts"][0]["text"]
-        .as_str()
-        .map(ToString::to_string)
-        .ok_or_else(|| "Gemini response did not include text content.".to_string())
-}
-
-async fn ollama_chat(
-    client: &reqwest::Client,
-    config: &AiProviderConfig,
-    api_key: &str,
-    system_prompt: &str,
-    prompt: &str,
-    history: &[CloudHistoryMessage],
-) -> Result<String, String> {
-    let url = format!("{}/api/chat", base_url(config)?);
-    let body = serde_json::json!({
-        "model": model(config)?,
-        "stream": false,
-        "options": { "temperature": config.temperature },
-        "messages": to_chat_messages(system_prompt, history, prompt),
-    });
-
-    let resp = client
-        .post(url)
-        .headers(bearer_headers(config, api_key)?)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Ollama request failed: {e}"))?;
-
-    let status = resp.status();
-    let text = resp.text().await.map_err(|e| format!("Cannot read Ollama response: {e}"))?;
-    if !status.is_success() {
-        return Err(format!("Ollama returned HTTP {status}. Check the endpoint and installed model."));
-    }
-
-    let parsed: Value = serde_json::from_str(&text)
-        .map_err(|e| format!("Ollama returned invalid JSON: {e}"))?;
-    parsed["message"]["content"]
-        .as_str()
-        .map(ToString::to_string)
-        .ok_or_else(|| "Ollama response did not include message content.".to_string())
-}
-
-async fn send_chat(
-    config: &AiProviderConfig,
-    system_prompt: &str,
-    prompt: &str,
-    history: &[CloudHistoryMessage],
-) -> Result<String, String> {
-    if !config.enabled {
-        return Err("Selected provider is disabled.".to_string());
-    }
-    if config.provider == AiProviderKind::Local {
-        return Err("Local provider cannot be used by cloud chat commands.".to_string());
-    }
-
-    let api_key = api_key_for(config)?;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(config.timeout_secs.max(1)))
-        .build()
-        .map_err(|e| format!("Cannot create HTTP client: {e}"))?;
-
-    match config.provider {
-        AiProviderKind::OpenAi
-        | AiProviderKind::OpenRouter
-        | AiProviderKind::LmStudio
-        | AiProviderKind::LmStudioRemote
-        | AiProviderKind::CustomOpenAiCompatible => {
-            openai_compatible_chat(&client, config, &api_key, system_prompt, prompt, history).await
-        }
-        AiProviderKind::Anthropic => {
-            anthropic_chat(&client, config, &api_key, system_prompt, prompt, history).await
-        }
-        AiProviderKind::GoogleGemini => {
-            gemini_chat(&client, config, &api_key, system_prompt, prompt, history).await
-        }
-        AiProviderKind::OllamaLocal | AiProviderKind::OllamaRemote => {
-            ollama_chat(&client, config, &api_key, system_prompt, prompt, history).await
-        }
-        AiProviderKind::Local => unreachable!(),
-    }
-}
-
-async fn test_provider(config: &AiProviderConfig) -> Result<String, String> {
-    match config.provider {
-        AiProviderKind::Local => Ok("Local mode is available when a GGUF model is connected.".to_string()),
-        AiProviderKind::OllamaLocal | AiProviderKind::OllamaRemote => {
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(config.timeout_secs.max(1)))
-                .build()
-                .map_err(|e| format!("Cannot create HTTP client: {e}"))?;
-            let url = format!("{}/api/tags", base_url(config)?);
-            let key = api_key_for(config)?;
-            let resp = client.get(url).headers(bearer_headers(config, &key)?).send().await.map_err(|e| format!("Ollama test failed: {e}"))?;
-            if resp.status().is_success() {
-                Ok("Ollama remote connection succeeded.".to_string())
-            } else {
-                Err(format!("Ollama returned HTTP {}", resp.status()))
-            }
-        }
-        AiProviderKind::GoogleGemini => {
-            let api_key = api_key_for(config)?;
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(config.timeout_secs.max(1)))
-                .build()
-                .map_err(|e| format!("Cannot create HTTP client: {e}"))?;
-            let url = format!("{}/models", base_url(config)?);
-            let resp = client.get(url).header("x-goog-api-key", api_key).send().await.map_err(|e| format!("Gemini test failed: {}", e.without_url()))?;
-            if resp.status().is_success() {
-                Ok("Gemini connection succeeded.".to_string())
-            } else {
-                Err(format!("Gemini returned HTTP {}", resp.status()))
-            }
-        }
-        AiProviderKind::Anthropic => {
-            let answer = send_chat(
-                config,
-                "Reply with exactly: ok",
-                "ok",
-                &[],
-            )
-            .await?;
-            Ok(format!("Anthropic connection succeeded: {}", answer.trim()))
-        }
-        _ => {
-            let api_key = api_key_for(config)?;
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(config.timeout_secs.max(1)))
-                .build()
-                .map_err(|e| format!("Cannot create HTTP client: {e}"))?;
-            let url = format!("{}/models", base_url(config)?);
-            let resp = client
-                .get(url)
-                .headers(bearer_headers(config, &api_key)?)
-                .send()
-                .await
-                .map_err(|e| format!("Provider test failed: {e}"))?;
-            if resp.status().is_success() {
-                Ok("Provider connection succeeded.".to_string())
-            } else {
-                Err(format!("Provider returned HTTP {}", resp.status()))
-            }
-        }
     }
 }
 
@@ -725,11 +357,10 @@ pub fn save_ai_provider_config(
     validate_provider(&input)?;
 
     let mut store = read_store(&app);
-    let existing_index = input
+    let existing = input
         .id
         .as_ref()
-        .and_then(|id| store.providers.iter().position(|provider| provider.id == *id));
-    let existing = existing_index.and_then(|idx| store.providers.get(idx));
+        .and_then(|id| store.providers.iter().find(|p| &p.id == id));
 
     let delete_key = input.delete_api_key;
     let incoming_key = input.api_key.clone().unwrap_or_default();
@@ -748,7 +379,7 @@ pub fn save_ai_provider_config(
         config.api_key_set = read_api_key(&config.id).is_some();
     }
 
-    if let Some(idx) = store.providers.iter().position(|provider| provider.id == config.id) {
+    if let Some(idx) = store.providers.iter().position(|p| p.id == config.id) {
         store.providers[idx] = config.clone();
     } else {
         store.providers.push(config.clone());
@@ -766,9 +397,8 @@ pub fn delete_ai_provider_config(app: AppHandle, provider_id: String) -> Result<
     if provider_id == LOCAL_PROVIDER_ID {
         return Err("The local provider cannot be deleted.".to_string());
     }
-
     let mut store = read_store(&app);
-    store.providers.retain(|provider| provider.id != provider_id);
+    store.providers.retain(|p| p.id != provider_id);
     if store.active_provider_id == provider_id {
         store.active_provider_id = LOCAL_PROVIDER_ID.to_string();
     }
@@ -779,10 +409,14 @@ pub fn delete_ai_provider_config(app: AppHandle, provider_id: String) -> Result<
 #[tauri::command]
 pub fn set_active_ai_provider(app: AppHandle, provider_id: String) -> Result<String, String> {
     let mut store = read_store(&app);
-    if !store.providers.iter().any(|provider| provider.id == provider_id) {
+    if !store.providers.iter().any(|p| p.id == provider_id) {
         return Err("Provider does not exist.".to_string());
     }
-    if !store.providers.iter().any(|provider| provider.id == provider_id && provider.enabled) {
+    if !store
+        .providers
+        .iter()
+        .any(|p| p.id == provider_id && p.enabled)
+    {
         return Err("Enable this provider before making it active.".into());
     }
     store.active_provider_id = provider_id.clone();
@@ -790,6 +424,8 @@ pub fn set_active_ai_provider(app: AppHandle, provider_id: String) -> Result<Str
     Ok(provider_id)
 }
 
+/// Verify credentials/reachability AND return the live list of available models
+/// ("Verify & Fetch Models").
 #[tauri::command]
 pub async fn test_ai_provider_connection(
     app: AppHandle,
@@ -800,89 +436,76 @@ pub async fn test_ai_provider_connection(
     let config = store
         .providers
         .into_iter()
-        .find(|provider| provider.id == provider_id)
+        .find(|p| p.id == provider_id)
         .ok_or_else(|| "Provider does not exist.".to_string())?;
 
     if config.provider == AiProviderKind::Local {
-        let ready = state.model.lock().await.is_some();
+        let rt = state.local_runtime.status(&app).await;
+        if rt.running {
+            let model = rt.loaded_model.unwrap_or_else(|| "local-gguf".into());
+            return Ok(ProviderTestResult {
+                ok: true,
+                message: format!("Built-in llama-server is running with {model}."),
+                models: vec![ProviderModelInfo {
+                    id: model.clone(),
+                    label: model,
+                }],
+            });
+        }
         return Ok(ProviderTestResult {
-            ok: ready,
-            message: if ready { "A local GGUF model is connected." } else { "Connect a local GGUF model before testing inference." }.into(),
+            ok: rt.installed,
+            message: if rt.installed {
+                "llama-server is installed. Connect a GGUF model to start chatting offline.".into()
+            } else {
+                "Built-in llama-server runtime is not installed yet.".into()
+            },
+            models: Vec::new(),
         });
     }
 
-    match test_provider(&config).await {
-        Ok(message) => Ok(ProviderTestResult { ok: true, message }),
-        Err(message) => Ok(ProviderTestResult { ok: false, message }),
+    let api_key = api_key_for(&config)?;
+    match fetch_provider_models(&state.http, &config, &api_key).await {
+        Ok(models) => Ok(ProviderTestResult {
+            ok: true,
+            message: format!(
+                "Verified! Fetched {} available model{}.",
+                models.len(),
+                if models.len() == 1 { "" } else { "s" }
+            ),
+            models,
+        }),
+        Err(err) => Ok(ProviderTestResult {
+            ok: false,
+            message: err,
+            models: Vec::new(),
+        }),
     }
 }
 
 #[tauri::command]
-pub async fn chat_cloud(
+pub async fn fetch_ai_provider_models(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
-    prompt: String,
-    history: Vec<CloudHistoryMessage>,
-    request_id: String,
-) -> Result<String, String> {
-    let _request = crate::commands::start_request(&state, &request_id)?;
-    let config = active_provider(&app)?;
-    let response = tokio::select! {
-        result = send_chat(&config, general_system_prompt(), &prompt, &history) => result?,
-        _ = crate::commands::wait_for_cancel(&state) => "Generation stopped.".to_owned(),
-    };
-    let _ = app.emit(
-        "chat-token",
-        serde_json::json!({ "requestId": request_id, "token": "", "done": true }),
-    );
-    Ok(response.trim().to_string())
-}
+    provider_id: String,
+) -> Result<Vec<ProviderModelInfo>, String> {
+    let store = read_store(&app);
+    let config = store
+        .providers
+        .into_iter()
+        .find(|p| p.id == provider_id)
+        .ok_or_else(|| "Provider does not exist.".to_string())?;
 
-#[tauri::command]
-pub async fn chat_cloud_rag(
-    app: AppHandle,
-    state: tauri::State<'_, AppState>,
-    prompt: String,
-    history: Vec<CloudHistoryMessage>,
-    request_id: String,
-    source_path: String,
-) -> Result<String, String> {
-    let _request = crate::commands::start_request(&state, &request_id)?;
-    let db_dir = app
-        .path()
-        .app_data_dir()
-        .ok()
-        .map(|p| p.join("lancedb"))
-        .or_else(|| dirs::data_local_dir().map(|p| p.join("DocuSage").join("lancedb")))
-        .ok_or_else(|| "Cannot determine data directory.".to_string())?;
-
-    let top_k = state
-        .rag_config
-        .read()
-        .map_err(|e| format!("rag_config lock: {e}"))?
-        .top_k;
-
-    let source = crate::rag::canonical_source(&source_path);
-    let chunks = crate::rag::query_similar(&prompt, &db_dir, top_k, Some(&source)).await?;
-    if chunks.is_empty() {
-        return Err(format!(
-            "RAG Error: 0 matching chunks from '{}'. The documents table may be empty.",
-            db_dir.display()
-        ));
+    if config.provider == AiProviderKind::Local {
+        let models = crate::commands::list_downloaded_models(app, state)?;
+        return Ok(models
+            .into_iter()
+            .map(|m| ProviderModelInfo {
+                id: m.path,
+                label: m.filename,
+            })
+            .collect());
     }
 
-    let config = active_provider(&app)?;
-    let system_prompt = rag_system_prompt(&chunks);
-    let mut response = tokio::select! {
-        result = send_chat(&config, &system_prompt, &prompt, &history) => result?,
-        _ = crate::commands::wait_for_cancel(&state) => return Ok("Generation stopped.".into()),
-    };
-    if state.rag_config.read().map_err(|e| e.to_string())?.show_context {
-        response.push_str(&crate::rag::context_appendix(&chunks));
-    }
-    let _ = app.emit(
-        "chat-token",
-        serde_json::json!({ "requestId": request_id, "token": "", "done": true }),
-    );
-    Ok(response.trim().to_string())
+    let api_key = api_key_for(&config)?;
+    fetch_provider_models(&state.http, &config, &api_key).await
 }

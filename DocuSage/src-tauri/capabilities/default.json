@@ -7,7 +7,13 @@
   ],
   "permissions": [
     "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-is-maximized",
+    "core:window:allow-set-always-on-top",
     "opener:default",
-    "dialog:default"
+    "dialog:default",
+    "clipboard-manager:default",
+    "autostart:default"
   ]
 }

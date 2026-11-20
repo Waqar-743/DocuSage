@@ -1,426 +1,446 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from '@tauri-apps/api/core';
+import type {
+  AiProviderConfig,
+  AiProviderConfigInput,
+  AssistantSettings,
+  AssistantStatus,
+  AssistantWindowMode,
+  ChatHistoryMessage,
+  ContextTelemetry,
+  DownloadedModel,
+  IndexedDocument,
+  IngestResult,
+  LocalRuntimeStatus,
+  ProviderList,
+  ProviderModelInfo,
+  ProviderTestResult,
+  RagConfig,
+} from '../types';
 
-export type ChatHistoryMessage = {
-  sender: "user" | "bot";
-  text: string;
+export type {
+  AiProviderConfig,
+  AiProviderConfigInput,
+  AiProviderKind,
+  AssistantSettings,
+  AssistantStatus,
+  AssistantWindowMode,
+  ChatHistoryMessage,
+  ContextTelemetry,
+  DownloadedModel,
+  IndexedDocument,
+  IngestResult,
+  LocalRuntimeStatus,
+  ProviderList,
+  ProviderModelInfo,
+  ProviderTestResult,
+  RagConfig,
+} from '../types';
+
+export const RAG_CONFIG_DEFAULTS: RagConfig = {
+  chunkSize: 500,
+  chunkOverlap: 80,
+  topK: 8,
+  showContext: false,
+  fullContextThreshold: 12000,
+  tokenBudget: 4000,
+  forceRagAlways: false,
+  embedding: {
+    backend: 'auto',
+    model: '',
+    baseUrl: null,
+    providerId: null,
+  },
 };
 
-export type IngestResult = {
-  fileName: string;
-  chunkCount: number;
-  charCount: number;
-  sourcePath?: string;
+export const ASSISTANT_SETTINGS_DEFAULTS: AssistantSettings = {
+  launchHidden: false,
+  hideOnClose: true,
+  hideFromTaskbar: true,
+  autoHideOnBlur: true,
+  keepModelLoaded: true,
+  globalShortcut: 'Alt+Space',
+  windowMode: 'spotlight',
+  lastMonitorName: null,
+  firstOpenDone: false,
+  spotlightWidth: 440,
+  spotlightHeight: 560,
+  dashboardBounds: null,
 };
 
-export type DownloadedModel = {
-  filename: string;
-  path: string;
-  sizeBytes: number;
+export const DEFAULT_ALLOWED_EXTENSIONS = [
+  'pdf', 'txt', 'md', 'rst', 'html', 'htm', 'py', 'js', 'ts', 'tsx', 'jsx',
+  'rs', 'java', 'cpp', 'c', 'h', 'hpp', 'go', 'rb', 'php', 'swift', 'kt', 'cs',
+  'json', 'yaml', 'yml', 'toml', 'xml', 'csv', 'sh', 'ps1', 'sql', 'log', 'conf', 'ini', 'env',
+];
+
+export type ChatSendRequest = {
+  prompt: string;
+  history: ChatHistoryMessage[];
+  requestId: string;
+  attachedPaths: string[];
+  providerId?: string | null;
+  modelOverride?: string | null;
 };
 
-export type RagConfig = {
-  chunkSize: number;
-  chunkOverlap: number;
-  topK: number;
-  showContext: boolean;
+export type ChatSendResponse = {
+  reply: string;
+  stopped: boolean;
+  telemetry: ContextTelemetry;
 };
 
-export type AssistantWindowMode = "compact" | "medium" | "full";
-
-export type AssistantSettings = {
-  launchHidden: boolean;
-  hideOnClose: boolean;
-  hideFromTaskbar: boolean;
-  keepModelLoaded: boolean;
-  globalShortcut: string;
-  windowMode: AssistantWindowMode;
-  lastMonitorName: string | null;
-  firstOpenDone: boolean;
-};
-
-export type AssistantStatus = {
-  isVisible: boolean;
-  settings: AssistantSettings;
-  platform: {
-    platform: string;
-    startupHidden: string;
-    taskbarHidden: string;
-    altTabHidden: string;
-    focusNotes: string;
-  };
-};
-
-export type AiProviderKind =
-  | "local"
-  | "openAi"
-  | "anthropic"
-  | "googleGemini"
-  | "openRouter"
-  | "ollamaLocal"
-  | "ollamaRemote"
-  | "lmStudio"
-  | "lmStudioRemote"
-  | "customOpenAiCompatible";
-
-export type AiProviderConfig = {
-  id: string;
-  name: string;
-  provider: AiProviderKind;
-  enabled: boolean;
-  baseUrl: string | null;
-  model: string | null;
-  organization: string | null;
-  project: string | null;
-  timeoutSecs: number;
-  temperature: number;
-  apiKeySet: boolean;
-  options: Record<string, unknown>;
-};
-
-export type AiProviderConfigInput = Omit<AiProviderConfig, "id" | "apiKeySet"> & {
-  id?: string;
-  apiKey?: string;
-  deleteApiKey: boolean;
-};
-
-export type ProviderList = {
-  activeProviderId: string;
-  providers: AiProviderConfig[];
-  secureStorageAvailable: boolean;
-};
-
-export type ProviderTestResult = {
-  ok: boolean;
-  message: string;
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Type-safe IPC wrappers for every Tauri command.
-//
-// Each function maps 1-to-1 to a #[tauri::command] on the Rust side.
-// Rust `Result<String, String>` becomes a resolved/rejected Promise<string>.
-//
-// When opened in a plain browser (no Tauri shell), mock responses are returned
-// so the UI can be tested for design and interaction without the backend.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Returns true when running inside the Tauri desktop shell. */
 export function isTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
-// ── Mock helpers for browser-only preview mode ──────────────────────────────
-
-/** Simulate a short network delay. */
-function mockDelay(ms = 800): Promise<void> {
+function mockDelay(ms = 400): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-const MOCK_RESPONSES: Record<string, string[]> = {
-  general: [
-    "I'm DocuSage running in browser preview mode. The real AI backend is available when you launch with `npm run tauri dev` on your desktop.",
-    "This is a simulated response. In the real app, your local LLM would generate an answer here.",
-    "Browser preview mode — all UI features work, but AI responses are mocked. Run the desktop app for real inference.",
-  ],
-  rag: [
-    "RAG preview: In the real app, I would search your ingested documents and generate an answer with citations.",
-    "This is a simulated RAG response. The real backend retrieves relevant chunks from your PDF before answering.",
-    "Browser preview — document retrieval is mocked. Launch the Tauri desktop app for actual RAG queries.",
-  ],
-};
+// ── Unified Smart Chat ──────────────────────────────────────────────────────
 
-let mockIdx = { general: 0, rag: 0 };
-
-function nextMock(kind: "general" | "rag"): string {
-  const list = MOCK_RESPONSES[kind];
-  const msg = list[mockIdx[kind] % list.length];
-  mockIdx[kind]++;
-  return msg;
-}
-
-// ── Public API ──────────────────────────────────────────────────────────────
-
-/** Point the backend at a model directory and load it into memory. */
-export async function loadModel(path?: string): Promise<string> {
-  if (!isTauri()) { await mockDelay(); return "Model loaded (browser preview)"; }
-  return invoke<string>("load_model", { path: path ?? null });
-}
-
-/** Send a prompt to the LLM in General Chat mode (no document context). */
-export async function chatGeneral(
-  prompt: string,
-  history: ChatHistoryMessage[],
-  requestId: string,
-): Promise<string> {
-  if (!isTauri()) { await mockDelay(1200); return nextMock("general"); }
-  return invoke<string>("chat_general", { prompt, history, requestId });
-}
-
-/** Send a prompt to the LLM in RAG Chat mode. */
-export async function chatRag(
-  prompt: string,
-  history: ChatHistoryMessage[],
-  requestId: string,
-  sourcePath: string,
-): Promise<string> {
-  if (!isTauri()) { await mockDelay(1200); return nextMock("rag"); }
-  return invoke<string>("chat_rag", { prompt, history, requestId, sourcePath });
-}
-
-/** Storage key for the Gemini API key. */
-export const GEMINI_KEY_STORAGE = 'docusage_gemini_key';
-
-/** Send a general-chat request through the selected remote provider. */
-export async function chatCloud(
-  prompt: string,
-  history: ChatHistoryMessage[],
-  requestId: string,
-): Promise<string> {
-  if (!isTauri()) { await mockDelay(1200); return "Cloud preview: the desktop app will send this request to the selected provider."; }
-  return invoke<string>("chat_cloud", { prompt, history, requestId });
-}
-
-export async function chatCloudRag(
-  prompt: string,
-  history: ChatHistoryMessage[],
-  requestId: string,
-  sourcePath: string,
-): Promise<string> {
-  if (!isTauri()) { await mockDelay(1200); return "Cloud RAG simulation: the desktop app sends the prompt, conversation history, and retrieved excerpts to your selected provider."; }
-  return invoke<string>("chat_cloud_rag", { prompt, history, requestId, sourcePath });
+export async function chatSend(req: ChatSendRequest): Promise<ChatSendResponse> {
+  if (!isTauri()) {
+    await mockDelay(500);
+    const hasDocs = req.attachedPaths.length > 0;
+    const telemetry: ContextTelemetry = {
+      requestId: req.requestId,
+      mode: hasDocs ? 'fts5Offline' : 'none',
+      estimatedTokens: hasDocs ? 420 : 0,
+      totalChars: hasDocs ? 1680 : 0,
+      documentCount: req.attachedPaths.length,
+      citations: hasDocs
+        ? req.attachedPaths.map((p, idx) => ({
+            documentName: p.split(/[\\/]/).pop() ?? p,
+            sourcePath: p,
+            chunkIndex: idx,
+            score: 0.92,
+            snippet: 'Preview excerpt retrieved from your attached document via SQLite FTS5 + RRF.',
+            matchSource: 'keyword' as const,
+          }))
+        : [],
+    };
+    return {
+      reply: hasDocs
+        ? `**Smart Context (${telemetry.mode})**: Preview answer grounded in ${req.attachedPaths.length} attached document(s) for: _"${req.prompt}"_.`
+        : `**DocuSage v2 Preview**: Streaming response for _"${req.prompt}"_. Launch the desktop app to run real local GGUF or cloud inference.`,
+      stopped: false,
+      telemetry,
+    };
+  }
+  return invoke<ChatSendResponse>('chat_send', { req });
 }
 
 export async function stopChat(requestId: string): Promise<void> {
   if (!isTauri()) return;
-  await invoke<void>("stop_chat", { requestId });
+  await invoke<void>('stop_chat', { requestId });
 }
 
-/**
- * Ingest a PDF document into the local vector store.
- * ONLY the file path is sent over IPC — Rust reads the PDF from disk.
- */
+// Legacy compatibility wrappers
+export async function chatGeneral(prompt: string, history: ChatHistoryMessage[], requestId: string): Promise<string> {
+  const res = await chatSend({ prompt, history, requestId, attachedPaths: [], providerId: 'local' });
+  return res.reply;
+}
+
+export async function chatRag(prompt: string, history: ChatHistoryMessage[], requestId: string, sourcePath: string): Promise<string> {
+  const res = await chatSend({ prompt, history, requestId, attachedPaths: [sourcePath], providerId: 'local' });
+  return res.reply;
+}
+
+// ── Multi-Format Document Pipeline & SQLite Hybrid Store ────────────────────
+
+export async function getAllowedExtensions(): Promise<string[]> {
+  if (!isTauri()) return [...DEFAULT_ALLOWED_EXTENSIONS];
+  return invoke<string[]>('get_allowed_extensions');
+}
+
 export async function ingestDocument(filePath: string): Promise<IngestResult> {
   if (!isTauri()) {
-    await mockDelay(1500);
-    const name = filePath.split(/[\\/]/).pop() ?? filePath;
-    return { fileName: name, chunkCount: 42, charCount: 12500 };
+    await mockDelay(450);
+    const fileName = filePath.split(/[\\/]/).pop() ?? filePath;
+    return {
+      fileName,
+      chunkCount: 14,
+      charCount: 8400,
+      sourcePath: filePath,
+      hasEmbeddings: false,
+      embeddingModel: null,
+    };
   }
-  return invoke<IngestResult>("ingest_document", { filePath: String(filePath) });
+  return invoke<IngestResult>('ingest_document', { filePath: String(filePath) });
 }
 
 export async function deleteDocument(filePath: string): Promise<void> {
   if (!isTauri()) return;
-  return invoke<void>('delete_document', { filePath });
+  await invoke<void>('delete_document', { filePath });
 }
 
-export async function listIndexedDocuments(): Promise<{ path: string; chunkCount: number }[]> {
+export async function listIndexedDocuments(): Promise<IndexedDocument[]> {
   if (!isTauri()) return [];
-  return invoke('list_indexed_documents');
+  return invoke<IndexedDocument[]>('list_indexed_documents');
 }
 
-// ── Model management ─────────────────────────────────────────────────────────
+// ── On-demand Local Runtime (`llama-server`) & GGUF Models ──────────────────
 
-/**
- * Stream-download a GGUF model to the app's local models directory.
- * Progress is reported via `download-progress` events on the Tauri event bus.
- * Returns the absolute path of the saved file.
- */
+export async function getLocalRuntimeStatus(): Promise<LocalRuntimeStatus> {
+  if (!isTauri()) {
+    return {
+      installed: true,
+      binaryPath: '/mock/runtime/llama-server',
+      running: true,
+      port: 18080,
+      baseUrl: 'http://127.0.0.1:18080/v1',
+      loadedModel: 'Llama-3.2-1B-Instruct-Q4_K_M.gguf',
+      loadedModelPath: '/mock/models/Llama-3.2-1B-Instruct-Q4_K_M.gguf',
+      embeddingRunning: false,
+      embeddingPort: null,
+      embeddingModel: null,
+      detectedBackend: 'cpu',
+      platformSummary: 'browser-preview (cpu)',
+      version: 'preview',
+    };
+  }
+  return invoke<LocalRuntimeStatus>('get_local_runtime_status');
+}
+
+export async function installLocalRuntime(preferredBackend?: string): Promise<LocalRuntimeStatus> {
+  if (!isTauri()) {
+    await mockDelay(800);
+    return getLocalRuntimeStatus();
+  }
+  return invoke<LocalRuntimeStatus>('install_local_runtime', { preferredBackend: preferredBackend ?? null });
+}
+
+export async function loadModel(path?: string): Promise<string> {
+  if (!isTauri()) {
+    await mockDelay(300);
+    return 'Model loaded (browser preview)';
+  }
+  return invoke<string>('load_model', { path: path ?? null });
+}
+
 export async function downloadModel(url: string, filename: string): Promise<string> {
   if (!isTauri()) {
-    await mockDelay(2000);
+    await mockDelay(700);
     return `/mock/models/${filename}`;
   }
-  return invoke<string>("download_model", { url, filename });
+  return invoke<string>('download_model', { url, filename });
 }
 
-/** List all .gguf files found in the app's models directories. */
 export async function listDownloadedModels(): Promise<DownloadedModel[]> {
   if (!isTauri()) {
     return [
-      { filename: "Llama-3.2-1B-Instruct-Q4_K_M.gguf", path: "/mock/models/Llama-3.2-1B-Instruct-Q4_K_M.gguf", sizeBytes: 734003200 },
+      {
+        filename: 'Llama-3.2-1B-Instruct-Q4_K_M.gguf',
+        path: '/mock/models/Llama-3.2-1B-Instruct-Q4_K_M.gguf',
+        sizeBytes: 734003200,
+      },
     ];
   }
-  return invoke<DownloadedModel[]>("list_downloaded_models");
+  return invoke<DownloadedModel[]>('list_downloaded_models');
 }
 
-/**
- * Load a specific .gguf file by its absolute path.
- * This replaces any currently loaded model.
- */
 export async function connectModel(filePath: string): Promise<string> {
-  if (!isTauri()) { await mockDelay(1500); return `Connected to: ${filePath.split(/[\\/]/).pop()}`; }
-  return invoke<string>("connect_model", { filePath });
+  if (!isTauri()) {
+    await mockDelay(400);
+    return `Connected to: ${filePath.split(/[\\/]/).pop()}`;
+  }
+  return invoke<string>('connect_model', { filePath });
 }
 
-/** Unload the current model from memory. */
+export async function connectEmbeddingModel(filePath: string): Promise<LocalRuntimeStatus> {
+  if (!isTauri()) {
+    await mockDelay(400);
+    const status = await getLocalRuntimeStatus();
+    return { ...status, embeddingRunning: true, embeddingModel: filePath.split(/[\\/]/).pop() ?? filePath };
+  }
+  return invoke<LocalRuntimeStatus>('connect_embedding_model', { filePath });
+}
+
 export async function disconnectModel(): Promise<void> {
-  if (!isTauri()) { await mockDelay(400); return; }
-  return invoke<void>("disconnect_model");
+  if (!isTauri()) return;
+  await invoke<void>('disconnect_model');
 }
 
-/** Restart the local model engine without restarting the desktop app. */
 export async function restartAiEngine(): Promise<string> {
-  if (!isTauri()) { await mockDelay(500); return "AI engine restarted (browser preview)"; }
-  return invoke<string>("restart_ai_engine");
+  if (!isTauri()) return 'AI engine restarted (preview)';
+  return invoke<string>('restart_ai_engine');
 }
 
-/** Permanently delete a .gguf file from disk by its absolute path. */
 export async function deleteModel(filePath: string): Promise<void> {
-  if (!isTauri()) { await mockDelay(400); return; }
-  return invoke<void>("delete_model", { filePath });
+  if (!isTauri()) return;
+  await invoke<void>('delete_model', { filePath });
 }
 
-/** Returns the resolved models directory path. */
 export async function getModelsDir(): Promise<string> {
-  if (!isTauri()) return "/mock/models";
-  return invoke<string>("get_models_dir");
+  if (!isTauri()) return '/mock/models';
+  return invoke<string>('get_models_dir');
 }
 
-/** Returns the filename of the currently connected model, or null. */
 export async function getConnectedModel(): Promise<string | null> {
-  if (!isTauri()) return "Llama-3.2-1B-Instruct-Q4_K_M.gguf";
-  return invoke<string | null>("get_connected_model");
+  if (!isTauri()) return 'Llama-3.2-1B-Instruct-Q4_K_M.gguf';
+  return invoke<string | null>('get_connected_model');
 }
 
-// ── RAG configuration ────────────────────────────────────────────────────────
+// ── RAG & Context Config ────────────────────────────────────────────────────
 
-export const RAG_CONFIG_DEFAULTS: RagConfig = {
-  chunkSize: 900,
-  chunkOverlap: 150,
-  topK: 8,
-  showContext: false,
-};
-
-/** Retrieve the current RAG pipeline configuration from the backend. */
 export async function getRagConfig(): Promise<RagConfig> {
-  if (!isTauri()) return { ...RAG_CONFIG_DEFAULTS };
-  return invoke<RagConfig>("get_rag_config");
+  if (!isTauri()) return { ...RAG_CONFIG_DEFAULTS, embedding: { ...RAG_CONFIG_DEFAULTS.embedding } };
+  return invoke<RagConfig>('get_rag_config');
 }
 
-/** Persist updated RAG configuration to the backend AppState. */
 export async function saveRagConfig(config: RagConfig): Promise<void> {
-  if (!isTauri()) { await mockDelay(200); return; }
-  return invoke<void>("save_rag_config", { config });
+  if (!isTauri()) return;
+  await invoke<void>('save_rag_config', { config });
 }
 
-// ── Hidden desktop assistant lifecycle ──────────────────────────────────────
-
-export const ASSISTANT_SETTINGS_DEFAULTS: AssistantSettings = {
-  launchHidden: true,
-  hideOnClose: true,
-  hideFromTaskbar: true,
-  keepModelLoaded: true,
-  globalShortcut: "Alt+Space",
-  windowMode: "compact",
-  lastMonitorName: null,
-  firstOpenDone: false,
-};
+// ── Spotlight / Dashboard Window Lifecycle & Clipboard ──────────────────────
 
 export async function getAssistantStatus(): Promise<AssistantStatus> {
   if (!isTauri()) {
     return {
       isVisible: true,
-      settings: { ...ASSISTANT_SETTINGS_DEFAULTS },
+      isPinned: false,
+      autostartEnabled: false,
+      settings: { ...ASSISTANT_SETTINGS_DEFAULTS, windowMode: 'dashboard' },
       platform: {
-        platform: "browser",
-        startupHidden: "Desktop-only",
-        taskbarHidden: "Desktop-only",
-        altTabHidden: "Desktop-only",
-        focusNotes: "Desktop-only",
+        platform: 'browser',
+        startupHidden: 'Desktop-only',
+        taskbarHidden: 'Desktop-only',
+        altTabHidden: 'Desktop-only',
+        focusNotes: 'Desktop-only',
       },
     };
   }
-  return invoke<AssistantStatus>("get_assistant_status");
+  return invoke<AssistantStatus>('get_assistant_status');
 }
 
 export async function saveAssistantSettings(settings: AssistantSettings): Promise<AssistantSettings> {
-  if (!isTauri()) { await mockDelay(200); return settings; }
-  return invoke<AssistantSettings>("save_assistant_settings", { settings });
+  if (!isTauri()) return settings;
+  return invoke<AssistantSettings>('save_assistant_settings', { settings });
+}
+
+export async function setAssistantPinned(pinned: boolean): Promise<boolean> {
+  if (!isTauri()) return pinned;
+  return invoke<boolean>('set_assistant_pinned', { pinned });
+}
+
+export async function setAssistantFocusGuard(guard: { dialogOpen?: boolean; settingsOpen?: boolean }): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>('set_assistant_focus_guard', {
+    dialogOpen: guard.dialogOpen ?? null,
+    settingsOpen: guard.settingsOpen ?? null,
+  });
+}
+
+export async function setAutostartEnabled(enabled: boolean): Promise<boolean> {
+  if (!isTauri()) return enabled;
+  return invoke<boolean>('set_autostart_enabled', { enabled });
+}
+
+export async function readClipboardText(): Promise<string> {
+  if (!isTauri()) {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.readText) {
+      return navigator.clipboard.readText();
+    }
+    return '';
+  }
+  return invoke<string>('read_clipboard_text');
 }
 
 export async function hideAssistantWindow(): Promise<void> {
   if (!isTauri()) return;
-  return invoke<void>("hide_assistant_window");
+  await invoke<void>('hide_assistant_window');
 }
 
 export async function showAssistantWindow(): Promise<void> {
   if (!isTauri()) return;
-  return invoke<void>("show_assistant_window");
-}
-
-export async function toggleAssistantWindow(): Promise<void> {
-  if (!isTauri()) return;
-  return invoke<void>("toggle_assistant_window");
+  await invoke<void>('show_assistant_window');
 }
 
 export async function setAssistantWindowMode(windowMode: AssistantWindowMode): Promise<AssistantWindowMode> {
   if (!isTauri()) return windowMode;
-  return invoke<AssistantWindowMode>("set_assistant_window_mode", { windowMode });
+  return invoke<AssistantWindowMode>('set_assistant_window_mode', { windowMode });
 }
 
 export async function cycleAssistantWindowMode(): Promise<AssistantWindowMode> {
-  if (!isTauri()) return "medium";
-  return invoke<AssistantWindowMode>("cycle_assistant_window_mode");
+  if (!isTauri()) return 'dashboard';
+  return invoke<AssistantWindowMode>('cycle_assistant_window_mode');
 }
 
 export async function checkForUpdates(): Promise<string> {
-  if (!isTauri()) return "No updater plugin is configured for browser preview.";
-  return invoke<string>("check_for_updates");
+  if (!isTauri()) return 'Updates are checked against GitHub Releases on desktop.';
+  return invoke<string>('check_for_updates');
 }
 
-// ── Cloud and remote provider settings ──────────────────────────────────────
+// ── Providers & Dynamic Model Listing ───────────────────────────────────────
 
 export async function listAiProviderConfigs(): Promise<ProviderList> {
   if (!isTauri()) {
     return {
-      activeProviderId: "local",
-      secureStorageAvailable: false,
-      providers: [{
-        id: "local",
-        name: "Local",
-        provider: "local",
-        enabled: true,
-        baseUrl: null,
-        model: null,
-        organization: null,
-        project: null,
-        timeoutSecs: 60,
-        temperature: 0.2,
-        apiKeySet: false,
-        options: {},
-      }],
+      activeProviderId: 'local',
+      secureStorageAvailable: true,
+      providers: [
+        {
+          id: 'local',
+          name: 'Built-in Local (GGUF)',
+          provider: 'local',
+          enabled: true,
+          baseUrl: null,
+          model: 'Llama-3.2-1B-Instruct-Q4_K_M.gguf',
+          organization: null,
+          project: null,
+          timeoutSecs: 60,
+          temperature: 0.3,
+          apiKeySet: false,
+          options: {},
+        },
+      ],
     };
   }
-  return invoke<ProviderList>("list_ai_provider_configs");
+  return invoke<ProviderList>('list_ai_provider_configs');
 }
 
 export async function saveAiProviderConfig(input: AiProviderConfigInput): Promise<AiProviderConfig> {
   if (!isTauri()) {
-    await mockDelay(250);
     return {
       ...input,
       id: input.id ?? `provider-${Date.now()}`,
-      apiKeySet: !!input.apiKey,
+      apiKeySet: !!input.apiKey && !input.deleteApiKey,
       baseUrl: input.baseUrl ?? null,
       model: input.model ?? null,
       organization: input.organization ?? null,
       project: input.project ?? null,
     };
   }
-  return invoke<AiProviderConfig>("save_ai_provider_config", { input });
+  return invoke<AiProviderConfig>('save_ai_provider_config', { input });
 }
 
 export async function deleteAiProviderConfig(providerId: string): Promise<void> {
-  if (!isTauri()) { await mockDelay(200); return; }
-  return invoke<void>("delete_ai_provider_config", { providerId });
+  if (!isTauri()) return;
+  await invoke<void>('delete_ai_provider_config', { providerId });
 }
 
 export async function setActiveAiProvider(providerId: string): Promise<string> {
-  if (!isTauri()) { await mockDelay(150); return providerId; }
-  return invoke<string>("set_active_ai_provider", { providerId });
+  if (!isTauri()) return providerId;
+  return invoke<string>('set_active_ai_provider', { providerId });
 }
 
 export async function testAiProviderConnection(providerId: string): Promise<ProviderTestResult> {
-  if (!isTauri()) { await mockDelay(700); return { ok: true, message: "Preview connection succeeded." }; }
-  return invoke<ProviderTestResult>("test_ai_provider_connection", { providerId });
+  if (!isTauri()) {
+    await mockDelay(350);
+    return {
+      ok: true,
+      message: 'Verified (preview)',
+      models: [
+        { id: 'gpt-4.1-mini', label: 'gpt-4.1-mini' },
+        { id: 'gemini-2.5-flash', label: 'gemini-2.5-flash' },
+      ],
+    };
+  }
+  return invoke<ProviderTestResult>('test_ai_provider_connection', { providerId });
+}
+
+export async function fetchAiProviderModels(providerId: string): Promise<ProviderModelInfo[]> {
+  if (!isTauri()) return [];
+  return invoke<ProviderModelInfo[]>('fetch_ai_provider_models', { providerId });
 }

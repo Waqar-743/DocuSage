@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "DocuSage",
-  "version": "0.5.5",
+  "version": "2.0.0",
   "identifier": "com.docusage.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run build:desktop",
     "frontendDist": "../dist"
   },
   "app": {
@@ -14,9 +14,9 @@
       {
         "label": "main",
         "title": "DocuSage",
-        "width": 640,
-        "height": 760,
-        "minWidth": 420,
+        "width": 440,
+        "height": 560,
+        "minWidth": 380,
         "minHeight": 420,
         "visible": false,
         "skipTaskbar": true,
