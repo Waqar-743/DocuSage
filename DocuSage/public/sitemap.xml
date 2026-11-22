@@ -1,9 +1,32 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<urlset
+  xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+  xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"
+>
   <url>
     <loc>https://waqar-743.github.io/DocuSage/</loc>
-    <lastmod>2026-07-17</lastmod>
+    <lastmod>2026-11-22</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
+    <image:image>
+      <image:loc>https://waqar-743.github.io/DocuSage/media/desktop-dark.webp</image:loc>
+      <image:title>DocuSage 2.0 Dark Mode Desktop Workspace</image:title>
+      <image:caption>Private local AI PDF chat and Hybrid SQLite RAG workspace in dark mode</image:caption>
+    </image:image>
+    <image:image>
+      <image:loc>https://waqar-743.github.io/DocuSage/media/desktop-light.webp</image:loc>
+      <image:title>DocuSage 2.0 Light Mode Desktop Workspace</image:title>
+      <image:caption>Private local AI PDF chat and Hybrid SQLite RAG workspace in light mode</image:caption>
+    </image:image>
+    <image:image>
+      <image:loc>https://waqar-743.github.io/DocuSage/media/desktop-models.webp</image:loc>
+      <image:title>DocuSage Local GGUF Model Catalog</image:title>
+      <image:caption>Download and manage local GGUF models for offline AI chat</image:caption>
+    </image:image>
+    <image:image>
+      <image:loc>https://waqar-743.github.io/DocuSage/media/desktop-providers.webp</image:loc>
+      <image:title>DocuSage AI Provider Settings</image:title>
+      <image:caption>Configure Local GGUF, Ollama, LM Studio, Gemini, OpenAI, Anthropic Claude, and OpenRouter</image:caption>
+    </image:image>
   </url>
 </urlset>
