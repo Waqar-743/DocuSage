@@ -14,8 +14,6 @@ jobs:
   windows:
     runs-on: windows-latest
     timeout-minutes: 90
-    env:
-      CARGO_BUILD_JOBS: 2
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -24,11 +22,9 @@ jobs:
           cache: npm
           cache-dependency-path: DocuSage/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
-      - uses: arduino/setup-protoc@v3
-        with:
-          version: "28.x"
       - uses: swatinem/rust-cache@v2
         with:
+          shared-key: windows
           workspaces: DocuSage/src-tauri -> target
       - name: Install and test frontend
         working-directory: DocuSage
@@ -40,7 +36,7 @@ jobs:
         run: npm run tauri build -- --no-bundle
       - name: Run Rust regression tests
         working-directory: DocuSage/src-tauri
-        run: cargo test --locked --release --lib --features tauri/custom-protocol
+        run: cargo test --locked --release --lib --features tauri/custom-protocol --config profile.release.lto=false
       - name: Smoke-test production executable startup
         shell: pwsh
         run: |

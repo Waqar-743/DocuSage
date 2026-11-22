@@ -35,6 +35,7 @@ pub struct AssistantRuntime {
     pinned: AtomicBool,
     dialog_open: AtomicBool,
     settings_open: AtomicBool,
+    pending_show: AtomicBool,
     suppress_blur_until: Mutex<Option<Instant>>,
 }
 
@@ -458,7 +459,9 @@ fn record_current_window_bounds(window: &tauri::Window) {
 }
 
 fn should_debounce(app: &AppHandle) -> bool {
-    let runtime = app.state::<AssistantRuntime>();
+    let Some(runtime) = app.try_state::<AssistantRuntime>() else {
+        return false;
+    };
     let mut guard = match runtime.last_activation.lock() {
         Ok(g) => g,
         Err(_) => return false,
@@ -474,17 +477,31 @@ fn should_debounce(app: &AppHandle) -> bool {
 }
 
 fn suppress_blur_briefly(app: &AppHandle, ms: u64) {
-    if let Ok(mut guard) = app.state::<AssistantRuntime>().suppress_blur_until.lock() {
-        *guard = Some(Instant::now() + Duration::from_millis(ms));
+    if let Some(runtime) = app.try_state::<AssistantRuntime>() {
+        if let Ok(mut guard) = runtime.suppress_blur_until.lock() {
+            let candidate = Instant::now() + Duration::from_millis(ms);
+            let next = match *guard {
+                Some(existing) if existing > candidate => existing,
+                _ => candidate,
+            };
+            *guard = Some(next);
+        }
     }
 }
 
-pub fn show_assistant(app: &AppHandle) -> Result<(), String> {
+fn show_assistant_with_blur_guard(app: &AppHandle, blur_guard_ms: u64) -> Result<(), String> {
+    let Ok(window) = main_window(app) else {
+        if let Some(runtime) = app.try_state::<AssistantRuntime>() {
+            runtime.pending_show.store(true, Ordering::Relaxed);
+        }
+        suppress_blur_briefly(app, blur_guard_ms.max(30_000));
+        return Ok(());
+    };
+
     if should_debounce(app) {
         return Ok(());
     }
 
-    let window = main_window(app)?;
     let mut settings = read_settings(app);
     if !settings.first_open_done {
         settings.window_mode = AssistantWindowMode::Spotlight;
@@ -492,13 +509,13 @@ pub fn show_assistant(app: &AppHandle) -> Result<(), String> {
         let _ = write_settings(app, &settings);
     }
 
-    suppress_blur_briefly(app, 350);
+    suppress_blur_briefly(app, blur_guard_ms);
     let _ = window.set_skip_taskbar(false);
-    apply_window_geometry(
+    let _ = apply_window_geometry(
         &window,
         &settings,
         settings.window_mode == AssistantWindowMode::Spotlight,
-    )?;
+    );
     window
         .show()
         .map_err(|e| format!("Cannot show assistant: {e}"))?;
@@ -506,6 +523,14 @@ pub fn show_assistant(app: &AppHandle) -> Result<(), String> {
     let _ = window.set_focus();
     let _ = app.emit("assistant-focus-prompt", serde_json::json!({}));
     Ok(())
+}
+
+pub fn show_assistant(app: &AppHandle) -> Result<(), String> {
+    show_assistant_with_blur_guard(app, 350)
+}
+
+pub fn show_assistant_from_single_instance(app: &AppHandle) -> Result<(), String> {
+    show_assistant_with_blur_guard(app, 30_000)
 }
 
 pub fn hide_assistant(app: &AppHandle) -> Result<(), String> {
@@ -686,7 +711,9 @@ fn set_mode_internal(
 }
 
 pub fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
-    app.manage(AssistantRuntime::default());
+    if app.try_state::<AssistantRuntime>().is_none() {
+        app.manage(AssistantRuntime::default());
+    }
 
     let app_handle = app.handle().clone();
     let mut settings = register_shortcut_with_fallback(&app_handle, &read_settings(&app_handle));
@@ -700,14 +727,20 @@ pub fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
 
     setup_tray(app)?;
 
+    let pending_show = app
+        .try_state::<AssistantRuntime>()
+        .is_some_and(|rt| rt.pending_show.swap(false, Ordering::Relaxed));
+
     if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-        if launched_with_hidden_arg || settings.launch_hidden {
+        if !pending_show && (launched_with_hidden_arg || settings.launch_hidden) {
             let _ = window.set_skip_taskbar(settings.hide_from_taskbar);
             let _ = window.hide();
         } else {
+            suppress_blur_briefly(&app_handle, 30_000);
             let _ = window.set_skip_taskbar(false);
             let _ = apply_window_geometry(&window, &settings, false);
             let _ = window.show();
+            let _ = window.unminimize();
             let _ = window.set_focus();
         }
     }
@@ -741,7 +774,9 @@ pub fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
             {
                 return;
             }
-            let rt = app.state::<AssistantRuntime>();
+            let Some(rt) = app.try_state::<AssistantRuntime>() else {
+                return;
+            };
             if rt.pinned.load(Ordering::Relaxed)
                 || rt.dialog_open.load(Ordering::Relaxed)
                 || rt.settings_open.load(Ordering::Relaxed)
@@ -762,11 +797,13 @@ pub fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
 #[tauri::command]
 pub fn get_assistant_status(app: AppHandle) -> Result<AssistantStatus, String> {
     let window = main_window(&app)?;
-    let rt = app.state::<AssistantRuntime>();
+    let is_pinned = app
+        .try_state::<AssistantRuntime>()
+        .is_some_and(|rt| rt.pinned.load(Ordering::Relaxed));
     let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
     Ok(AssistantStatus {
         is_visible: window.is_visible().unwrap_or(false),
-        is_pinned: rt.pinned.load(Ordering::Relaxed),
+        is_pinned,
         autostart_enabled,
         settings: read_settings(&app),
         platform: platform_capability(),
@@ -800,8 +837,9 @@ pub fn save_assistant_settings(
 
 #[tauri::command]
 pub fn set_assistant_pinned(app: AppHandle, pinned: bool) -> Result<bool, String> {
-    let rt = app.state::<AssistantRuntime>();
-    rt.pinned.store(pinned, Ordering::Relaxed);
+    if let Some(rt) = app.try_state::<AssistantRuntime>() {
+        rt.pinned.store(pinned, Ordering::Relaxed);
+    }
     if let Ok(window) = main_window(&app) {
         let settings = read_settings(&app);
         if settings.window_mode == AssistantWindowMode::Spotlight {
@@ -819,12 +857,13 @@ pub fn set_assistant_focus_guard(
     dialog_open: Option<bool>,
     settings_open: Option<bool>,
 ) -> Result<(), String> {
-    let rt = app.state::<AssistantRuntime>();
-    if let Some(v) = dialog_open {
-        rt.dialog_open.store(v, Ordering::Relaxed);
-    }
-    if let Some(v) = settings_open {
-        rt.settings_open.store(v, Ordering::Relaxed);
+    if let Some(rt) = app.try_state::<AssistantRuntime>() {
+        if let Some(v) = dialog_open {
+            rt.dialog_open.store(v, Ordering::Relaxed);
+        }
+        if let Some(v) = settings_open {
+            rt.settings_open.store(v, Ordering::Relaxed);
+        }
     }
     Ok(())
 }

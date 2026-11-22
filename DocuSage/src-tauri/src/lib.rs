@@ -102,8 +102,10 @@ pub fn run() {
     let app_state = AppState::new(resolve_model_path());
 
     let app = tauri::Builder::default()
+        .manage(app_state)
+        .manage(assistant::AssistantRuntime::default())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            let _ = assistant::show_assistant(app);
+            let _ = assistant::show_assistant_from_single_instance(app);
         }))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -122,7 +124,6 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             Some(vec!["--hidden"]),
         ))
-        .manage(app_state)
         .setup(|app| {
             let models = app.path().app_data_dir()?.join("models");
             if let Ok(entries) = std::fs::read_dir(&models) {

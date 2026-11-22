@@ -23,11 +23,7 @@ concurrency:
 jobs:
   windows:
     runs-on: windows-latest
-    # LTO + single-codegen-unit release builds of the mistralrs/lancedb
-    # dependency tree exceed the previous 90-minute budget on 2-core runners.
-    timeout-minutes: 240
-    env:
-      CARGO_BUILD_JOBS: 2
+    timeout-minutes: 90
     steps:
       - name: Checkout the release tag
         uses: actions/checkout@v4
@@ -47,9 +43,6 @@ jobs:
           cache: npm
           cache-dependency-path: DocuSage/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
-      - uses: arduino/setup-protoc@v3
-        with:
-          version: "28.x"
       - uses: swatinem/rust-cache@v2
         with:
           shared-key: windows
@@ -64,7 +57,7 @@ jobs:
         run: npm run tauri build -- --ci
       - name: Run Rust regression tests
         working-directory: DocuSage/src-tauri
-        run: cargo test --locked --release --lib --features tauri/custom-protocol
+        run: cargo test --locked --release --lib --features tauri/custom-protocol --config profile.release.lto=false
       - name: Install and launch both Windows packages
         shell: pwsh
         run: ./.github/scripts/test-windows-installers.ps1
@@ -87,5 +80,13 @@ jobs:
           $checksums = Join-Path $env:RUNNER_TEMP 'SHA256SUMS.txt'
           $lines = $assets | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name }
           Set-Content -Path $checksums -Value $lines -Encoding utf8NoBOM
-          gh release create $env:RELEASE_TAG @($assets.FullName) $checksums --repo $env:GITHUB_REPOSITORY --verify-tag --title "DocuSage $env:RELEASE_TAG" --notes-file "DocuSage/docs/releases/$env:RELEASE_TAG.md"
-          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }
+          gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:RELEASE_TAG @($assets.FullName) $checksums --clobber --repo $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { throw 'Release asset upload failed' }
+            gh release edit $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --title "DocuSage $env:RELEASE_TAG" --notes-file "DocuSage/docs/releases/$env:RELEASE_TAG.md"
+            if ($LASTEXITCODE -ne 0) { throw 'Release metadata update failed' }
+          } else {
+            gh release create $env:RELEASE_TAG @($assets.FullName) $checksums --repo $env:GITHUB_REPOSITORY --verify-tag --title "DocuSage $env:RELEASE_TAG" --notes-file "DocuSage/docs/releases/$env:RELEASE_TAG.md"
+            if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }
+          }
