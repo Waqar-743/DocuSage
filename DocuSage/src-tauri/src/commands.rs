@@ -104,13 +104,15 @@ pub async fn chat_send(
             None => {
                 // Zero-config auto-start: if runtime is installed and a GGUF is downloaded,
                 // start it automatically without asking for any local path.
-                if state.local_runtime.status(&app).await.installed
-                    && load_model(app.clone(), state.clone(), None).await.is_ok()
-                {
-                    state.local_runtime.chat_base_url().await
-                } else {
-                    None
+                let status = state.local_runtime.status(&app).await;
+                if !status.installed {
+                    return Err(
+                        "Built-in llama-server runtime is not installed yet. Click 'Install Local Runtime' in Settings -> Local AI & GGUF."
+                            .to_string(),
+                    );
                 }
+                load_model(app.clone(), state.clone(), None).await?;
+                state.local_runtime.chat_base_url().await
             }
         }
     } else {
