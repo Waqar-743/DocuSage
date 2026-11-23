@@ -37,7 +37,7 @@ export const MessageBubble: React.FC<Props> = ({ message, compact = false, onBra
           compact ? 'max-w-[94%]' : 'max-w-[85%]'
         } ${
           message.isError
-            ? 'bg-rose-500/10 border border-rose-500/40 text-rose-300'
+            ? theme.dangerSoft
             : isUser
             ? theme.userBubble
             : theme.botBubble
@@ -88,17 +88,17 @@ export const MessageBubble: React.FC<Props> = ({ message, compact = false, onBra
           <button
             type="button"
             onClick={copyMessage}
-            className={`p-1 rounded hover:bg-zinc-500/15 ${theme.textMuted}`}
+            className={`p-1 rounded ${theme.hoverBg} ${theme.textMuted}`}
             title="Copy message"
             aria-label="Copy message"
           >
-            {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+            {copied ? <Check className={`w-3.5 h-3.5 ${theme.accentText}`} /> : <Copy className="w-3.5 h-3.5" />}
           </button>
           {onBranch && (
             <button
               type="button"
               onClick={() => onBranch(message.id)}
-              className={`p-1 rounded hover:bg-zinc-500/15 ${theme.textMuted}`}
+              className={`p-1 rounded ${theme.hoverBg} ${theme.textMuted}`}
               title="Branch conversation from here"
               aria-label="Branch from message"
             >

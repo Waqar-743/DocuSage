@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { Check, Copy } from 'lucide-react';
 import { highlightCodeLine, parseMarkdownBlocks } from '../../lib/markdown';
+import { THEMES, type ThemeTokens } from '../../lib/themes';
+import { useUiStore } from '../../stores/useUiStore';
 
-function renderInline(text: string): React.ReactNode[] {
+function renderInline(text: string, theme: ThemeTokens): React.ReactNode[] {
   const parts: React.ReactNode[] = [];
   const regex = /(\[Source:[^\]]+\]|`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|_[^_]+_)/g;
   let last = 0;
@@ -18,7 +20,7 @@ function renderInline(text: string): React.ReactNode[] {
       parts.push(
         <span
           key={key++}
-          className="inline-flex items-center px-1.5 py-0.5 mx-0.5 rounded text-[11px] font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+          className={`inline-flex items-center px-1.5 py-0.5 mx-0.5 rounded text-[11px] font-medium border ${theme.accentSoft}`}
         >
           {token.slice(1, -1)}
         </span>,
@@ -27,7 +29,11 @@ function renderInline(text: string): React.ReactNode[] {
       parts.push(
         <code
           key={key++}
-          className="px-1.5 py-0.5 rounded bg-black/25 font-mono text-[12px] text-emerald-300"
+          className={`px-1.5 py-0.5 rounded font-mono text-[12px] ${
+            theme.isDark
+              ? 'bg-white/10 text-emerald-300'
+              : 'bg-black/[0.07] text-emerald-800'
+          }`}
         >
           {token.slice(1, -1)}
         </code>,
@@ -114,6 +120,7 @@ function CodeBlock({ lang, content }: { lang: string; content: string }) {
 }
 
 export const Markdown: React.FC<{ content: string }> = React.memo(({ content }) => {
+  const theme = useUiStore((s) => THEMES[s.theme]);
   const blocks = parseMarkdownBlocks(content);
   if (blocks.length === 0) {
     return <span className="whitespace-pre-wrap">{content}</span>;
@@ -134,7 +141,7 @@ export const Markdown: React.FC<{ content: string }> = React.memo(({ content }) 
                 : 'text-[13.5px] font-semibold mt-2';
             return (
               <div key={idx} className={cls}>
-                {renderInline(block.text)}
+                {renderInline(block.text, theme)}
               </div>
             );
           }
@@ -142,10 +149,10 @@ export const Markdown: React.FC<{ content: string }> = React.memo(({ content }) 
             return (
               <blockquote
                 key={idx}
-                className="border-l-2 border-emerald-500/60 pl-3 py-0.5 text-zinc-400 italic space-y-1"
+                className={`border-l-2 border-emerald-500/60 pl-3 py-0.5 italic space-y-1 ${theme.textMuted}`}
               >
                 {block.lines.map((l, i) => (
-                  <p key={i}>{renderInline(l)}</p>
+                  <p key={i}>{renderInline(l, theme)}</p>
                 ))}
               </blockquote>
             );
@@ -153,7 +160,7 @@ export const Markdown: React.FC<{ content: string }> = React.memo(({ content }) 
             return (
               <ul key={idx} className="list-disc pl-5 space-y-1">
                 {block.items.map((item, i) => (
-                  <li key={i}>{renderInline(item)}</li>
+                  <li key={i}>{renderInline(item, theme)}</li>
                 ))}
               </ul>
             );
@@ -161,16 +168,16 @@ export const Markdown: React.FC<{ content: string }> = React.memo(({ content }) 
             return (
               <ol key={idx} className="list-decimal pl-5 space-y-1">
                 {block.items.map((item, i) => (
-                  <li key={i}>{renderInline(item)}</li>
+                  <li key={i}>{renderInline(item, theme)}</li>
                 ))}
               </ol>
             );
           case 'hr':
-            return <hr key={idx} className="border-zinc-700/60 my-2" />;
+            return <hr key={idx} className={`${theme.border} my-2`} />;
           case 'paragraph':
             return (
               <p key={idx} className="whitespace-pre-wrap">
-                {renderInline(block.text)}
+                {renderInline(block.text, theme)}
               </p>
             );
         }

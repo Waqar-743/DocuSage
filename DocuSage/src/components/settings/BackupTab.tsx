@@ -67,7 +67,7 @@ export const BackupTab: React.FC = () => {
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${theme.border}`}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${theme.border} ${theme.hoverBg}`}
           >
             <Upload className="w-3.5 h-3.5" />
             <span>Import JSON Backup</span>
@@ -94,7 +94,7 @@ export const BackupTab: React.FC = () => {
               'text/markdown',
             )
           }
-          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${theme.border}`}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${theme.border} ${theme.hoverBg}`}
         >
           <FileText className="w-3.5 h-3.5" />
           <span>Download Markdown (.md)</span>

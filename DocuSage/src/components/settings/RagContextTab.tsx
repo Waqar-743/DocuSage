@@ -147,12 +147,12 @@ export const RagContextTab: React.FC = () => {
             }
             className={`w-full rounded-lg border px-2.5 py-1.5 ${theme.inputBg} ${theme.border}`}
           >
-            <option value="auto" className="bg-zinc-900 text-zinc-100">Auto (Local → Active Provider → FTS5)</option>
-            <option value="none" className="bg-zinc-900 text-zinc-100">FTS5 Offline Only (Zero ML)</option>
-            <option value="localLlama" className="bg-zinc-900 text-zinc-100">Built-in llama-server (/v1/embeddings)</option>
-            <option value="ollama" className="bg-zinc-900 text-zinc-100">Ollama (/api/embed)</option>
-            <option value="gemini" className="bg-zinc-900 text-zinc-100">Google Gemini (gemini-embedding-001)</option>
-            <option value="openAiCompatible" className="bg-zinc-900 text-zinc-100">OpenAI-Compatible (/v1/embeddings)</option>
+            <option value="auto" className={theme.selectOption}>Auto (Local → Active Provider → FTS5)</option>
+            <option value="none" className={theme.selectOption}>FTS5 Offline Only (Zero ML)</option>
+            <option value="localLlama" className={theme.selectOption}>Built-in llama-server (/v1/embeddings)</option>
+            <option value="ollama" className={theme.selectOption}>Ollama (/api/embed)</option>
+            <option value="gemini" className={theme.selectOption}>Google Gemini (gemini-embedding-001)</option>
+            <option value="openAiCompatible" className={theme.selectOption}>OpenAI-Compatible (/v1/embeddings)</option>
           </select>
         </label>
       </div>
@@ -187,13 +187,13 @@ export const RagContextTab: React.FC = () => {
         </div>
       )}
 
-      {statusMsg && <p className="text-emerald-400 text-[11.5px]">{statusMsg}</p>}
+      {statusMsg && <p className={`text-[11.5px] font-medium ${theme.accentText}`}>{statusMsg}</p>}
 
       <div className="flex items-center justify-end gap-2 pt-2">
         <button
           type="button"
           onClick={() => void handleReset()}
-          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${theme.border}`}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${theme.border} ${theme.hoverBg}`}
         >
           <RotateCcw className="w-3.5 h-3.5" />
           <span>Reset</span>

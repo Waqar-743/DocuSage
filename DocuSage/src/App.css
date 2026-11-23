@@ -24,18 +24,43 @@ textarea:focus-visible {
   outline-offset: 2px;
 }
 
+[data-theme="navy"] button:focus-visible,
+[data-theme="navy"] input:focus-visible,
+[data-theme="navy"] select:focus-visible,
+[data-theme="navy"] textarea:focus-visible,
+[data-theme="ocean"] button:focus-visible,
+[data-theme="ocean"] input:focus-visible,
+[data-theme="ocean"] select:focus-visible,
+[data-theme="ocean"] textarea:focus-visible {
+  outline-color: #60a5fa;
+}
+
+[data-theme="cream"] button:focus-visible,
+[data-theme="cream"] input:focus-visible,
+[data-theme="cream"] select:focus-visible,
+[data-theme="cream"] textarea:focus-visible {
+  outline-color: #9a4f1b;
+}
+
 textarea {
   min-width: 0;
 }
 
 /* Native WebKit select painting can ignore dark backgrounds. Render the
-   control consistently while keeping the platform's option list. */
+   control consistently while keeping the platform's option list readable. */
 select {
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23767b85' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2352525b' stroke-width='2.2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 9px center;
   padding-right: 28px !important;
+}
+
+[data-theme="dark"] select,
+[data-theme="navy"] select,
+[data-theme="ocean"] select,
+[data-theme="glass"] select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23cbd5e1' stroke-width='2.2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
 }
 
 @media (max-width: 620px) {

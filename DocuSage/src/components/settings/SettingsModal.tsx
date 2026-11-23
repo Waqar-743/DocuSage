@@ -36,7 +36,7 @@ export const SettingsModal: React.FC = () => {
       aria-label="Settings"
     >
       <div
-        className={`w-full max-w-4xl h-[82vh] rounded-2xl border shadow-2xl flex flex-col sm:flex-row overflow-hidden ${theme.surfaceElevated} ${theme.border}`}
+        className={`w-full max-w-4xl h-[82vh] rounded-2xl border shadow-2xl flex flex-col sm:flex-row overflow-hidden ${theme.surfaceElevated} ${theme.border} ${theme.text}`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Left Navigation */}
@@ -51,8 +51,8 @@ export const SettingsModal: React.FC = () => {
                 key={item.id}
                 type="button"
                 onClick={() => setTab(item.id)}
-                className={`flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs font-medium shrink-0 transition-colors ${
-                  active ? theme.accentSoft + ' border' : 'border border-transparent hover:bg-zinc-500/10'
+                className={`flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs font-medium shrink-0 transition-colors border ${
+                  active ? theme.accentSoft : `border-transparent ${theme.hoverBg}`
                 }`}
               >
                 {item.icon}
@@ -72,7 +72,7 @@ export const SettingsModal: React.FC = () => {
               type="button"
               onClick={close}
               aria-label="Close Settings"
-              className="p-1.5 rounded-lg hover:bg-zinc-500/15"
+              className={`p-1.5 rounded-lg transition-colors ${theme.hoverBg}`}
             >
               <X className="w-4 h-4" />
             </button>

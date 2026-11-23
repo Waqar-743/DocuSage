@@ -14,7 +14,7 @@ export const BranchSelector: React.FC = () => {
 
   return (
     <div className={`flex items-center gap-1.5 px-4 py-1.5 border-b text-xs overflow-x-auto ${theme.border} ${theme.surfaceBg}`}>
-      <GitBranch className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+      <GitBranch className={`w-3.5 h-3.5 shrink-0 ${theme.accentText}`} />
       <span className={`text-[11px] shrink-0 ${theme.textMuted}`}>Branches:</span>
       {chat.branches.map((branch) => {
         const active = branch.id === chat.activeBranchId;
@@ -22,7 +22,7 @@ export const BranchSelector: React.FC = () => {
           <div
             key={branch.id}
             className={`inline-flex items-center gap-1 rounded-full pl-2.5 pr-1 py-0.5 border text-[11px] transition-colors ${
-              active ? theme.accentSoft : `${theme.border} opacity-75 hover:opacity-100`
+              active ? theme.accentSoft : `${theme.border} opacity-80 hover:opacity-100`
             }`}
           >
             <button
@@ -37,7 +37,7 @@ export const BranchSelector: React.FC = () => {
                 type="button"
                 onClick={() => deleteBranch(chat.id, branch.id)}
                 aria-label={`Delete branch ${branch.name}`}
-                className="p-0.5 rounded-full hover:bg-black/20"
+                className={`p-0.5 rounded-full ${theme.hoverBg}`}
               >
                 <Trash2 className="w-2.5 h-2.5" />
               </button>

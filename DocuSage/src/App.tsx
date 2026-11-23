@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import * as api from './lib/api';
+import { THEMES } from './lib/themes';
 import { CommandPalette } from './components/common/CommandPalette';
 import { ModelCompare } from './components/common/ModelCompare';
 import { ShortcutsModal } from './components/common/ShortcutsModal';
@@ -21,6 +22,8 @@ import type {
 import './App.css';
 
 export default function App() {
+  const themeKey = useUiStore((s) => s.theme);
+  const theme = THEMES[themeKey];
   const windowMode = useUiStore((s) => s.windowMode);
   const setWindowMode = useUiStore((s) => s.setWindowMode);
   const hydrateAssistant = useUiStore((s) => s.hydrateAssistant);
@@ -47,6 +50,12 @@ export default function App() {
   const appendQuoteToActiveDraft = useChatStore((s) => s.appendQuoteToActiveDraft);
 
   const [focusSignal, setFocusSignal] = useState(0);
+
+  // Sync active theme attribute & OS color-scheme for scrollbars/native controls
+  useEffect(() => {
+    document.documentElement.dataset.theme = themeKey;
+    document.documentElement.style.colorScheme = theme.isDark ? 'dark' : 'light';
+  }, [themeKey, theme.isDark]);
 
   // Initial backend hydration
   useEffect(() => {
@@ -206,7 +215,7 @@ export default function App() {
   ]);
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-transparent">
+    <div className={`h-screen w-screen overflow-hidden bg-transparent ${theme.text}`}>
       {windowMode === 'spotlight' ? (
         <SpotlightView focusSignal={focusSignal} />
       ) : (

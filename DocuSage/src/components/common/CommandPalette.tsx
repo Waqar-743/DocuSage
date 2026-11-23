@@ -7,13 +7,14 @@ import {
   Maximize2,
   MessageSquare,
   Minimize2,
+  Palette,
   Plus,
   Search,
   Settings,
   Sparkles,
   WifiOff,
 } from 'lucide-react';
-import { THEMES } from '../../lib/themes';
+import { APPEARANCE_OPTIONS, THEMES } from '../../lib/themes';
 import { useChatStore } from '../../stores/useChatStore';
 import { useProviderStore } from '../../stores/useProviderStore';
 import { useUiStore } from '../../stores/useUiStore';
@@ -31,6 +32,7 @@ export const CommandPalette: React.FC = () => {
   const open = useUiStore((s) => s.commandPaletteOpen);
   const setOpen = useUiStore((s) => s.setCommandPaletteOpen);
   const theme = useUiStore((s) => THEMES[s.theme]);
+  const setTheme = useUiStore((s) => s.setTheme);
   const windowMode = useUiStore((s) => s.windowMode);
   const toggleWindowMode = useUiStore((s) => s.toggleWindowMode);
   const openSettings = useUiStore((s) => s.openSettings);
@@ -132,6 +134,17 @@ export const CommandPalette: React.FC = () => {
       });
     }
 
+    for (const opt of APPEARANCE_OPTIONS) {
+      list.push({
+        id: `theme-${opt.key}`,
+        group: 'Themes',
+        label: `Switch Theme → ${opt.label}`,
+        hint: opt.description,
+        icon: <Palette className={`w-4 h-4 ${theme.accentText}`} />,
+        run: () => setTheme(opt.key),
+      });
+    }
+
     for (const c of chats.slice(0, 12)) {
       list.push({
         id: `chat-${c.id}`,
@@ -162,6 +175,8 @@ export const CommandPalette: React.FC = () => {
     setCompareOpen,
     setRagDebugOpen,
     setShortcutsOpen,
+    setTheme,
+    theme.accentText,
     toggleWindowMode,
     windowMode,
   ]);
@@ -182,11 +197,11 @@ export const CommandPalette: React.FC = () => {
       aria-label="Command Palette"
     >
       <div
-        className={`w-full max-w-lg rounded-2xl border shadow-2xl overflow-hidden ${theme.surfaceElevated} ${theme.border}`}
+        className={`w-full max-w-lg rounded-2xl border shadow-2xl overflow-hidden ${theme.surfaceElevated} ${theme.border} ${theme.text}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className={`flex items-center gap-2.5 px-4 py-3 border-b ${theme.border}`}>
-          <Search className="w-4 h-4 opacity-60 shrink-0" />
+          <Search className="w-4 h-4 opacity-70 shrink-0" />
           <input
             ref={inputRef}
             value={query}
@@ -208,10 +223,10 @@ export const CommandPalette: React.FC = () => {
                 setOpen(false);
               }
             }}
-            placeholder="Type a command, switch models, or jump to a chat…"
+            placeholder="Type a command, switch models or themes, or jump to a chat…"
             className="flex-1 bg-transparent outline-none text-sm"
           />
-          <kbd className="text-[10px] px-1.5 py-0.5 rounded bg-black/25 opacity-60">ESC</kbd>
+          <kbd className={`text-[10px] px-1.5 py-0.5 rounded ${theme.badgeBg}`}>ESC</kbd>
         </div>
 
         <div className="max-h-80 overflow-y-auto p-1.5">
@@ -224,8 +239,8 @@ export const CommandPalette: React.FC = () => {
                 type="button"
                 onClick={() => execute(item)}
                 onMouseEnter={() => setSelectedIdx(idx)}
-                className={`w-full flex items-center justify-between gap-3 px-3 py-2 rounded-xl text-left text-xs transition-colors ${
-                  idx === selectedIdx ? theme.accentSoft + ' border' : 'border border-transparent hover:bg-zinc-500/10'
+                className={`w-full flex items-center justify-between gap-3 px-3 py-2 rounded-xl text-left text-xs transition-colors border ${
+                  idx === selectedIdx ? theme.accentSoft : `border-transparent ${theme.hoverBg}`
                 }`}
               >
                 <div className="flex items-center gap-2.5 min-w-0">

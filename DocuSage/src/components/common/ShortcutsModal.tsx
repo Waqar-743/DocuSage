@@ -29,19 +29,19 @@ export const ShortcutsModal: React.FC = () => {
       aria-label="Keyboard Shortcuts"
     >
       <div
-        className={`w-full max-w-md rounded-2xl border shadow-2xl overflow-hidden ${theme.surfaceElevated} ${theme.border}`}
+        className={`w-full max-w-md rounded-2xl border shadow-2xl overflow-hidden ${theme.surfaceElevated} ${theme.border} ${theme.text}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className={`flex items-center justify-between px-4 py-3 border-b ${theme.border}`}>
           <div className="flex items-center gap-2 text-sm font-semibold">
-            <Keyboard className="w-4 h-4 text-emerald-400" />
+            <Keyboard className={`w-4 h-4 ${theme.accentText}`} />
             <span>Keyboard Shortcuts</span>
           </div>
           <button
             type="button"
             onClick={() => setOpen(false)}
             aria-label="Close shortcuts"
-            className="p-1 rounded-lg hover:bg-zinc-500/15"
+            className={`p-1 rounded-lg ${theme.hoverBg}`}
           >
             <X className="w-4 h-4" />
           </button>

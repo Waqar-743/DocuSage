@@ -99,13 +99,13 @@ export const ShortcutsTab: React.FC = () => {
         </label>
       </div>
 
-      {updateMsg && <p className="text-[11.5px] text-emerald-400">{updateMsg}</p>}
+      {updateMsg && <p className={`text-[11.5px] font-medium ${theme.accentText}`}>{updateMsg}</p>}
 
       <div className="flex items-center justify-between pt-2">
         <button
           type="button"
           onClick={() => void handleCheckUpdates()}
-          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${theme.border}`}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${theme.border} ${theme.hoverBg}`}
         >
           <RefreshCw className="w-3.5 h-3.5" />
           <span>Check for Updates</span>

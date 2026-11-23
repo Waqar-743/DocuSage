@@ -1,4 +1,5 @@
 import type { AppearanceTheme, ChatBranch, ChatFolder, ChatMessageItem, ChatSession } from '../types';
+import { isValidTheme } from './themes';
 
 export const V1_STORAGE_KEY = 'docusage:app-state:v1';
 export const V2_STORAGE_KEY = 'docusage:app-state:v2';
@@ -131,7 +132,7 @@ export function loadOrMigrateState(): PersistedV2State {
 
       return {
         version: 2,
-        theme: parsed.theme ?? 'dark',
+        theme: isValidTheme(parsed.theme) ? parsed.theme : 'dark',
         chats,
         folders: Array.isArray(parsed.folders) ? parsed.folders : [],
         activeChatId,

@@ -22,14 +22,14 @@ export const RagDebugPanel: React.FC = () => {
     >
       <div className={`px-4 py-3 border-b flex items-center justify-between ${theme.border}`}>
         <div className="flex items-center gap-2 text-xs font-semibold">
-          <Database className="w-4 h-4 text-emerald-400" />
+          <Database className={`w-4 h-4 ${theme.accentText}`} />
           <span>Smart Context Inspector</span>
         </div>
         <button
           type="button"
           onClick={() => setOpen(false)}
           aria-label="Close RAG Inspector"
-          className="p-1 rounded hover:bg-zinc-500/15"
+          className={`p-1 rounded ${theme.hoverBg}`}
         >
           <X className="w-3.5 h-3.5" />
         </button>
@@ -48,11 +48,11 @@ export const RagDebugPanel: React.FC = () => {
                 <ContextBadge telemetry={latest} />
               </div>
               <div className="grid grid-cols-2 gap-2 pt-1 text-[11px]">
-                <div className="rounded-lg bg-black/20 p-2">
+                <div className={`rounded-lg p-2 border ${theme.subtleBg} ${theme.border}`}>
                   <div className={theme.textMuted}>Est. Tokens</div>
                   <div className="font-mono font-semibold mt-0.5">{latest.estimatedTokens.toLocaleString()}</div>
                 </div>
-                <div className="rounded-lg bg-black/20 p-2">
+                <div className={`rounded-lg p-2 border ${theme.subtleBg} ${theme.border}`}>
                   <div className={theme.textMuted}>Context Chars</div>
                   <div className="font-mono font-semibold mt-0.5">{latest.totalChars.toLocaleString()}</div>
                 </div>

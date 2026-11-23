@@ -85,10 +85,10 @@ export const ModelCompare: React.FC = () => {
       role="dialog"
       aria-label="Model Compare"
     >
-      <div className={`w-full max-w-6xl h-[86vh] rounded-2xl border shadow-2xl flex flex-col overflow-hidden ${theme.surfaceElevated} ${theme.border}`}>
+      <div className={`w-full max-w-6xl h-[86vh] rounded-2xl border shadow-2xl flex flex-col overflow-hidden ${theme.surfaceElevated} ${theme.border} ${theme.text}`}>
         <div className={`flex items-center justify-between px-5 py-3.5 border-b ${theme.border}`}>
           <div className="flex items-center gap-2.5">
-            <Columns2 className="w-4 h-4 text-emerald-400" />
+            <Columns2 className={`w-4 h-4 ${theme.accentText}`} />
             <div>
               <h2 className="text-sm font-semibold">Side-by-Side Model Compare</h2>
               <p className={`text-[11px] ${theme.textMuted}`}>
@@ -103,7 +103,7 @@ export const ModelCompare: React.FC = () => {
             type="button"
             onClick={() => setOpen(false)}
             aria-label="Close Model Compare"
-            className="p-1.5 rounded-lg hover:bg-zinc-500/15"
+            className={`p-1.5 rounded-lg ${theme.hoverBg}`}
           >
             <X className="w-4 h-4" />
           </button>
@@ -124,7 +124,7 @@ export const ModelCompare: React.FC = () => {
                   className="bg-transparent outline-none text-xs font-medium"
                 >
                   {enabledProviders.map((p) => (
-                    <option key={p.id} value={p.id} className="bg-zinc-900 text-zinc-100">
+                    <option key={p.id} value={p.id} className={theme.selectOption}>
                       {p.name}
                     </option>
                   ))}
@@ -135,7 +135,7 @@ export const ModelCompare: React.FC = () => {
                     setTargets(targets.map((x, i) => (i === idx ? { ...x, model: e.target.value } : x)))
                   }
                   placeholder="Model override"
-                  className="w-32 bg-transparent border-l border-zinc-700/60 pl-2 outline-none text-[11px]"
+                  className={`w-32 bg-transparent border-l pl-2 outline-none text-[11px] ${theme.border}`}
                 />
                 {targets.length > 2 && (
                   <button
@@ -223,7 +223,7 @@ export const ModelCompare: React.FC = () => {
                 <div className="flex items-center gap-1.5 shrink-0">
                   {'telemetry' in col && <ContextBadge telemetry={col.telemetry} compact />}
                   {col.durationMs !== null && (
-                    <span className="text-[10.5px] font-mono px-1.5 py-0.5 rounded bg-black/20">
+                    <span className={`text-[10.5px] font-mono px-1.5 py-0.5 rounded ${theme.badgeBg}`}>
                       {(col.durationMs / 1000).toFixed(2)}s
                     </span>
                   )}

@@ -102,7 +102,7 @@ export const ChatComposer: React.FC<Props> = ({ compact = false, focusSignal = 0
                   type="button"
                   onClick={() => detachDocFromChat(activeChat.id, docPath)}
                   aria-label={`Detach ${name}`}
-                  className="p-0.5 rounded-full hover:bg-black/20"
+                  className={`p-0.5 rounded-full ${theme.hoverBg}`}
                 >
                   <X className="w-3 h-3" />
                 </button>
@@ -141,7 +141,7 @@ export const ChatComposer: React.FC<Props> = ({ compact = false, focusSignal = 0
               disabled={ingestingCount > 0}
               aria-label="Attach document"
               title="Attach & index document (PDF, MD, TXT, code, config…)"
-              className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs hover:bg-zinc-500/15 transition-colors ${theme.textMuted}`}
+              className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs transition-colors ${theme.hoverBg} ${theme.textMuted}`}
             >
               <Paperclip className="w-3.5 h-3.5" />
               {!compact && <span>{ingestingCount > 0 ? 'Indexing…' : 'Attach'}</span>}
@@ -151,7 +151,7 @@ export const ChatComposer: React.FC<Props> = ({ compact = false, focusSignal = 0
               onClick={handleClipboardQuote}
               aria-label="Quote clipboard"
               title="Quote clipboard (Ctrl+Shift+V)"
-              className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs hover:bg-zinc-500/15 transition-colors ${theme.textMuted}`}
+              className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs transition-colors ${theme.hoverBg} ${theme.textMuted}`}
             >
               <ClipboardPaste className="w-3.5 h-3.5" />
               {!compact && <span>Quote</span>}
