@@ -36,6 +36,28 @@ pub struct ProviderModelInfo {
     pub label: String,
 }
 
+#[derive(Debug, Clone)]
+pub enum ProviderFetchError {
+    InvalidApiKey(String),
+    ConnectionError(String),
+}
+
+impl ProviderFetchError {
+    pub fn message(&self) -> &str {
+        match self {
+            Self::InvalidApiKey(m) | Self::ConnectionError(m) => m,
+        }
+    }
+}
+
+impl From<ProviderFetchError> for String {
+    fn from(err: ProviderFetchError) -> Self {
+        match err {
+            ProviderFetchError::InvalidApiKey(m) | ProviderFetchError::ConnectionError(m) => m,
+        }
+    }
+}
+
 /// Warm shared `reqwest` client pool.
 /// - `stream_client`: 15s connect timeout, NO whole-request timeout so long streams never drop.
 /// - `api_client`: 15s connect timeout, 30s request timeout for model discovery / embeddings / health.
@@ -394,31 +416,46 @@ fn emit_done(app: &AppHandle, request_id: &str) {
     );
 }
 
-/// Dynamically fetch available models from a provider ("Verify & Fetch Models").
-pub async fn fetch_provider_models(
+/// Dynamically fetch available models from a provider ("Verify & Fetch Models"),
+/// distinguishing authentication failures (`InvalidApiKey`) from connectivity issues.
+pub async fn verify_and_fetch_provider_models(
     http: &AiHttpClient,
     config: &AiProviderConfig,
     api_key: &str,
-) -> Result<Vec<ProviderModelInfo>, String> {
-    let base = effective_base_url(config, None)?;
+) -> Result<Vec<ProviderModelInfo>, ProviderFetchError> {
+    let base = effective_base_url(config, None).map_err(ProviderFetchError::ConnectionError)?;
 
     match config.provider {
         AiProviderKind::OllamaLocal | AiProviderKind::OllamaRemote => {
             let url = format!("{base}/api/tags");
+            let headers = bearer_headers(config, api_key).map_err(ProviderFetchError::InvalidApiKey)?;
             let resp = http
                 .api_client
                 .get(url)
-                .headers(bearer_headers(config, api_key)?)
+                .headers(headers)
                 .send()
                 .await
-                .map_err(|e| redact_secret(&format!("Ollama request failed: {}", e.without_url()), api_key))?;
-            if !resp.status().is_success() {
-                return Err(format!("Ollama returned HTTP {}", resp.status()));
+                .map_err(|e| {
+                    ProviderFetchError::ConnectionError(redact_secret(
+                        &format!("Connection Error: Ollama request failed ({})", e.without_url()),
+                        api_key,
+                    ))
+                })?;
+            let status = resp.status();
+            if status.as_u16() == 401 || status.as_u16() == 403 {
+                return Err(ProviderFetchError::InvalidApiKey(format!(
+                    "Invalid API Key: Ollama rejected credentials (HTTP {status})."
+                )));
+            }
+            if !status.is_success() {
+                return Err(ProviderFetchError::ConnectionError(format!(
+                    "Connection Error: Ollama returned HTTP {status}."
+                )));
             }
             let json: Value = resp
                 .json()
                 .await
-                .map_err(|e| format!("Invalid Ollama tags JSON: {e}"))?;
+                .map_err(|e| ProviderFetchError::ConnectionError(format!("Invalid Ollama tags JSON: {e}")))?;
             let mut models: Vec<ProviderModelInfo> = json["models"]
                 .as_array()
                 .into_iter()
@@ -440,14 +477,34 @@ pub async fn fetch_provider_models(
                 .header("x-goog-api-key", api_key.trim())
                 .send()
                 .await
-                .map_err(|e| redact_secret(&format!("Gemini request failed: {}", e.without_url()), api_key))?;
-            if !resp.status().is_success() {
-                return Err(format!("Gemini returned HTTP {}", resp.status()));
+                .map_err(|e| {
+                    ProviderFetchError::ConnectionError(redact_secret(
+                        &format!("Connection Error: Could not reach Google Gemini ({})", e.without_url()),
+                        api_key,
+                    ))
+                })?;
+            let status = resp.status();
+            if !status.is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                let lower = body.to_ascii_lowercase();
+                if status.as_u16() == 401
+                    || status.as_u16() == 403
+                    || (status.as_u16() == 400
+                        && (lower.contains("api_key_invalid")
+                            || lower.contains("api key not valid")
+                            || lower.contains("invalid api key")))
+                {
+                    return Err(ProviderFetchError::InvalidApiKey(
+                        "Invalid API Key: Google Gemini rejected the provided API key.".to_string(),
+                    ));
+                }
+                return Err(ProviderFetchError::ConnectionError(format!(
+                    "Connection Error: Google Gemini returned HTTP {status}."
+                )));
             }
-            let json: Value = resp
-                .json()
-                .await
-                .map_err(|e| format!("Invalid Gemini models JSON: {e}"))?;
+            let json: Value = resp.json().await.map_err(|e| {
+                ProviderFetchError::ConnectionError(format!("Invalid Gemini models JSON: {e}"))
+            })?;
             let mut models: Vec<ProviderModelInfo> = json["models"]
                 .as_array()
                 .into_iter()
@@ -465,7 +522,7 @@ pub async fn fetch_provider_models(
                     let id = raw.strip_prefix("models/").unwrap_or(raw).to_string();
                     let label = m["displayName"]
                         .as_str()
-                        .map(|d| format!("{d} ({id})"))
+                        .map(ToString::to_string)
                         .unwrap_or_else(|| id.clone());
                     Some(ProviderModelInfo { id, label })
                 })
@@ -479,7 +536,7 @@ pub async fn fetch_provider_models(
             headers.insert(
                 "x-api-key",
                 HeaderValue::from_str(api_key.trim())
-                    .map_err(|e| format!("Invalid Anthropic key header: {e}"))?,
+                    .map_err(|_| ProviderFetchError::InvalidApiKey("Invalid API Key: Contains invalid header characters.".into()))?,
             );
             headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
             let resp = http
@@ -488,14 +545,26 @@ pub async fn fetch_provider_models(
                 .headers(headers)
                 .send()
                 .await
-                .map_err(|e| redact_secret(&format!("Anthropic request failed: {}", e.without_url()), api_key))?;
-            if !resp.status().is_success() {
-                return Err(format!("Anthropic returned HTTP {}", resp.status()));
+                .map_err(|e| {
+                    ProviderFetchError::ConnectionError(redact_secret(
+                        &format!("Connection Error: Could not reach Anthropic ({})", e.without_url()),
+                        api_key,
+                    ))
+                })?;
+            let status = resp.status();
+            if status.as_u16() == 401 || status.as_u16() == 403 {
+                return Err(ProviderFetchError::InvalidApiKey(
+                    "Invalid API Key: Anthropic rejected the provided API key.".to_string(),
+                ));
             }
-            let json: Value = resp
-                .json()
-                .await
-                .map_err(|e| format!("Invalid Anthropic models JSON: {e}"))?;
+            if !status.is_success() {
+                return Err(ProviderFetchError::ConnectionError(format!(
+                    "Connection Error: Anthropic returned HTTP {status}."
+                )));
+            }
+            let json: Value = resp.json().await.map_err(|e| {
+                ProviderFetchError::ConnectionError(format!("Invalid Anthropic models JSON: {e}"))
+            })?;
             let mut models: Vec<ProviderModelInfo> = json["data"]
                 .as_array()
                 .into_iter()
@@ -515,20 +584,36 @@ pub async fn fetch_provider_models(
         _ => {
             // OpenAI, OpenRouter, LM Studio, Custom OpenAI-compatible
             let url = format!("{base}/models");
+            let headers = bearer_headers(config, api_key).map_err(ProviderFetchError::InvalidApiKey)?;
             let resp = http
                 .api_client
                 .get(url)
-                .headers(bearer_headers(config, api_key)?)
+                .headers(headers)
                 .send()
                 .await
-                .map_err(|e| redact_secret(&format!("Provider request failed: {}", e.without_url()), api_key))?;
-            if !resp.status().is_success() {
-                return Err(format!("Provider returned HTTP {}", resp.status()));
+                .map_err(|e| {
+                    ProviderFetchError::ConnectionError(redact_secret(
+                        &format!("Connection Error: Could not reach {} ({})", config.name, e.without_url()),
+                        api_key,
+                    ))
+                })?;
+            let status = resp.status();
+            if status.as_u16() == 401 || status.as_u16() == 403 {
+                return Err(ProviderFetchError::InvalidApiKey(format!(
+                    "Invalid API Key: {} rejected the provided API key (HTTP {status}).",
+                    config.name
+                )));
+            }
+            if !status.is_success() {
+                return Err(ProviderFetchError::ConnectionError(format!(
+                    "Connection Error: {} returned HTTP {status}.",
+                    config.name
+                )));
             }
             let json: Value = resp
                 .json()
                 .await
-                .map_err(|e| format!("Invalid models JSON: {e}"))?;
+                .map_err(|e| ProviderFetchError::ConnectionError(format!("Invalid models JSON: {e}")))?;
             let mut models: Vec<ProviderModelInfo> = json["data"]
                 .as_array()
                 .into_iter()
@@ -546,6 +631,17 @@ pub async fn fetch_provider_models(
             Ok(models)
         }
     }
+}
+
+/// Convenience string-error wrapper for fetching models.
+pub async fn fetch_provider_models(
+    http: &AiHttpClient,
+    config: &AiProviderConfig,
+    api_key: &str,
+) -> Result<Vec<ProviderModelInfo>, String> {
+    verify_and_fetch_provider_models(http, config, api_key)
+        .await
+        .map_err(String::from)
 }
 
 #[cfg(test)]

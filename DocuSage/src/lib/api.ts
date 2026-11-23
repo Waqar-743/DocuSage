@@ -10,6 +10,7 @@ import type {
   DownloadedModel,
   IndexedDocument,
   IngestResult,
+  LocalModelTestResult,
   LocalRuntimeStatus,
   ProviderList,
   ProviderModelInfo,
@@ -29,10 +30,12 @@ export type {
   DownloadedModel,
   IndexedDocument,
   IngestResult,
+  LocalModelTestResult,
   LocalRuntimeStatus,
   ProviderList,
   ProviderModelInfo,
   ProviderTestResult,
+  ProviderVerificationStatus,
   RagConfig,
 } from '../types';
 
@@ -281,6 +284,20 @@ export async function getConnectedModel(): Promise<string | null> {
   return invoke<string | null>('get_connected_model');
 }
 
+export async function testLocalModel(): Promise<LocalModelTestResult> {
+  if (!isTauri()) {
+    await mockDelay(350);
+    return {
+      ok: true,
+      message: 'Local model responded in 0.35s.',
+      reply: 'Local model is ready!',
+      durationMs: 350,
+      model: 'Llama-3.2-1B-Instruct-Q4_K_M.gguf',
+    };
+  }
+  return invoke<LocalModelTestResult>('test_local_model');
+}
+
 // ── RAG & Context Config ────────────────────────────────────────────────────
 
 export async function getRagConfig(): Promise<RagConfig> {
@@ -430,10 +447,11 @@ export async function testAiProviderConnection(providerId: string): Promise<Prov
     await mockDelay(350);
     return {
       ok: true,
+      status: 'verified',
       message: 'Verified (preview)',
       models: [
-        { id: 'gpt-4.1-mini', label: 'gpt-4.1-mini' },
-        { id: 'gemini-2.5-flash', label: 'gemini-2.5-flash' },
+        { id: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
+        { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
       ],
     };
   }

@@ -1,4 +1,111 @@
-import type { AiProviderKind } from '../types';
+import type { AiProviderKind, ProviderModelInfo } from '../types';
+
+export type MajorCloudProviderKind = 'anthropic' | 'openAi' | 'googleGemini';
+
+export type MajorCloudProviderMeta = {
+  kind: MajorCloudProviderKind;
+  canonicalId: string;
+  name: string;
+  shortLabel: string;
+  keyPlaceholder: string;
+  docsHint: string;
+  defaultBaseUrl: string;
+  defaultModel: string;
+};
+
+export const MAJOR_CLOUD_PROVIDERS: MajorCloudProviderMeta[] = [
+  {
+    kind: 'anthropic',
+    canonicalId: 'anthropic',
+    name: 'Anthropic',
+    shortLabel: 'Claude',
+    keyPlaceholder: 'sk-ant-api03-…',
+    docsHint: 'console.anthropic.com',
+    defaultBaseUrl: 'https://api.anthropic.com/v1',
+    defaultModel: 'claude-sonnet-4-5-20250929',
+  },
+  {
+    kind: 'openAi',
+    canonicalId: 'openai',
+    name: 'OpenAI',
+    shortLabel: 'OpenAI',
+    keyPlaceholder: 'sk-proj-…',
+    docsHint: 'platform.openai.com',
+    defaultBaseUrl: 'https://api.openai.com/v1',
+    defaultModel: 'gpt-4.1-mini',
+  },
+  {
+    kind: 'googleGemini',
+    canonicalId: 'google-gemini',
+    name: 'Google Gemini',
+    shortLabel: 'Gemini',
+    keyPlaceholder: 'AIzaSy…',
+    docsHint: 'aistudio.google.com',
+    defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    defaultModel: 'gemini-2.5-flash',
+  },
+];
+
+export const CURATED_PROVIDER_MODELS: Record<MajorCloudProviderKind, ProviderModelInfo[]> = {
+  anthropic: [
+    { id: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5' },
+    { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
+    { id: 'claude-opus-4-1-20250805', label: 'Claude Opus 4.1' },
+    { id: 'claude-3-7-sonnet-20250219', label: 'Claude 3.7 Sonnet' },
+  ],
+  openAi: [
+    { id: 'gpt-4.1', label: 'GPT-4.1' },
+    { id: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
+    { id: 'gpt-4.1-nano', label: 'GPT-4.1 Nano' },
+    { id: 'gpt-4o', label: 'GPT-4o' },
+    { id: 'gpt-4o-mini', label: 'GPT-4o Mini' },
+    { id: 'o4-mini', label: 'o4-mini' },
+  ],
+  googleGemini: [
+    { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+    { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+    { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite' },
+    { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
+  ],
+};
+
+export function isMajorCloudKind(kind: AiProviderKind): kind is MajorCloudProviderKind {
+  return kind === 'anthropic' || kind === 'openAi' || kind === 'googleGemini';
+}
+
+export function getMergedProviderModels(
+  kind: MajorCloudProviderKind,
+  fetched?: ProviderModelInfo[],
+): ProviderModelInfo[] {
+  const curated = CURATED_PROVIDER_MODELS[kind];
+  if (!fetched || fetched.length === 0) return curated;
+  const byId = new Map<string, ProviderModelInfo>();
+  for (const m of curated) byId.set(m.id, m);
+  for (const m of fetched) {
+    if (!byId.has(m.id)) {
+      byId.set(m.id, m);
+    }
+  }
+  return Array.from(byId.values());
+}
+
+export function getModelDisplayName(
+  kind: AiProviderKind,
+  modelId: string | null | undefined,
+  fetched?: ProviderModelInfo[],
+): string {
+  if (!modelId) return '';
+  if (kind === 'local') {
+    const match = MODEL_CATALOG.find((m) => m.filename.toLowerCase() === modelId.toLowerCase());
+    return match ? match.name : modelId.replace(/\.gguf$/i, '');
+  }
+  if (isMajorCloudKind(kind)) {
+    const curated = CURATED_PROVIDER_MODELS[kind].find((m) => m.id === modelId);
+    if (curated) return curated.label;
+  }
+  const live = fetched?.find((m) => m.id === modelId);
+  return live ? live.label : modelId;
+}
 
 export type ModelCatalogEntry = {
   id: string;

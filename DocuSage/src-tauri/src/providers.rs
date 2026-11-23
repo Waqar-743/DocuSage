@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
-use crate::services::ai_client::{fetch_provider_models, ProviderModelInfo};
+use crate::services::ai_client::{
+    fetch_provider_models, verify_and_fetch_provider_models, ProviderFetchError, ProviderModelInfo,
+};
 use crate::state::AppState;
 
 pub const LOCAL_PROVIDER_ID: &str = "local";
@@ -82,10 +84,20 @@ pub struct ProviderList {
     pub secure_storage_available: bool,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ProviderVerificationStatus {
+    Verified,
+    InvalidApiKey,
+    ConnectionError,
+    NotConfigured,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderTestResult {
     pub ok: bool,
+    pub status: ProviderVerificationStatus,
     pub message: String,
     pub models: Vec<ProviderModelInfo>,
 }
@@ -445,6 +457,7 @@ pub async fn test_ai_provider_connection(
             let model = rt.loaded_model.unwrap_or_else(|| "local-gguf".into());
             return Ok(ProviderTestResult {
                 ok: true,
+                status: ProviderVerificationStatus::Verified,
                 message: format!("Built-in llama-server is running with {model}."),
                 models: vec![ProviderModelInfo {
                     id: model.clone(),
@@ -453,9 +466,10 @@ pub async fn test_ai_provider_connection(
             });
         }
         return Ok(ProviderTestResult {
-            ok: rt.installed,
+            ok: false,
+            status: ProviderVerificationStatus::NotConfigured,
             message: if rt.installed {
-                "llama-server is installed. Connect a GGUF model to start chatting offline.".into()
+                "llama-server is installed. Download or load a GGUF model to start chatting offline.".into()
             } else {
                 "Built-in llama-server runtime is not installed yet.".into()
             },
@@ -463,19 +477,39 @@ pub async fn test_ai_provider_connection(
         });
     }
 
-    let api_key = api_key_for(&config)?;
-    match fetch_provider_models(&state.http, &config, &api_key).await {
+    let api_key = match api_key_for(&config) {
+        Ok(key) => key,
+        Err(_) => {
+            return Ok(ProviderTestResult {
+                ok: false,
+                status: ProviderVerificationStatus::NotConfigured,
+                message: format!("Not Configured: Save an API key for {} first.", config.name),
+                models: Vec::new(),
+            });
+        }
+    };
+
+    match verify_and_fetch_provider_models(&state.http, &config, &api_key).await {
         Ok(models) => Ok(ProviderTestResult {
             ok: true,
+            status: ProviderVerificationStatus::Verified,
             message: format!(
-                "Verified! Fetched {} available model{}.",
+                "Verified! Connected to {} ({} model{} available).",
+                config.name,
                 models.len(),
                 if models.len() == 1 { "" } else { "s" }
             ),
             models,
         }),
-        Err(err) => Ok(ProviderTestResult {
+        Err(ProviderFetchError::InvalidApiKey(err)) => Ok(ProviderTestResult {
             ok: false,
+            status: ProviderVerificationStatus::InvalidApiKey,
+            message: err,
+            models: Vec::new(),
+        }),
+        Err(ProviderFetchError::ConnectionError(err)) => Ok(ProviderTestResult {
+            ok: false,
+            status: ProviderVerificationStatus::ConnectionError,
             message: err,
             models: Vec::new(),
         }),
