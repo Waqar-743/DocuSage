@@ -518,3 +518,120 @@ test('1-click local model download redirects to workspace, auto-installs runtime
   await waitFor(() => expect(api.testLocalModel).toHaveBeenCalledTimes(1));
   expect(await screen.findByText(/Local model is ready!/i)).toBeTruthy();
 });
+
+test('clicking Install Local Runtime downloads runtime and automatically starts an already-downloaded GGUF model', async () => {
+  vi.mocked(api.listDownloadedModels).mockResolvedValue([
+    {
+      filename: 'Llama-3.2-1B-Instruct-Q4_K_M.gguf',
+      path: '/app-data/models/Llama-3.2-1B-Instruct-Q4_K_M.gguf',
+      sizeBytes: 734003200,
+    },
+  ]);
+  vi.mocked(api.getConnectedModel)
+    .mockResolvedValueOnce(null)
+    .mockResolvedValue('Llama-3.2-1B-Instruct-Q4_K_M.gguf');
+  vi.mocked(api.getLocalRuntimeStatus)
+    .mockResolvedValueOnce({
+      installed: false,
+      binaryPath: null,
+      running: false,
+      port: null,
+      baseUrl: null,
+      loadedModel: null,
+      loadedModelPath: null,
+      embeddingRunning: false,
+      embeddingPort: null,
+      embeddingModel: null,
+      detectedBackend: 'vulkan',
+      platformSummary: 'windows-x86_64 (vulkan)',
+      version: null,
+    })
+    .mockResolvedValue({
+      installed: true,
+      binaryPath: '/app-data/runtime/llama-server.exe',
+      running: true,
+      port: 18080,
+      baseUrl: 'http://127.0.0.1:18080/v1',
+      loadedModel: 'Llama-3.2-1B-Instruct-Q4_K_M.gguf',
+      loadedModelPath: '/app-data/models/Llama-3.2-1B-Instruct-Q4_K_M.gguf',
+      embeddingRunning: false,
+      embeddingPort: null,
+      embeddingModel: null,
+      detectedBackend: 'vulkan',
+      platformSummary: 'windows-x86_64 (vulkan)',
+      version: 'b12359 (vulkan)',
+    });
+  vi.mocked(api.installLocalRuntime).mockResolvedValueOnce({
+    installed: true,
+    binaryPath: '/app-data/runtime/llama-server.exe',
+    running: false,
+    port: null,
+    baseUrl: null,
+    loadedModel: null,
+    loadedModelPath: null,
+    embeddingRunning: false,
+    embeddingPort: null,
+    embeddingModel: null,
+    detectedBackend: 'vulkan',
+    platformSummary: 'windows-x86_64 (vulkan)',
+    version: 'b12359 (vulkan)',
+  });
+
+  await ready();
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Local AI & GGUF' }));
+
+  const installBtn = await screen.findByRole('button', { name: /Install Local Runtime \(vulkan\)/i });
+  fireEvent.click(installBtn);
+
+  await waitFor(() => expect(api.installLocalRuntime).toHaveBeenCalledTimes(1));
+  await waitFor(() =>
+    expect(api.connectModel).toHaveBeenCalledWith(
+      '/app-data/models/Llama-3.2-1B-Instruct-Q4_K_M.gguf',
+    ),
+  );
+  expect(await screen.findByText(/127\.0\.0\.1:18080/i)).toBeTruthy();
+  expect(await screen.findByText(/Chat Active/i)).toBeTruthy();
+});
+
+test('runtime install failure clears resolving progress bar and displays inline error', async () => {
+  vi.mocked(api.getLocalRuntimeStatus).mockResolvedValueOnce({
+    installed: false,
+    binaryPath: null,
+    running: false,
+    port: null,
+    baseUrl: null,
+    loadedModel: null,
+    loadedModelPath: null,
+    embeddingRunning: false,
+    embeddingPort: null,
+    embeddingModel: null,
+    detectedBackend: 'vulkan',
+    platformSummary: 'windows-x86_64 (vulkan)',
+    version: null,
+  });
+  vi.mocked(api.installLocalRuntime).mockImplementationOnce(async () => {
+    events.get('runtime-download-progress')?.({
+      payload: {
+        stage: 'resolving',
+        assetName: '',
+        downloaded: 0,
+        total: 0,
+        percent: 0,
+        done: false,
+        error: null,
+      },
+    });
+    throw new Error('Network unreachable');
+  });
+
+  await ready();
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Local AI & GGUF' }));
+
+  const installBtn = await screen.findByRole('button', { name: /Install Local Runtime \(vulkan\)/i });
+  fireEvent.click(installBtn);
+
+  expect(await screen.findByText(/Runtime setup error/i)).toBeTruthy();
+  expect(screen.queryByText(/resolving…/i)).toBeNull();
+});
