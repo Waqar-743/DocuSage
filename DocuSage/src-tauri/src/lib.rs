@@ -207,6 +207,7 @@ pub fn run() {
             commands::delete_model,
             commands::get_models_dir,
             commands::get_connected_model,
+            commands::test_local_model,
             commands::get_rag_config,
             commands::save_rag_config,
         ])

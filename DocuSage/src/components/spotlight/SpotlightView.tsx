@@ -18,6 +18,7 @@ import { ChatComposer } from '../chat/ChatComposer';
 import { ContextBadge } from '../chat/ContextBadge';
 import { MessageList } from '../chat/MessageList';
 import { BranchSelector } from '../common/BranchSelector';
+import { LocalSetupBanner } from '../common/LocalSetupBanner';
 import { ModelSelector } from '../common/ModelSelector';
 
 export const SpotlightView: React.FC<{ focusSignal: number }> = ({ focusSignal }) => {
@@ -58,7 +59,7 @@ export const SpotlightView: React.FC<{ focusSignal: number }> = ({ focusSignal }
             onClick={() => createChat()}
             aria-label="New Chat"
             title="New Chat (Ctrl+N)"
-            className="p-1.5 rounded-lg hover:bg-zinc-500/15"
+            className={`p-1.5 rounded-lg ${theme.hoverBg}`}
           >
             <Plus className="w-3.5 h-3.5" />
           </button>
@@ -67,7 +68,7 @@ export const SpotlightView: React.FC<{ focusSignal: number }> = ({ focusSignal }
             onClick={() => setCommandPaletteOpen(true)}
             aria-label="Command Palette"
             title="Command Palette (Ctrl+K)"
-            className="p-1.5 rounded-lg hover:bg-zinc-500/15"
+            className={`p-1.5 rounded-lg ${theme.hoverBg}`}
           >
             <Command className="w-3.5 h-3.5" />
           </button>
@@ -76,8 +77,8 @@ export const SpotlightView: React.FC<{ focusSignal: number }> = ({ focusSignal }
             onClick={() => void setPinned(!isPinned)}
             aria-label={isPinned ? 'Unpin Spotlight' : 'Pin Spotlight'}
             title={isPinned ? 'Pinned (stays open on blur)' : 'Pin Spotlight open'}
-            className={`p-1.5 rounded-lg transition-colors ${
-              isPinned ? 'text-emerald-400 bg-emerald-500/15' : 'hover:bg-zinc-500/15'
+            className={`p-1.5 rounded-lg border transition-colors ${
+              isPinned ? theme.accentSoft : `border-transparent ${theme.hoverBg}`
             }`}
           >
             {isPinned ? <Pin className="w-3.5 h-3.5" /> : <PinOff className="w-3.5 h-3.5" />}
@@ -87,7 +88,7 @@ export const SpotlightView: React.FC<{ focusSignal: number }> = ({ focusSignal }
             onClick={() => void toggleWindowMode()}
             aria-label="Expand to Dashboard"
             title="Expand to Dashboard (Double-click titlebar)"
-            className="p-1.5 rounded-lg hover:bg-zinc-500/15"
+            className={`p-1.5 rounded-lg ${theme.hoverBg}`}
           >
             <Maximize2 className="w-3.5 h-3.5" />
           </button>
@@ -96,7 +97,7 @@ export const SpotlightView: React.FC<{ focusSignal: number }> = ({ focusSignal }
             onClick={() => openSettings()}
             aria-label="Settings"
             title="Settings"
-            className="p-1.5 rounded-lg hover:bg-zinc-500/15"
+            className={`p-1.5 rounded-lg ${theme.hoverBg}`}
           >
             <Settings className="w-3.5 h-3.5" />
           </button>
@@ -105,13 +106,14 @@ export const SpotlightView: React.FC<{ focusSignal: number }> = ({ focusSignal }
             onClick={() => void api.hideAssistantWindow()}
             aria-label="Hide Spotlight"
             title="Hide (Esc)"
-            className="p-1.5 rounded-lg hover:bg-zinc-500/15"
+            className={`p-1.5 rounded-lg ${theme.hoverBg}`}
           >
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
       </header>
 
+      <LocalSetupBanner compact />
       <BranchSelector />
 
       <MessageList

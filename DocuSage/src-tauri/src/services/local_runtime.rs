@@ -102,31 +102,33 @@ pub fn llama_server_executable_name() -> &'static str {
     }
 }
 
-/// Locate an installed `llama-server` binary inside `runtime_dir` (or nested extracted folder).
+/// Locate an installed `llama-server` binary inside `runtime_dir` (searching recursively up to depth 4).
 pub fn find_installed_binary(dir: &Path) -> Option<PathBuf> {
-    let exe_name = llama_server_executable_name();
-    let direct = dir.join(exe_name);
-    if direct.is_file() {
-        return Some(direct);
-    }
-    let entries = std::fs::read_dir(dir).ok()?;
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if p.is_dir() {
-            let nested = p.join(exe_name);
-            if nested.is_file() {
-                return Some(nested);
-            }
-            let nested_bin = p.join("bin").join(exe_name);
-            if nested_bin.is_file() {
-                return Some(nested_bin);
+    fn search(dir: &Path, exe_name: &str, depth: usize) -> Option<PathBuf> {
+        let direct = dir.join(exe_name);
+        if direct.is_file() {
+            return Some(direct);
+        }
+        if depth == 0 {
+            return None;
+        }
+        let entries = std::fs::read_dir(dir).ok()?;
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                if let Some(found) = search(&p, exe_name, depth - 1) {
+                    return Some(found);
+                }
             }
         }
+        None
     }
-    None
+    search(dir, llama_server_executable_name(), 4)
 }
 
-/// Detect the best local inference acceleration backend available on this machine.
+/// Detect the best zero-dependency local inference acceleration backend available on this machine.
+/// On Windows, Vulkan works across NVIDIA/AMD/Intel drivers without separate CUDA Toolkit DLLs;
+/// CPU works universally as fallback.
 pub fn detect_hardware_backend() -> String {
     if cfg!(target_os = "macos") {
         if cfg!(target_arch = "aarch64") {
@@ -135,18 +137,8 @@ pub fn detect_hardware_backend() -> String {
         return "cpu".to_string();
     }
 
-    // Check for NVIDIA GPU via `nvidia-smi`.
-    if std::process::Command::new("nvidia-smi")
-        .arg("-L")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
-    {
-        return "cuda".to_string();
-    }
-
-    // Check for Vulkan runtime library on Windows / Linux.
+    // Check for Vulkan runtime library on Windows / Linux first (works on NVIDIA, AMD, and Intel
+    // GPUs without requiring separate cudart DLL packages).
     #[cfg(target_os = "windows")]
     {
         if Path::new(r"C:\Windows\System32\vulkan-1.dll").exists() {
@@ -599,10 +591,11 @@ impl LocalRuntimeManager {
             .arg("--threads")
             .arg(threads.to_string())
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
 
         if let Some(parent) = bin.parent() {
             cmd.current_dir(parent);
+            configure_shared_lib_env(&mut cmd, parent);
         }
 
         #[cfg(target_os = "windows")]
@@ -615,7 +608,7 @@ impl LocalRuntimeManager {
             .spawn()
             .map_err(|e| format!("Failed to start llama-server: {e}"))?;
 
-        if let Err(err) = wait_for_health(&mut child, port, Duration::from_secs(45)).await {
+        if let Err(err) = wait_for_health(&mut child, port, Duration::from_secs(60)).await {
             let _ = child.kill().await;
             return Err(err);
         }
@@ -673,10 +666,11 @@ impl LocalRuntimeManager {
             .arg("--threads")
             .arg(threads.to_string())
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
 
         if let Some(parent) = bin.parent() {
             cmd.current_dir(parent);
+            configure_shared_lib_env(&mut cmd, parent);
         }
 
         #[cfg(target_os = "windows")]
@@ -689,7 +683,7 @@ impl LocalRuntimeManager {
             .spawn()
             .map_err(|e| format!("Failed to start llama-server (embeddings): {e}"))?;
 
-        if let Err(err) = wait_for_health(&mut child, port, Duration::from_secs(30)).await {
+        if let Err(err) = wait_for_health(&mut child, port, Duration::from_secs(45)).await {
             let _ = child.kill().await;
             return Err(err);
         }
@@ -733,6 +727,110 @@ impl LocalRuntimeManager {
         self.stop_chat().await;
         self.stop_embedding().await;
     }
+
+    /// Run a fast live inference smoke test against the currently running local chat model.
+    pub async fn quick_test_chat(
+        &self,
+        http: &reqwest::Client,
+    ) -> Result<(String, String, u64), String> {
+        let (base_url, model_name) = {
+            let mut guard = self.inner.lock().await;
+            let Some(ref mut s) = guard.chat else {
+                return Err("No local GGUF model is currently loaded.".to_string());
+            };
+            if s.child.try_wait().ok().flatten().is_some() {
+                guard.chat = None;
+                return Err("Local llama-server process stopped unexpectedly.".to_string());
+            }
+            (format!("http://127.0.0.1:{}/v1", s.port), s.model_name.clone())
+        };
+
+        let started = Instant::now();
+        let resp = http
+            .post(format!("{base_url}/chat/completions"))
+            .json(&serde_json::json!({
+                "model": model_name,
+                "max_tokens": 32,
+                "temperature": 0.1,
+                "stream": false,
+                "messages": [
+                    { "role": "user", "content": "Reply with one short sentence confirming you are ready." }
+                ]
+            }))
+            .send()
+            .await
+            .map_err(|e| format!("Failed to reach local llama-server: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            let snippet: String = body.chars().take(180).collect();
+            return Err(format!("Local model returned HTTP {status}: {snippet}"));
+        }
+
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("Invalid local model response JSON: {e}"))?;
+        let reply = json["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or("Local model is ready!")
+            .trim()
+            .to_string();
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        Ok((model_name, reply, elapsed_ms))
+    }
+}
+
+fn configure_shared_lib_env(cmd: &mut Command, bin_dir: &Path) {
+    #[cfg(target_os = "linux")]
+    {
+        let existing = std::env::var("LD_LIBRARY_PATH").unwrap_or_default();
+        let val = if existing.is_empty() {
+            bin_dir.to_string_lossy().into_owned()
+        } else {
+            format!("{}:{existing}", bin_dir.to_string_lossy())
+        };
+        cmd.env("LD_LIBRARY_PATH", val);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let existing = std::env::var("DYLD_LIBRARY_PATH").unwrap_or_default();
+        let val = if existing.is_empty() {
+            bin_dir.to_string_lossy().into_owned()
+        } else {
+            format!("{}:{existing}", bin_dir.to_string_lossy())
+        };
+        cmd.env("DYLD_LIBRARY_PATH", val);
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = (cmd, bin_dir);
+    }
+}
+
+async fn read_stderr_snippet(child: &mut Child) -> String {
+    use tokio::io::AsyncReadExt;
+    let Some(mut stderr) = child.stderr.take() else {
+        return String::new();
+    };
+    let mut buf = vec![0u8; 2048];
+    let n = tokio::time::timeout(Duration::from_millis(300), stderr.read(&mut buf))
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or(0);
+    String::from_utf8_lossy(&buf[..n])
+        .lines()
+        .rev()
+        .take(3)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_string()
 }
 
 async fn wait_for_health(child: &mut Child, port: u16, timeout: Duration) -> Result<(), String> {
@@ -745,12 +843,22 @@ async fn wait_for_health(child: &mut Child, port: u16, timeout: Duration) -> Res
 
     while Instant::now() < deadline {
         if let Ok(Some(status)) = child.try_wait() {
-            return Err(format!(
-                "llama-server exited unexpectedly during startup (exit status: {status})."
-            ));
+            let detail = read_stderr_snippet(child).await;
+            return Err(if detail.is_empty() {
+                format!("llama-server exited unexpectedly during startup (exit status: {status}).")
+            } else {
+                format!("llama-server exited during startup ({status}): {detail}")
+            });
         }
         if let Ok(resp) = client.get(&url).send().await {
             if resp.status().is_success() {
+                // Drain stderr in the background once healthy so the child never gets SIGPIPE
+                // or blocks on a full pipe buffer.
+                if let Some(mut stderr) = child.stderr.take() {
+                    tokio::spawn(async move {
+                        let _ = tokio::io::copy(&mut stderr, &mut tokio::io::sink()).await;
+                    });
+                }
                 return Ok(());
             }
         }

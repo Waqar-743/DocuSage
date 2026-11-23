@@ -41,6 +41,16 @@ pub struct DownloadedModel {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LocalModelTestResult {
+    pub ok: bool,
+    pub message: String,
+    pub reply: Option<String>,
+    pub duration_ms: Option<u64>,
+    pub model: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IngestResult {
     pub file_name: String,
     pub chunk_count: usize,
@@ -89,7 +99,20 @@ pub async fn chat_send(
     let api_key = api_key_for(&provider)?;
 
     let local_base_url = if provider.provider == AiProviderKind::Local {
-        state.local_runtime.chat_base_url().await
+        match state.local_runtime.chat_base_url().await {
+            Some(url) => Some(url),
+            None => {
+                // Zero-config auto-start: if runtime is installed and a GGUF is downloaded,
+                // start it automatically without asking for any local path.
+                if state.local_runtime.status(&app).await.installed
+                    && load_model(app.clone(), state.clone(), None).await.is_ok()
+                {
+                    state.local_runtime.chat_base_url().await
+                } else {
+                    None
+                }
+            }
+        }
     } else {
         None
     };
@@ -448,49 +471,62 @@ pub async fn load_model(
     state: tauri::State<'_, AppState>,
     path: Option<String>,
 ) -> Result<String, String> {
-    let resolved: PathBuf = if let Some(ref p) = path {
+    let mut gguf_files: Vec<PathBuf> = Vec::new();
+    let mut dirs_to_scan: Vec<PathBuf> = Vec::new();
+
+    if let Some(ref p) = path {
         let new_path = PathBuf::from(p);
+        if new_path.is_file() {
+            return connect_model(app, state, new_path.to_string_lossy().into_owned()).await;
+        }
         *state
             .model_path
             .write()
             .map_err(|e| format!("model_path lock: {e}"))? = new_path.clone();
-        new_path
+        dirs_to_scan.push(new_path);
     } else {
+        // Automatically check managed app_data_dir/models first, then configured path & Documents.
+        if let Ok(app_models) = app.path().app_data_dir().map(|d| d.join("models")) {
+            dirs_to_scan.push(app_models);
+        }
         let current = state
             .model_path
             .read()
             .map_err(|e| format!("model_path lock: {e}"))?
             .clone();
-        if current.exists() && crate::path_has_gguf(&current) {
-            current
-        } else {
-            let refreshed = crate::resolve_model_path();
-            *state
-                .model_path
-                .write()
-                .map_err(|e| format!("model_path lock: {e}"))? = refreshed.clone();
-            refreshed
+        if !dirs_to_scan.contains(&current) {
+            dirs_to_scan.push(current);
         }
-    };
-
-    if !resolved.exists() {
-        return Err(format!("Model path does not exist: {}", resolved.display()));
+        if let Some(docs) = dirs::document_dir().map(|d| d.join("DocuSage").join("models")) {
+            if !dirs_to_scan.contains(&docs) {
+                dirs_to_scan.push(docs);
+            }
+        }
     }
 
-    let mut gguf_files: Vec<PathBuf> = std::fs::read_dir(&resolved)
-        .map_err(|e| format!("Cannot read model directory: {e}"))?
-        .filter_map(|e| {
-            let p = e.ok()?.path();
-            if p.extension()
-                .and_then(|x| x.to_str())
-                .is_some_and(|x| x.eq_ignore_ascii_case("gguf"))
-            {
-                Some(p)
-            } else {
-                None
+    let mut seen = std::collections::HashSet::new();
+    for dir in &dirs_to_scan {
+        if !dir.is_dir() {
+            continue;
+        }
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.extension()
+                    .and_then(|x| x.to_str())
+                    .is_some_and(|x| x.eq_ignore_ascii_case("gguf"))
+                {
+                    let name = p
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    if seen.insert(name) {
+                        gguf_files.push(p);
+                    }
+                }
             }
-        })
-        .collect();
+        }
+    }
     gguf_files.sort();
 
     let connected = state
@@ -505,8 +541,24 @@ pub async fn load_model(
                 .find(|p| p.file_name().and_then(|n| n.to_str()) == Some(name.as_str()))
                 .cloned()
         })
+        .or_else(|| {
+            // Prefer a chat model over an embedding model when auto-selecting.
+            gguf_files
+                .iter()
+                .find(|p| {
+                    let lower = p
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_ascii_lowercase())
+                        .unwrap_or_default();
+                    !lower.contains("embed") && !lower.contains("bge-")
+                })
+                .cloned()
+        })
         .or_else(|| gguf_files.into_iter().next())
-        .ok_or_else(|| format!("No .gguf files found in: {}", resolved.display()))?;
+        .ok_or_else(|| {
+            "No downloaded GGUF models found yet. Download a model in Settings -> Local AI & GGUF."
+                .to_string()
+        })?;
 
     connect_model(app, state, target.to_string_lossy().into_owned()).await
 }
@@ -613,7 +665,30 @@ pub async fn download_model(
         .map_err(|e| e.to_string())?;
     let dest = models_dir.join(&filename);
     if dest.exists() {
-        return Err("This model already exists. Delete it first to download again.".into());
+        // If a valid GGUF file is already present, reuse it seamlessly instead of failing.
+        if let Ok(mut f) = tokio::fs::File::open(&dest).await {
+            use tokio::io::AsyncReadExt;
+            let mut header = [0u8; 4];
+            if f.read_exact(&mut header).await.is_ok() && &header == b"GGUF" {
+                if let Ok(mut mp) = state.model_path.write() {
+                    *mp = models_dir.clone();
+                }
+                let size = tokio::fs::metadata(&dest).await.map(|m| m.len()).unwrap_or(0);
+                let _ = app.emit(
+                    "download-progress",
+                    DownloadProgressPayload {
+                        filename: filename.clone(),
+                        downloaded: size,
+                        total: size,
+                        percent: 100.0,
+                        done: true,
+                        error: None,
+                    },
+                );
+                return Ok(dest.to_string_lossy().into_owned());
+            }
+        }
+        let _ = tokio::fs::remove_file(&dest).await;
     }
     let partial = models_dir.join(format!("{filename}.part"));
     let mut file = tokio::fs::OpenOptions::new()
@@ -682,6 +757,9 @@ pub async fn download_model(
         tokio::fs::rename(&partial, &dest)
             .await
             .map_err(|e| e.to_string())?;
+        if let Ok(mut mp) = state.model_path.write() {
+            *mp = models_dir.clone();
+        }
         let _ = app.emit(
             "download-progress",
             DownloadProgressPayload {
@@ -805,13 +883,79 @@ pub fn delete_model(
 }
 
 #[tauri::command]
-pub fn get_models_dir(state: tauri::State<'_, AppState>) -> Result<String, String> {
-    Ok(state
+pub fn get_models_dir(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+    if let Ok(app_models) = app.path().app_data_dir().map(|d| d.join("models")) {
+        if app_models.is_dir() && crate::path_has_gguf(&app_models) {
+            return Ok(app_models.to_string_lossy().into_owned());
+        }
+    }
+    let configured = state
         .model_path
         .read()
         .map_err(|e| format!("Lock error: {e}"))?
-        .to_string_lossy()
-        .into_owned())
+        .clone();
+    if configured.is_dir() && crate::path_has_gguf(&configured) {
+        return Ok(configured.to_string_lossy().into_owned());
+    }
+    if let Ok(app_models) = app.path().app_data_dir().map(|d| d.join("models")) {
+        return Ok(app_models.to_string_lossy().into_owned());
+    }
+    Ok(configured.to_string_lossy().into_owned())
+}
+
+/// One-click live test for the built-in local GGUF model.
+/// Automatically loads a downloaded chat model if none is active yet — no manual path setup required.
+#[tauri::command]
+pub async fn test_local_model(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<LocalModelTestResult, String> {
+    let status = state.local_runtime.status(&app).await;
+    if !status.installed {
+        return Ok(LocalModelTestResult {
+            ok: false,
+            message: "Built-in llama-server runtime is not installed yet. Click 'Install Runtime' in Settings -> Local AI & GGUF.".to_string(),
+            reply: None,
+            duration_ms: None,
+            model: None,
+        });
+    }
+
+    if !status.running {
+        if let Err(err) = load_model(app.clone(), state.clone(), None).await {
+            return Ok(LocalModelTestResult {
+                ok: false,
+                message: err,
+                reply: None,
+                duration_ms: None,
+                model: None,
+            });
+        }
+    }
+
+    match state.local_runtime.quick_test_chat(&state.http.api_client).await {
+        Ok((model, reply, duration_ms)) => Ok(LocalModelTestResult {
+            ok: true,
+            message: format!(
+                "{} responded in {:.2}s.",
+                model,
+                duration_ms as f64 / 1000.0
+            ),
+            reply: Some(reply),
+            duration_ms: Some(duration_ms),
+            model: Some(model),
+        }),
+        Err(err) => Ok(LocalModelTestResult {
+            ok: false,
+            message: err,
+            reply: None,
+            duration_ms: None,
+            model: status.loaded_model,
+        }),
+    }
 }
 
 #[tauri::command]

@@ -30,6 +30,7 @@ import { ChatComposer } from '../chat/ChatComposer';
 import { ContextBadge } from '../chat/ContextBadge';
 import { MessageList } from '../chat/MessageList';
 import { BranchSelector } from '../common/BranchSelector';
+import { LocalSetupBanner } from '../common/LocalSetupBanner';
 import { ModelSelector } from '../common/ModelSelector';
 import { RagDebugPanel } from '../common/RagDebugPanel';
 
@@ -130,8 +131,8 @@ export const DashboardView: React.FC<{ focusSignal: number }> = ({ focusSignal }
     return (
       <div
         key={chat.id}
-        className={`group flex items-center justify-between gap-1.5 px-2.5 py-1.5 rounded-xl text-xs transition-colors ${
-          selected ? theme.accentSoft + ' border' : 'border border-transparent hover:bg-zinc-500/10'
+        className={`group flex items-center justify-between gap-1.5 px-2.5 py-1.5 rounded-xl text-xs transition-colors border ${
+          selected ? theme.accentSoft : `border-transparent ${theme.hoverBg}`
         }`}
       >
         <button
@@ -139,10 +140,10 @@ export const DashboardView: React.FC<{ focusSignal: number }> = ({ focusSignal }
           onClick={() => setActiveChat(chat.id)}
           className="flex-1 min-w-0 text-left flex items-center gap-2"
         >
-          <MessageSquare className="w-3.5 h-3.5 shrink-0 opacity-70" />
+          <MessageSquare className="w-3.5 h-3.5 shrink-0 opacity-75" />
           <span className="truncate font-medium">{chat.name}</span>
           {chat.attachedDocPaths.length > 0 && (
-            <span className="text-[10px] px-1 rounded bg-emerald-500/20 text-emerald-400 shrink-0">
+            <span className={`text-[10px] px-1 rounded border shrink-0 ${theme.accentSoft}`}>
               {chat.attachedDocPaths.length}
             </span>
           )}
@@ -154,12 +155,12 @@ export const DashboardView: React.FC<{ focusSignal: number }> = ({ focusSignal }
               aria-label={`Move ${chat.name} to folder`}
               value={chat.folderId ?? ''}
               onChange={(e) => moveChatToFolder(chat.id, e.target.value || null)}
-              className="w-4 h-4 opacity-60 hover:opacity-100 bg-transparent cursor-pointer"
+              className="w-4 h-4 opacity-70 hover:opacity-100 bg-transparent cursor-pointer"
               title="Move to folder"
             >
-              <option value="" className="bg-zinc-900 text-zinc-100">No Folder</option>
+              <option value="" className={theme.selectOption}>No Folder</option>
               {folders.map((f) => (
-                <option key={f.id} value={f.id} className="bg-zinc-900 text-zinc-100">
+                <option key={f.id} value={f.id} className={theme.selectOption}>
                   {f.name}
                 </option>
               ))}
@@ -192,7 +193,7 @@ export const DashboardView: React.FC<{ focusSignal: number }> = ({ focusSignal }
               <div className="flex items-center gap-2 font-semibold text-sm tracking-tight">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
                 <span>DocuSage</span>
-                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">
+                <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${theme.accentSoft}`}>
                   v2
                 </span>
               </div>
@@ -202,7 +203,7 @@ export const DashboardView: React.FC<{ focusSignal: number }> = ({ focusSignal }
                   onClick={() => setCreatingFolder((v) => !v)}
                   aria-label="New Folder"
                   title="New Folder"
-                  className="p-1.5 rounded-lg hover:bg-zinc-500/15"
+                  className={`p-1.5 rounded-lg ${theme.hoverBg}`}
                 >
                   <FolderPlus className="w-3.5 h-3.5" />
                 </button>
@@ -211,7 +212,7 @@ export const DashboardView: React.FC<{ focusSignal: number }> = ({ focusSignal }
                   onClick={() => createChat()}
                   aria-label="New Chat"
                   title="New Chat (Ctrl+N)"
-                  className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium ${theme.accent}`}
+                  className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs ${theme.accent}`}
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>New</span>
@@ -224,8 +225,8 @@ export const DashboardView: React.FC<{ focusSignal: number }> = ({ focusSignal }
               <button
                 type="button"
                 onClick={() => setSidebarTab('chats')}
-                className={`py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                  sidebarTab === 'chats' ? theme.accentSoft + ' border' : 'hover:bg-zinc-500/10'
+                className={`py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+                  sidebarTab === 'chats' ? theme.accentSoft : `border-transparent ${theme.hoverBg}`
                 }`}
               >
                 Chats ({chats.length})
@@ -233,8 +234,8 @@ export const DashboardView: React.FC<{ focusSignal: number }> = ({ focusSignal }
               <button
                 type="button"
                 onClick={() => setSidebarTab('docs')}
-                className={`py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                  sidebarTab === 'docs' ? theme.accentSoft + ' border' : 'hover:bg-zinc-500/10'
+                className={`py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+                  sidebarTab === 'docs' ? theme.accentSoft : `border-transparent ${theme.hoverBg}`
                 }`}
               >
                 Docs ({documents.length})
@@ -440,7 +441,7 @@ export const DashboardView: React.FC<{ focusSignal: number }> = ({ focusSignal }
               type="button"
               onClick={toggleSidebarCollapsed}
               aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-              className="p-1.5 rounded-lg hover:bg-zinc-500/15"
+              className={`p-1.5 rounded-lg ${theme.hoverBg}`}
             >
               {sidebarCollapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
             </button>
@@ -454,7 +455,7 @@ export const DashboardView: React.FC<{ focusSignal: number }> = ({ focusSignal }
               onClick={() => setCompareOpen(true)}
               aria-label="Compare Models"
               title="Model Compare (Side-by-Side)"
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs hover:bg-zinc-500/15"
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs ${theme.hoverBg}`}
             >
               <Columns2 className="w-3.5 h-3.5" />
               <span className="hidden md:inline">Compare</span>
@@ -464,7 +465,7 @@ export const DashboardView: React.FC<{ focusSignal: number }> = ({ focusSignal }
               onClick={() => setRagDebugOpen(!ragDebugOpen)}
               aria-label="Toggle RAG Inspector"
               title="Smart Context Inspector"
-              className={`p-1.5 rounded-lg ${ragDebugOpen ? theme.accentSoft : 'hover:bg-zinc-500/15'}`}
+              className={`p-1.5 rounded-lg border ${ragDebugOpen ? theme.accentSoft : `border-transparent ${theme.hoverBg}`}`}
             >
               <Database className="w-4 h-4" />
             </button>
@@ -473,7 +474,7 @@ export const DashboardView: React.FC<{ focusSignal: number }> = ({ focusSignal }
               onClick={() => setCommandPaletteOpen(true)}
               aria-label="Command Palette"
               title="Command Palette (Ctrl+K)"
-              className="p-1.5 rounded-lg hover:bg-zinc-500/15"
+              className={`p-1.5 rounded-lg ${theme.hoverBg}`}
             >
               <Command className="w-4 h-4" />
             </button>
@@ -482,7 +483,7 @@ export const DashboardView: React.FC<{ focusSignal: number }> = ({ focusSignal }
               onClick={() => void toggleWindowMode()}
               aria-label="Switch to Spotlight"
               title="Switch to floating Spotlight mode"
-              className="p-1.5 rounded-lg hover:bg-zinc-500/15"
+              className={`p-1.5 rounded-lg ${theme.hoverBg}`}
             >
               <Minimize2 className="w-4 h-4" />
             </button>
@@ -491,7 +492,7 @@ export const DashboardView: React.FC<{ focusSignal: number }> = ({ focusSignal }
               onClick={() => openSettings()}
               aria-label="Settings"
               title="Settings"
-              className="p-1.5 rounded-lg hover:bg-zinc-500/15"
+              className={`p-1.5 rounded-lg ${theme.hoverBg}`}
             >
               <Settings className="w-4 h-4" />
             </button>
@@ -500,12 +501,14 @@ export const DashboardView: React.FC<{ focusSignal: number }> = ({ focusSignal }
               onClick={() => void api.hideAssistantWindow()}
               aria-label="Hide Window"
               title="Hide to tray"
-              className="p-1.5 rounded-lg hover:bg-zinc-500/15"
+              className={`p-1.5 rounded-lg ${theme.hoverBg}`}
             >
               <X className="w-4 h-4" />
             </button>
           </div>
         </header>
+
+        <LocalSetupBanner />
 
         <div className="flex-1 flex min-h-0 overflow-hidden">
           <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
