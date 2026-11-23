@@ -14,12 +14,12 @@ export const ToastStack: React.FC = () => {
         <div
           key={t.id}
           role="status"
-          className={`pointer-events-auto flex items-start gap-2 px-3.5 py-2.5 rounded-xl border shadow-lg text-xs backdrop-blur-md ${
+          className={`pointer-events-auto flex items-start gap-2.5 px-3.5 py-2.5 rounded-xl border shadow-xl text-xs backdrop-blur-md ${
             t.kind === 'error'
-              ? 'bg-rose-950/90 border-rose-500/40 text-rose-100'
+              ? 'bg-rose-950/95 border-rose-500/55 text-rose-50'
               : t.kind === 'success'
-              ? 'bg-emerald-950/90 border-emerald-500/40 text-emerald-100'
-              : 'bg-zinc-900/90 border-zinc-700 text-zinc-100'
+              ? 'bg-emerald-950/95 border-emerald-500/55 text-emerald-50'
+              : 'bg-zinc-900/95 border-zinc-700 text-zinc-100'
           }`}
         >
           {t.kind === 'error' ? (
@@ -29,12 +29,26 @@ export const ToastStack: React.FC = () => {
           ) : (
             <Info className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
           )}
-          <span className="flex-1 leading-relaxed">{t.message}</span>
+          <div className="flex-1 min-w-0 space-y-1.5">
+            <span className="block leading-relaxed">{t.message}</span>
+            {t.action && (
+              <button
+                type="button"
+                onClick={() => {
+                  t.action?.onClick();
+                  dismiss(t.id);
+                }}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-white/15 hover:bg-white/25 text-white border border-white/20 transition-colors"
+              >
+                {t.action.label}
+              </button>
+            )}
+          </div>
           <button
             type="button"
             onClick={() => dismiss(t.id)}
             aria-label="Dismiss notification"
-            className="opacity-70 hover:opacity-100"
+            className="opacity-75 hover:opacity-100 p-0.5 shrink-0"
           >
             <X className="w-3.5 h-3.5" />
           </button>

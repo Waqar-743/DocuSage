@@ -1,7 +1,15 @@
-export type AppearanceTheme = 'dark' | 'light' | 'glass' | 'paper' | 'rose' | 'ocean';
+export type AppearanceTheme = 'dark' | 'light' | 'cream' | 'navy' | 'glass' | 'paper' | 'rose' | 'ocean';
 export type AssistantWindowMode = 'spotlight' | 'dashboard';
 export type SidebarTab = 'chats' | 'docs';
 export type SettingsTab = 'providers' | 'localRuntime' | 'ragContext' | 'appearance' | 'shortcuts' | 'backup';
+
+export type ProviderVerificationStatus =
+  | 'notConfigured'
+  | 'unverified'
+  | 'verifying'
+  | 'verified'
+  | 'invalidApiKey'
+  | 'connectionError';
 
 export type AiProviderKind =
   | 'local'
@@ -49,8 +57,35 @@ export type ProviderList = {
 
 export type ProviderTestResult = {
   ok: boolean;
+  status?: ProviderVerificationStatus;
   message: string;
   models: ProviderModelInfo[];
+};
+
+export type LocalModelTestResult = {
+  ok: boolean;
+  message: string;
+  reply?: string | null;
+  durationMs?: number | null;
+  model?: string | null;
+};
+
+export type LocalSetupStage =
+  | 'idle'
+  | 'downloading'
+  | 'installingRuntime'
+  | 'loadingModel'
+  | 'ready'
+  | 'error';
+
+export type LocalSetupState = {
+  stage: LocalSetupStage;
+  modelName: string;
+  filename: string;
+  kind: 'chat' | 'embedding';
+  percent: number;
+  message: string;
+  error: string | null;
 };
 
 export type ContextMode = 'none' | 'full' | 'hybridRag' | 'fts5Offline' | 'truncated';
@@ -262,8 +297,15 @@ export type CompareColumnResult = {
   telemetry?: ContextTelemetry;
 };
 
+export type ToastAction = {
+  label: string;
+  onClick: () => void;
+};
+
 export type ToastItem = {
   id: string;
   kind: 'info' | 'success' | 'error';
   message: string;
+  dedupeKey?: string;
+  action?: ToastAction;
 };

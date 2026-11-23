@@ -2,14 +2,22 @@ import { create } from 'zustand';
 import * as api from '../lib/api';
 import { loadOrMigrateState, persistV2State } from '../lib/migration';
 import type {
+  AiProviderKind,
   AppearanceTheme,
   AssistantSettings,
   AssistantStatus,
   AssistantWindowMode,
   SettingsTab,
   SidebarTab,
+  ToastAction,
   ToastItem,
 } from '../types';
+
+export type PushToastOptions = {
+  dedupeKey?: string;
+  action?: ToastAction;
+  durationMs?: number;
+};
 
 type UiState = {
   theme: AppearanceTheme;
@@ -23,6 +31,7 @@ type UiState = {
   sidebarTab: SidebarTab;
   settingsOpen: boolean;
   settingsTab: SettingsTab;
+  highlightedProviderKind: AiProviderKind | null;
   commandPaletteOpen: boolean;
   shortcutsOpen: boolean;
   compareOpen: boolean;
@@ -40,7 +49,7 @@ type UiState = {
   setSidebarWidth: (width: number) => void;
   toggleSidebarCollapsed: () => void;
   setSidebarTab: (tab: SidebarTab) => void;
-  openSettings: (tab?: SettingsTab) => void;
+  openSettings: (tab?: SettingsTab, providerKind?: AiProviderKind | null) => void;
   closeSettings: () => void;
   setSettingsTab: (tab: SettingsTab) => void;
   setCommandPaletteOpen: (open: boolean) => void;
@@ -48,11 +57,12 @@ type UiState = {
   setCompareOpen: (open: boolean) => void;
   setRagDebugOpen: (open: boolean) => void;
   setDraggingFiles: (dragging: boolean) => void;
-  pushToast: (kind: ToastItem['kind'], message: string) => void;
+  pushToast: (kind: ToastItem['kind'], message: string, opts?: PushToastOptions) => void;
   dismissToast: (id: string) => void;
 };
 
 const initial = loadOrMigrateState();
+const toastTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function persistUiPatch(patch: Partial<{ theme: AppearanceTheme; sidebarWidth: number; sidebarCollapsed: boolean }>) {
   const cur = loadOrMigrateState();
@@ -77,6 +87,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   sidebarTab: 'chats',
   settingsOpen: false,
   settingsTab: 'providers',
+  highlightedProviderKind: null,
   commandPaletteOpen: false,
   shortcutsOpen: false,
   compareOpen: false,
@@ -164,13 +175,17 @@ export const useUiStore = create<UiState>((set, get) => ({
 
   setSidebarTab: (sidebarTab) => set({ sidebarTab }),
 
-  openSettings: (tab) => {
-    set((s) => ({ settingsOpen: true, settingsTab: tab ?? s.settingsTab }));
+  openSettings: (tab, providerKind = null) => {
+    set((s) => ({
+      settingsOpen: true,
+      settingsTab: tab ?? s.settingsTab,
+      highlightedProviderKind: providerKind,
+    }));
     void api.setAssistantFocusGuard({ settingsOpen: true });
   },
 
   closeSettings: () => {
-    set({ settingsOpen: false });
+    set({ settingsOpen: false, highlightedProviderKind: null });
     void api.setAssistantFocusGuard({ settingsOpen: false });
   },
 
@@ -181,13 +196,46 @@ export const useUiStore = create<UiState>((set, get) => ({
   setRagDebugOpen: (ragDebugOpen) => set({ ragDebugOpen }),
   setDraggingFiles: (isDraggingFiles) => set({ isDraggingFiles }),
 
-  pushToast: (kind, message) => {
+  pushToast: (kind, message, opts) => {
+    const dedupeKey = opts?.dedupeKey ?? `${kind}:${message.trim()}`;
+    const duration = opts?.durationMs ?? (opts?.action ? 7000 : 4200);
+    const existing = get().toasts.find((t) => (t.dedupeKey ?? `${t.kind}:${t.message.trim()}`) === dedupeKey);
+
+    if (existing) {
+      const oldTimer = toastTimers.get(existing.id);
+      if (oldTimer) clearTimeout(oldTimer);
+      set((s) => ({
+        toasts: s.toasts.map((t) =>
+          t.id === existing.id
+            ? { ...t, kind, message, action: opts?.action ?? t.action }
+            : t,
+        ),
+      }));
+      const timer = setTimeout(() => {
+        toastTimers.delete(existing.id);
+        set((s) => ({ toasts: s.toasts.filter((t) => t.id !== existing.id) }));
+      }, duration);
+      toastTimers.set(existing.id, timer);
+      return;
+    }
+
     const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    set((s) => ({ toasts: [...s.toasts.slice(-3), { id, kind, message }] }));
-    setTimeout(() => {
+    set((s) => ({
+      toasts: [...s.toasts.slice(-3), { id, kind, message, dedupeKey, action: opts?.action }],
+    }));
+    const timer = setTimeout(() => {
+      toastTimers.delete(id);
       set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
-    }, 4200);
+    }, duration);
+    toastTimers.set(id, timer);
   },
 
-  dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+  dismissToast: (id) => {
+    const timer = toastTimers.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      toastTimers.delete(id);
+    }
+    set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
+  },
 }));
