@@ -384,10 +384,92 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
 
   installRuntime: async (preferredBackend) => {
     if (get().isInstallingRuntime) return null;
-    set({ isInstallingRuntime: true });
+    set({ isInstallingRuntime: true, runtimeProgress: null });
     try {
       const status = await api.installLocalRuntime(preferredBackend);
-      set({ runtimeStatus: status, isInstallingRuntime: false });
+      const downloaded = await api.listDownloadedModels().catch(() => get().downloadedModels);
+      set({ runtimeStatus: status, downloadedModels: downloaded });
+
+      // Automatically start a downloaded chat GGUF model if none is running yet
+      // so clicking "Install Local Runtime" leaves Local AI immediately ready to chat.
+      if (status.installed && !status.running && downloaded.length > 0) {
+        const currentConnected = get().connectedModel;
+        const preferredChat =
+          downloaded.find((m) => currentConnected && m.filename === currentConnected) ??
+          downloaded.find((m) => {
+            const lower = m.filename.toLowerCase();
+            return !lower.includes('embed') && !lower.includes('bge-');
+          }) ??
+          downloaded[0];
+
+        if (preferredChat) {
+          set({
+            isConnectingModel: true,
+            runtimeProgress: {
+              stage: 'starting',
+              assetName: preferredChat.filename,
+              downloaded: 0,
+              total: 0,
+              percent: 100,
+              done: false,
+              error: null,
+            },
+          });
+          try {
+            await api.connectModel(preferredChat.path);
+            const [freshStatus, connected] = await Promise.all([
+              api.getLocalRuntimeStatus().catch(() => status),
+              api.getConnectedModel().catch(() => preferredChat.filename),
+            ]);
+            const resolvedModel = connected ?? freshStatus.loadedModel ?? preferredChat.filename;
+            set({
+              runtimeStatus: freshStatus,
+              connectedModel: resolvedModel,
+              isInstallingRuntime: false,
+              isConnectingModel: false,
+              localTestResult: null,
+              runtimeProgress: {
+                stage: 'ready',
+                assetName: preferredChat.filename,
+                downloaded: 0,
+                total: 0,
+                percent: 100,
+                done: true,
+                error: null,
+              },
+            });
+            useUiStore.getState().pushToast(
+              'success',
+              `Installed llama-server (${freshStatus.version ?? freshStatus.detectedBackend}) and started ${resolvedModel}.`,
+              { dedupeKey: 'local-runtime-installed' },
+            );
+            return freshStatus;
+          } catch (startErr) {
+            const errMsg = String(startErr);
+            set({
+              isInstallingRuntime: false,
+              isConnectingModel: false,
+              runtimeProgress: {
+                stage: 'error',
+                assetName: preferredChat.filename,
+                downloaded: 0,
+                total: 0,
+                percent: 100,
+                done: true,
+                error: errMsg,
+              },
+            });
+            useUiStore.getState().pushToast(
+              'error',
+              `Installed llama-server, but failed to start ${preferredChat.filename}: ${errMsg}`,
+              { dedupeKey: 'local-runtime-start-error' },
+            );
+            return status;
+          }
+        }
+      }
+
+      set({ isInstallingRuntime: false });
       useUiStore.getState().pushToast(
         'success',
         `Installed llama-server (${status.version ?? status.detectedBackend}).`,
@@ -395,8 +477,23 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
       );
       return status;
     } catch (err) {
-      set({ isInstallingRuntime: false });
-      useUiStore.getState().pushToast('error', `Runtime install failed: ${String(err)}`, {
+      const errMsg = String(err);
+      set((s) => ({
+        isInstallingRuntime: false,
+        isConnectingModel: false,
+        runtimeProgress: s.runtimeProgress
+          ? { ...s.runtimeProgress, stage: 'error', done: true, error: errMsg }
+          : {
+              stage: 'error',
+              assetName: '',
+              downloaded: 0,
+              total: 0,
+              percent: 0,
+              done: true,
+              error: errMsg,
+            },
+      }));
+      useUiStore.getState().pushToast('error', `Runtime install failed: ${errMsg}`, {
         dedupeKey: 'local-runtime-install-error',
       });
       return null;

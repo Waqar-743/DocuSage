@@ -73,7 +73,11 @@ export const LocalRuntimeTab: React.FC = () => {
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
           <div className={`rounded-lg p-2.5 border ${theme.subtleBg} ${theme.border}`}>
             <div className={theme.textMuted}>Platform</div>
-            <div className="font-mono mt-0.5 font-medium">{runtimeStatus.platformSummary}</div>
+            <div className="font-mono mt-0.5 font-medium truncate">
+              {runtimeStatus.version
+                ? `${runtimeStatus.platformSummary} · ${runtimeStatus.version}`
+                : runtimeStatus.platformSummary}
+            </div>
           </div>
           <div className={`rounded-lg p-2.5 border ${theme.subtleBg} ${theme.border}`}>
             <div className={theme.textMuted}>Chat Server</div>
@@ -94,8 +98,12 @@ export const LocalRuntimeTab: React.FC = () => {
         {runtimeProgress && !runtimeProgress.done && (
           <div className="space-y-1">
             <div className="flex justify-between text-[11px]">
-              <span>
-                {runtimeProgress.stage}: {runtimeProgress.assetName}
+              <span className="truncate">
+                {runtimeProgress.stage === 'starting'
+                  ? `Starting runtime: ${runtimeProgress.assetName}`
+                  : runtimeProgress.assetName
+                  ? `${runtimeProgress.stage}: ${runtimeProgress.assetName}`
+                  : `${runtimeProgress.stage}…`}
               </span>
               <span className="font-mono">{runtimeProgress.percent.toFixed(0)}%</span>
             </div>
@@ -105,6 +113,13 @@ export const LocalRuntimeTab: React.FC = () => {
                 style={{ width: `${Math.min(100, runtimeProgress.percent)}%` }}
               />
             </div>
+          </div>
+        )}
+
+        {runtimeProgress?.done && runtimeProgress.error && (
+          <div className={`rounded-xl border px-3 py-2 text-[11.5px] ${theme.dangerSoft}`}>
+            <div className="font-semibold">Runtime setup error</div>
+            <div className="opacity-90 break-words">{runtimeProgress.error}</div>
           </div>
         )}
 
