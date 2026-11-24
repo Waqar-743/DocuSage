@@ -1,5 +1,16 @@
 import React from 'react';
-import { AlertCircle, CheckCircle2, Cpu, Loader2, Play, Settings2, X } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  Cpu,
+  Loader2,
+  Pause,
+  Play,
+  Settings2,
+  ShieldCheck,
+  X,
+} from 'lucide-react';
+import { formatBytes, formatEta, formatSpeed } from '../../lib/catalog';
 import { THEMES } from '../../lib/themes';
 import { useProviderStore } from '../../stores/useProviderStore';
 import { useUiStore } from '../../stores/useUiStore';
@@ -10,6 +21,7 @@ export const LocalSetupBanner: React.FC<{ compact?: boolean }> = ({ compact = fa
 
   const localSetup = useProviderStore((s) => s.localSetup);
   const dismissLocalSetup = useProviderStore((s) => s.dismissLocalSetup);
+  const cancelModelDownload = useProviderStore((s) => s.cancelModelDownload);
   const testLocalModel = useProviderStore((s) => s.testLocalModel);
   const isTestingLocalModel = useProviderStore((s) => s.isTestingLocalModel);
   const localTestResult = useProviderStore((s) => s.localTestResult);
@@ -22,6 +34,12 @@ export const LocalSetupBanner: React.FC<{ compact?: boolean }> = ({ compact = fa
     localSetup.stage === 'loadingModel';
   const isReady = localSetup.stage === 'ready';
   const isError = localSetup.stage === 'error';
+  const isDownloading = localSetup.stage === 'downloading';
+  const isVerifying = isDownloading && localSetup.downloadStage === 'verifying';
+  const downloaded = localSetup.downloaded ?? 0;
+  const total = localSetup.total ?? 0;
+  const speedBps = localSetup.speedBps ?? 0;
+  const etaText = formatEta(localSetup.etaSecs, Math.max(0, total - downloaded), speedBps);
 
   return (
     <div
@@ -33,7 +51,9 @@ export const LocalSetupBanner: React.FC<{ compact?: boolean }> = ({ compact = fa
     >
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          {isWorking ? (
+          {isVerifying ? (
+            <ShieldCheck className={`w-4 h-4 shrink-0 animate-pulse ${theme.accentText}`} />
+          ) : isWorking ? (
             <Loader2 className={`w-4 h-4 animate-spin shrink-0 ${theme.accentText}`} />
           ) : isReady ? (
             <CheckCircle2 className={`w-4 h-4 shrink-0 ${theme.accentText}`} />
@@ -42,6 +62,15 @@ export const LocalSetupBanner: React.FC<{ compact?: boolean }> = ({ compact = fa
           )}
           <div className="min-w-0">
             <div className="font-medium truncate">{localSetup.message}</div>
+            {isDownloading && !isVerifying && (
+              <div className={`text-[10.5px] font-mono flex flex-wrap items-center gap-x-2.5 gap-y-0.5 ${theme.textMuted}`}>
+                <span>
+                  {formatBytes(downloaded)} / {total > 0 ? formatBytes(total) : '…'}
+                </span>
+                <span>Speed: {formatSpeed(speedBps)}</span>
+                <span>ETA: {etaText}</span>
+              </div>
+            )}
             {isError && localSetup.error && (
               <div className="text-[11px] opacity-90 truncate">{localSetup.error}</div>
             )}
@@ -51,8 +80,20 @@ export const LocalSetupBanner: React.FC<{ compact?: boolean }> = ({ compact = fa
         <div className="flex items-center gap-1.5 shrink-0">
           {isWorking && localSetup.stage !== 'loadingModel' && (
             <span className="font-mono text-[11px] font-semibold">
-              {Math.min(100, Math.max(0, localSetup.percent)).toFixed(0)}%
+              {Math.min(100, Math.max(0, localSetup.percent)).toFixed(1)}%
             </span>
+          )}
+
+          {isDownloading && !isVerifying && localSetup.filename && (
+            <button
+              type="button"
+              onClick={() => void cancelModelDownload(localSetup.filename)}
+              className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-medium ${theme.border} ${theme.hoverBg}`}
+              title="Pause download (resume anytime)"
+            >
+              <Pause className="w-3 h-3" />
+              <span>Pause</span>
+            </button>
           )}
 
           {isReady && localSetup.kind === 'chat' && (
@@ -99,12 +140,12 @@ export const LocalSetupBanner: React.FC<{ compact?: boolean }> = ({ compact = fa
         <div className={`mt-2 h-1.5 rounded-full overflow-hidden ${theme.progressTrack}`}>
           <div
             className={`h-full transition-all duration-200 ${
-              localSetup.stage === 'loadingModel'
+              localSetup.stage === 'loadingModel' || isVerifying
                 ? 'w-full animate-pulse bg-emerald-500'
                 : 'bg-emerald-500'
             }`}
             style={
-              localSetup.stage === 'loadingModel'
+              localSetup.stage === 'loadingModel' || isVerifying
                 ? undefined
                 : { width: `${Math.min(100, Math.max(4, localSetup.percent))}%` }
             }

@@ -64,7 +64,8 @@ type ProviderState = {
   connectLocalEmbeddingModel: (filePath: string) => Promise<boolean>;
   disconnectLocalModel: () => Promise<void>;
   restartLocalEngine: () => Promise<void>;
-  downloadCatalogModel: (url: string, filename: string) => Promise<string | null>;
+  downloadCatalogModel: (url: string, filename: string, sha256?: string) => Promise<string | null>;
+  cancelModelDownload: (filename: string) => Promise<void>;
   downloadAndSetupLocalModel: (
     entry: ModelCatalogEntry,
     opts?: { redirectToWorkspace?: boolean },
@@ -590,15 +591,25 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
     }
   },
 
-  downloadCatalogModel: async (url, filename) => {
+  downloadCatalogModel: async (url, filename, sha256) => {
     set((s) => ({
       modelDownloads: {
         ...s.modelDownloads,
-        [filename]: { filename, downloaded: 0, total: 0, percent: 0, done: false, error: null },
+        [filename]: {
+          filename,
+          downloaded: 0,
+          total: 0,
+          percent: 0,
+          speedBps: 0,
+          etaSecs: null,
+          stage: 'downloading',
+          done: false,
+          error: null,
+        },
       },
     }));
     try {
-      const savedPath = await api.downloadModel(url, filename);
+      const savedPath = await api.downloadModel(url, filename, sha256);
       const downloaded = await api.listDownloadedModels();
       set({ downloadedModels: downloaded });
       return savedPath;
@@ -608,9 +619,12 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
           ...s.modelDownloads,
           [filename]: {
             filename,
-            downloaded: 0,
-            total: 0,
-            percent: 0,
+            downloaded: s.modelDownloads[filename]?.downloaded ?? 0,
+            total: s.modelDownloads[filename]?.total ?? 0,
+            percent: s.modelDownloads[filename]?.percent ?? 0,
+            speedBps: 0,
+            etaSecs: null,
+            stage: 'error',
             done: true,
             error: String(err),
           },
@@ -620,6 +634,37 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
         dedupeKey: `download-err:${filename}`,
       });
       return null;
+    }
+  },
+
+  cancelModelDownload: async (filename) => {
+    try {
+      await api.cancelDownload(filename);
+      set((s) => ({
+        modelDownloads: {
+          ...s.modelDownloads,
+          [filename]: {
+            ...(s.modelDownloads[filename] ?? {
+              filename,
+              downloaded: 0,
+              total: 0,
+              percent: 0,
+            }),
+            speedBps: 0,
+            etaSecs: null,
+            stage: 'cancelled',
+            done: true,
+            error: 'Download paused. Click Download again to resume.',
+          },
+        },
+        localSetup:
+          s.localSetup.filename === filename && s.localSetup.stage === 'downloading'
+            ? IDLE_LOCAL_SETUP
+            : s.localSetup,
+      }));
+      useUiStore.getState().pushToast('info', 'Download paused. Progress is saved so you can resume anytime.');
+    } catch (err) {
+      useUiStore.getState().pushToast('error', String(err));
     }
   },
 
@@ -639,7 +684,12 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
         filename: entry.filename,
         kind: entry.kind,
         percent: 0,
-        message: `Downloading ${entry.name} automatically (no local path setup needed)…`,
+        downloaded: 0,
+        total: entry.sizeBytes,
+        speedBps: 0,
+        etaSecs: null,
+        downloadStage: 'downloading',
+        message: `Downloading ${entry.name} (${entry.size})…`,
         error: null,
       },
     });
@@ -658,21 +708,24 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
             [entry.filename]: {
               filename: entry.filename,
               downloaded: 0,
-              total: 0,
+              total: entry.sizeBytes,
               percent: 0,
+              speedBps: 0,
+              etaSecs: null,
+              stage: 'downloading',
               done: false,
               error: null,
             },
           },
         }));
-        modelPath = await api.downloadModel(entry.directDownloadUrl, entry.filename);
+        modelPath = await api.downloadModel(entry.directDownloadUrl, entry.filename, entry.sha256);
         const downloaded = await api.listDownloadedModels();
         set({ downloadedModels: downloaded });
         existing = downloaded.find((m) => m.filename.toLowerCase() === entry.filename.toLowerCase());
         if (existing) modelPath = existing.path;
       }
 
-      // Step 2: Automatically install built-in llama-server runtime if missing.
+      // Step 2: Ensure built-in runtime is ready (instant with in-process llama.cpp).
       let runtime = await api.getLocalRuntimeStatus().catch(() => get().runtimeStatus);
       set({ runtimeStatus: runtime });
       if (!runtime.installed) {
@@ -682,7 +735,7 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
             ...s.localSetup,
             stage: 'installingRuntime',
             percent: 0,
-            message: 'Installing built-in llama-server runtime automatically…',
+            message: 'Preparing built-in llama.cpp runtime…',
           },
         }));
         runtime = await api.installLocalRuntime();
@@ -827,9 +880,16 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
           ? {
               ...s.localSetup,
               percent: progress.percent,
+              downloaded: progress.downloaded,
+              total: progress.total,
+              speedBps: progress.speedBps ?? 0,
+              etaSecs: progress.etaSecs ?? null,
+              downloadStage: progress.stage ?? 'downloading',
               message: progress.error
                 ? `Download error: ${progress.error}`
-                : `Downloading ${s.localSetup.modelName}… ${progress.percent.toFixed(0)}%`,
+                : progress.stage === 'verifying'
+                ? `Verifying SHA-256 checksum for ${s.localSetup.modelName}…`
+                : `Downloading ${s.localSetup.modelName}… ${progress.percent.toFixed(1)}%`,
             }
           : s.localSetup;
       return {
