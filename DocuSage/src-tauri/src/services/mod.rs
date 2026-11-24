@@ -1,7 +1,11 @@
 pub mod ai_client;
 pub mod context_engine;
+pub mod device;
 pub mod document_pipeline;
 pub mod embedding;
+pub mod local_engine;
 pub mod local_runtime;
+pub mod local_stream;
+pub mod local_template;
 pub mod sse;
 pub mod vector_store;

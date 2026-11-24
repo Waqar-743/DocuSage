@@ -98,26 +98,11 @@ pub async fn chat_send(
     let provider = resolve_provider(&app, req.provider_id.as_deref())?;
     let api_key = api_key_for(&provider)?;
 
-    let local_base_url = if provider.provider == AiProviderKind::Local {
-        match state.local_runtime.chat_base_url().await {
-            Some(url) => Some(url),
-            None => {
-                // Zero-config auto-start: if runtime is installed and a GGUF is downloaded,
-                // start it automatically without asking for any local path.
-                let status = state.local_runtime.status(&app).await;
-                if !status.installed {
-                    return Err(
-                        "Built-in llama-server runtime is not installed yet. Click 'Install Local Runtime' in Settings -> Local AI & GGUF."
-                            .to_string(),
-                    );
-                }
-                load_model(app.clone(), state.clone(), None).await?;
-                state.local_runtime.chat_base_url().await
-            }
-        }
-    } else {
-        None
-    };
+    let is_local = provider.provider == AiProviderKind::Local;
+    if is_local && !state.local_runtime.is_chat_loaded().await {
+        // Zero-config auto-start: automatically load a downloaded GGUF model in-process.
+        load_model(app.clone(), state.clone(), None).await?;
+    }
 
     let rag_cfg = state
         .rag_config
@@ -165,21 +150,37 @@ pub async fn chat_send(
     let _ = app.emit("chat-context", &prepared.telemetry);
 
     let grounded = !req.attached_paths.is_empty();
-    let (mut reply, stopped) = stream_chat_completion(
-        &app,
-        &state.http,
-        &provider,
-        &api_key,
-        local_base_url.as_deref(),
-        req.model_override.as_deref(),
-        &prepared.system_prompt,
-        &req.history,
-        &req.prompt,
-        &req.request_id,
-        grounded,
-        handle.token.clone(),
-    )
-    .await?;
+    let (mut reply, stopped) = if is_local {
+        state
+            .local_runtime
+            .stream_chat(
+                &app,
+                &prepared.system_prompt,
+                &req.history,
+                &req.prompt,
+                &req.request_id,
+                provider.temperature,
+                grounded,
+                handle.token.clone(),
+            )
+            .await?
+    } else {
+        stream_chat_completion(
+            &app,
+            &state.http,
+            &provider,
+            &api_key,
+            None,
+            req.model_override.as_deref(),
+            &prepared.system_prompt,
+            &req.history,
+            &req.prompt,
+            &req.request_id,
+            grounded,
+            handle.token.clone(),
+        )
+        .await?
+    };
 
     if reply.is_empty() {
         reply = if stopped {
@@ -916,16 +917,6 @@ pub async fn test_local_model(
     state: tauri::State<'_, AppState>,
 ) -> Result<LocalModelTestResult, String> {
     let status = state.local_runtime.status(&app).await;
-    if !status.installed {
-        return Ok(LocalModelTestResult {
-            ok: false,
-            message: "Built-in llama-server runtime is not installed yet. Click 'Install Runtime' in Settings -> Local AI & GGUF.".to_string(),
-            reply: None,
-            duration_ms: None,
-            model: None,
-        });
-    }
-
     if !status.running {
         if let Err(err) = load_model(app.clone(), state.clone(), None).await {
             return Ok(LocalModelTestResult {
@@ -938,7 +929,7 @@ pub async fn test_local_model(
         }
     }
 
-    match state.local_runtime.quick_test_chat(&state.http.api_client).await {
+    match state.local_runtime.quick_test_chat().await {
         Ok((model, reply, duration_ms)) => Ok(LocalModelTestResult {
             ok: true,
             message: format!(

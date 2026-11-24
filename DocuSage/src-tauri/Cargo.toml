@@ -42,6 +42,14 @@ hex = "0.4"
 flate2 = "1"
 tar = "0.4"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+log = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+# In-process llama.cpp inference (same engine architecture as Neurix):
+# eliminates external llama-server sidecar crashes (e.g. Windows 0xc0000005).
+llama-cpp-2 = { version = "=0.1.159", default-features = false }
+llama-cpp-sys-2 = "=0.1.159"
+minijinja = { version = "2", features = ["json", "loop_controls"] }
+minijinja-contrib = { version = "2", features = ["pycompat"] }
 
 [profile.release]
 opt-level = "z"
