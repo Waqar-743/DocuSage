@@ -1,6 +1,6 @@
 [package]
 name = "docusage"
-version = "2.0.2"
+version = "2.0.3"
 description = "Private offline & online AI document assistant for your desktop"
 authors = ["Waqar Ahmed"]
 edition = "2021"
