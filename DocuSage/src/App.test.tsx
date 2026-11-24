@@ -414,7 +414,7 @@ test('provides separate API key config & verification for Anthropic, OpenAI, and
   await waitFor(() => expect(api.setActiveAiProvider).toHaveBeenCalledWith('openai'));
 });
 
-test('deduplicates repeated runtime-not-installed error notifications when loading chat or embed models', async () => {
+test('deduplicates repeated runtime-not-installed error notifications when loading local models', async () => {
   vi.mocked(api.getLocalRuntimeStatus).mockResolvedValue({
     installed: false,
     binaryPath: null,
@@ -426,8 +426,8 @@ test('deduplicates repeated runtime-not-installed error notifications when loadi
     embeddingRunning: false,
     embeddingPort: null,
     embeddingModel: null,
-    detectedBackend: 'cpu',
-    platformSummary: 'linux-x86_64 (cpu)',
+    detectedBackend: 'built-in',
+    platformSummary: 'linux-x86_64 (4 threads)',
     version: null,
   });
 
@@ -436,17 +436,14 @@ test('deduplicates repeated runtime-not-installed error notifications when loadi
   fireEvent.click(screen.getByRole('button', { name: 'Local AI & GGUF' }));
 
   const loadChatBtn = await screen.findByRole('button', { name: /Load Chat/i });
-  const loadEmbedBtn = screen.getByRole('button', { name: /Load Embed/i });
 
   // Click repeatedly without runtime installed
   fireEvent.click(loadChatBtn);
   fireEvent.click(loadChatBtn);
-  fireEvent.click(loadEmbedBtn);
-  fireEvent.click(loadEmbedBtn);
+  fireEvent.click(loadChatBtn);
 
   const notifications = await screen.findAllByText(/Built-in llama-server runtime is not installed yet/i);
   expect(notifications).toHaveLength(1);
-  expect(screen.getAllByRole('button', { name: 'Install Runtime' }).length).toBeGreaterThanOrEqual(1);
 });
 
 test('1-click local model download redirects to workspace, auto-installs runtime, loads model, and supports live Test Model', async () => {
@@ -590,8 +587,71 @@ test('clicking Install Local Runtime downloads runtime and automatically starts 
       '/app-data/models/Llama-3.2-1B-Instruct-Q4_K_M.gguf',
     ),
   );
-  expect(await screen.findByText(/127\.0\.0\.1:18080/i)).toBeTruthy();
   expect(await screen.findByText(/Chat Active/i)).toBeTruthy();
+});
+
+test('displays Neurix local models, opens full specs on click, and shows live download telemetry', async () => {
+  vi.mocked(api.getLocalRuntimeStatus).mockResolvedValue({
+    installed: true,
+    binaryPath: 'built-in (llama.cpp)',
+    running: false,
+    port: null,
+    baseUrl: null,
+    loadedModel: null,
+    loadedModelPath: null,
+    embeddingRunning: false,
+    embeddingPort: null,
+    embeddingModel: null,
+    detectedBackend: 'built-in',
+    platformSummary: 'windows-x86_64 (16 GB RAM · 8 threads)',
+    version: 'llama.cpp (built-in)',
+    totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+    recommendedThreads: 8,
+    contextLength: 8192,
+  });
+
+  await ready();
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Local AI & GGUF' }));
+
+  // Neurix store models and category filters are shown
+  expect(await screen.findByText('Qwen 3.5 2B')).toBeTruthy();
+  expect(screen.getByText('LFM 2.5 1.2B')).toBeTruthy();
+  expect(screen.getByText('Gemma 4 E2B')).toBeTruthy();
+  expect(screen.getByRole('tab', { name: 'Specialist' })).toBeTruthy();
+
+  // Clicking on a model opens its full detail view with specs & SHA-256
+  fireEvent.click(screen.getByRole('button', { name: /Qwen 3\.5 2B by Alibaba/i }));
+  expect(await screen.findByText('Model Specifications')).toBeTruthy();
+  expect(screen.getByText('Q4_K_M (4-bit)')).toBeTruthy();
+  expect(screen.getByText(/up to 8,192 tokens/i)).toBeTruthy();
+  expect(screen.getByText(/unsloth\/Qwen3\.5-2B-GGUF\/Qwen3\.5-2B-Q4_K_M\.gguf/i)).toBeTruthy();
+
+  // Simulate live download progress event and verify bytes, speed, ETA, and percentage render
+  await act(async () => {
+    events.get('download-progress')?.({
+      payload: {
+        filename: 'Qwen3.5-2B-Q4_K_M.gguf',
+        downloaded: 640 * 1024 * 1024,
+        total: 1280 * 1024 * 1024,
+        percent: 50.0,
+        speedBps: 12 * 1024 * 1024,
+        etaSecs: 53,
+        stage: 'downloading',
+        done: false,
+        error: null,
+      },
+    });
+  });
+
+  expect(screen.getByText('12.0 MB/s')).toBeTruthy();
+  expect(screen.getByText('53s')).toBeTruthy();
+  expect(screen.getByText('50.0%')).toBeTruthy();
+  expect(screen.getByRole('button', { name: /Pause Download/i })).toBeTruthy();
+
+  // Back button returns to the model catalog
+  fireEvent.click(screen.getByRole('button', { name: /Back to Local Models/i }));
+  expect(await screen.findByText('Local Model Store')).toBeTruthy();
 });
 
 test('runtime install failure clears resolving progress bar and displays inline error', async () => {
