@@ -188,18 +188,21 @@ export async function getLocalRuntimeStatus(): Promise<LocalRuntimeStatus> {
   if (!isTauri()) {
     return {
       installed: true,
-      binaryPath: '/mock/runtime/llama-server',
+      binaryPath: 'built-in (llama.cpp)',
       running: true,
-      port: 18080,
-      baseUrl: 'http://127.0.0.1:18080/v1',
-      loadedModel: 'Llama-3.2-1B-Instruct-Q4_K_M.gguf',
-      loadedModelPath: '/mock/models/Llama-3.2-1B-Instruct-Q4_K_M.gguf',
+      port: null,
+      baseUrl: null,
+      loadedModel: 'Qwen3.5-2B-Q4_K_M.gguf',
+      loadedModelPath: '/mock/models/Qwen3.5-2B-Q4_K_M.gguf',
       embeddingRunning: false,
       embeddingPort: null,
       embeddingModel: null,
-      detectedBackend: 'cpu',
-      platformSummary: 'browser-preview (cpu)',
-      version: 'preview',
+      detectedBackend: 'built-in',
+      platformSummary: 'browser-preview (16 GB RAM · 4 threads)',
+      version: 'llama.cpp (built-in)',
+      totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+      recommendedThreads: 4,
+      contextLength: 8192,
     };
   }
   return invoke<LocalRuntimeStatus>('get_local_runtime_status');
@@ -221,12 +224,25 @@ export async function loadModel(path?: string): Promise<string> {
   return invoke<string>('load_model', { path: path ?? null });
 }
 
-export async function downloadModel(url: string, filename: string): Promise<string> {
+export async function downloadModel(
+  url: string,
+  filename: string,
+  expectedSha256?: string,
+): Promise<string> {
   if (!isTauri()) {
     await mockDelay(700);
     return `/mock/models/${filename}`;
   }
-  return invoke<string>('download_model', { url, filename });
+  return invoke<string>('download_model', {
+    url,
+    filename,
+    expectedSha256: expectedSha256 ?? null,
+  });
+}
+
+export async function cancelDownload(filename: string): Promise<boolean> {
+  if (!isTauri()) return true;
+  return invoke<boolean>('cancel_download', { filename });
 }
 
 export async function listDownloadedModels(): Promise<DownloadedModel[]> {

@@ -84,6 +84,11 @@ export type LocalSetupState = {
   filename: string;
   kind: 'chat' | 'embedding';
   percent: number;
+  downloaded?: number;
+  total?: number;
+  speedBps?: number;
+  etaSecs?: number | null;
+  downloadStage?: string;
   message: string;
   error: string | null;
 };
@@ -186,6 +191,9 @@ export type LocalRuntimeStatus = {
   detectedBackend: string;
   platformSummary: string;
   version: string | null;
+  totalMemoryBytes?: number | null;
+  recommendedThreads?: number;
+  contextLength?: number | null;
 };
 
 export type RuntimeDownloadProgress = {
@@ -203,6 +211,9 @@ export type DownloadProgress = {
   downloaded: number;
   total: number;
   percent: number;
+  speedBps?: number;
+  etaSecs?: number | null;
+  stage?: 'downloading' | 'verifying' | 'finished' | 'cancelled' | 'error' | string;
   done: boolean;
   error?: string | null;
 };
