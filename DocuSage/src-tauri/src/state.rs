@@ -79,6 +79,8 @@ pub struct AppState {
     /// Active streaming requests keyed by `request_id` → `CancellationToken`.
     /// Supports concurrent streams (e.g. Model Compare) and instant cancellation.
     pub active_requests: Mutex<HashMap<String, CancellationToken>>,
+    /// Active GGUF model downloads keyed by `filename` → `CancellationToken`.
+    pub active_downloads: Mutex<HashMap<String, CancellationToken>>,
     /// Live RAG + Smart Context configuration.
     pub rag_config: RwLock<RagConfig>,
     /// In-memory text cache keyed by file path `(mtime, len, Arc<String>)`.
@@ -95,6 +97,7 @@ impl AppState {
             model_path: RwLock::new(model_path),
             connected_model_file: RwLock::new(None),
             active_requests: Mutex::new(HashMap::new()),
+            active_downloads: Mutex::new(HashMap::new()),
             rag_config: RwLock::new(RagConfig::default()),
             doc_cache: DocumentCache::new(),
             http: AiHttpClient::new(),
@@ -146,6 +149,55 @@ impl AppState {
             for tok in map.values() {
                 tok.cancel();
             }
+        }
+        if let Ok(map) = self.active_downloads.lock() {
+            for tok in map.values() {
+                tok.cancel();
+            }
+        }
+    }
+
+    pub fn register_download(&self, filename: &str) -> Result<DownloadHandle<'_>, String> {
+        let mut map = self
+            .active_downloads
+            .lock()
+            .map_err(|e| format!("Active downloads lock poisoned: {e}"))?;
+        if map.contains_key(filename) {
+            return Err("This model is already downloading.".into());
+        }
+        let token = CancellationToken::new();
+        map.insert(filename.to_string(), token.clone());
+        Ok(DownloadHandle {
+            state: self,
+            filename: filename.to_string(),
+            token,
+        })
+    }
+
+    pub fn cancel_download(&self, filename: &str) -> Result<bool, String> {
+        let map = self
+            .active_downloads
+            .lock()
+            .map_err(|e| format!("Active downloads lock poisoned: {e}"))?;
+        if let Some(tok) = map.get(filename) {
+            tok.cancel();
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+}
+
+pub struct DownloadHandle<'a> {
+    state: &'a AppState,
+    filename: String,
+    pub token: CancellationToken,
+}
+
+impl Drop for DownloadHandle<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut map) = self.state.active_downloads.lock() {
+            map.remove(&self.filename);
         }
     }
 }

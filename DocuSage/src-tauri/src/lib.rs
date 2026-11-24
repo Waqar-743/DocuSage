@@ -126,19 +126,6 @@ pub fn run() {
         ))
         .setup(|app| {
             let models = app.path().app_data_dir()?.join("models");
-            if let Ok(entries) = std::fs::read_dir(&models) {
-                for entry in entries.flatten() {
-                    if entry
-                        .file_name()
-                        .to_string_lossy()
-                        .to_lowercase()
-                        .ends_with(".gguf.part")
-                        && entry.file_type().is_ok_and(|kind| kind.is_file())
-                    {
-                        let _ = std::fs::remove_file(entry.path());
-                    }
-                }
-            }
             if path_has_gguf(&models)
                 && !path_has_gguf(
                     &app.state::<AppState>()
@@ -203,6 +190,7 @@ pub fn run() {
             commands::disconnect_model,
             commands::restart_ai_engine,
             commands::download_model,
+            commands::cancel_download,
             commands::list_downloaded_models,
             commands::delete_model,
             commands::get_models_dir,

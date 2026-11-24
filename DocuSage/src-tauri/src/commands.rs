@@ -27,6 +27,9 @@ struct DownloadProgressPayload {
     downloaded: u64,
     total: u64,
     percent: f32,
+    speed_bps: u64,
+    eta_secs: Option<u64>,
+    stage: String,
     done: bool,
     error: Option<String>,
 }
@@ -634,11 +637,60 @@ pub async fn restart_ai_engine(
     res
 }
 
-struct PartialDownload(PathBuf);
-impl Drop for PartialDownload {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
+fn sha256_from_header(value: &str) -> Option<String> {
+    let trimmed = value.trim().trim_start_matches("W/").trim_matches('"');
+    if trimmed.len() == 64 && trimmed.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Some(trimmed.to_ascii_lowercase())
+    } else {
+        None
     }
+}
+
+fn expected_sha256_from_response(response: &reqwest::Response) -> Option<String> {
+    ["x-linked-etag", "etag"].iter().find_map(|name| {
+        response
+            .headers()
+            .get(*name)
+            .and_then(|v| v.to_str().ok())
+            .and_then(sha256_from_header)
+    })
+}
+
+fn content_range_start(value: &str) -> Option<u64> {
+    let range = value.trim().strip_prefix("bytes ")?;
+    let (start, _) = range.split_once('-')?;
+    start.trim().parse().ok()
+}
+
+async fn compute_file_sha256(path: PathBuf) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        use sha2::{Digest, Sha256};
+        use std::io::Read;
+        let mut file = std::fs::File::open(&path)
+            .map_err(|e| format!("Cannot read downloaded file: {e}"))?;
+        let mut hasher = Sha256::new();
+        let mut buf = vec![0u8; 1024 * 1024];
+        loop {
+            let n = file
+                .read(&mut buf)
+                .map_err(|e| format!("Cannot read downloaded file: {e}"))?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[..n]);
+        }
+        Ok(hex::encode(hasher.finalize()))
+    })
+    .await
+    .map_err(|e| format!("SHA-256 verification task failed: {e}"))?
+}
+
+#[tauri::command]
+pub fn cancel_download(
+    state: tauri::State<'_, AppState>,
+    filename: String,
+) -> Result<bool, String> {
+    state.cancel_download(&filename)
 }
 
 #[tauri::command]
@@ -647,6 +699,7 @@ pub async fn download_model(
     state: tauri::State<'_, AppState>,
     url: String,
     filename: String,
+    expected_sha256: Option<String>,
 ) -> Result<String, String> {
     if filename.is_empty()
         || filename.contains(['/', '\\'])
@@ -658,6 +711,10 @@ pub async fn download_model(
     if !matches!(parsed_url.scheme(), "http" | "https") {
         return Err("Download URL must use HTTP or HTTPS.".into());
     }
+
+    let dl_handle = state.register_download(&filename)?;
+    let cancel_token = dl_handle.token.clone();
+
     let models_dir = app
         .path()
         .app_data_dir()
@@ -668,7 +725,6 @@ pub async fn download_model(
         .map_err(|e| e.to_string())?;
     let dest = models_dir.join(&filename);
     if dest.exists() {
-        // If a valid GGUF file is already present, reuse it seamlessly instead of failing.
         if let Ok(mut f) = tokio::fs::File::open(&dest).await {
             use tokio::io::AsyncReadExt;
             let mut header = [0u8; 4];
@@ -684,6 +740,9 @@ pub async fn download_model(
                         downloaded: size,
                         total: size,
                         percent: 100.0,
+                        speed_bps: 0,
+                        eta_secs: Some(0),
+                        stage: "finished".into(),
                         done: true,
                         error: None,
                     },
@@ -693,60 +752,190 @@ pub async fn download_model(
         }
         let _ = tokio::fs::remove_file(&dest).await;
     }
+
     let partial = models_dir.join(format!("{filename}.part"));
-    let mut file = tokio::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&partial)
+    let mut existing_bytes = tokio::fs::metadata(&partial)
         .await
-        .map_err(|e| format!("Cannot start download (another download may be running): {e}"))?;
-    let cleanup = PartialDownload(partial.clone());
+        .map(|m| m.len())
+        .unwrap_or(0);
 
     let result = async {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let response = state
-            .http
-            .stream_client
-            .get(parsed_url)
+
+        let mut req = state.http.stream_client.get(parsed_url);
+        if existing_bytes > 0 {
+            req = req.header("Range", format!("bytes={existing_bytes}-"));
+        }
+        let response = req
             .send()
             .await
             .map_err(|e| format!("Download request failed: {}", e.without_url()))?;
-        if !response.status().is_success() {
+
+        let status = response.status().as_u16();
+        let expected_hash = expected_sha256
+            .as_deref()
+            .map(|h| h.trim().to_ascii_lowercase())
+            .filter(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()))
+            .or_else(|| expected_sha256_from_response(&response));
+
+        let already_complete = status == 416 && existing_bytes > 0;
+        if !already_complete && !response.status().is_success() {
             return Err(format!("Download returned HTTP {}", response.status()));
         }
-        let total = response.content_length().unwrap_or(0);
-        let mut stream = response.bytes_stream();
-        let mut downloaded = 0u64;
-        let mut last_event = std::time::Instant::now();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| format!("Download interrupted: {}", e.without_url()))?;
-            file.write_all(&chunk).await.map_err(|e| e.to_string())?;
-            downloaded += chunk.len() as u64;
-            if last_event.elapsed() >= std::time::Duration::from_millis(100) {
-                let _ = app.emit(
-                    "download-progress",
-                    DownloadProgressPayload {
-                        filename: filename.clone(),
-                        downloaded,
-                        total,
-                        percent: if total > 0 {
-                            downloaded as f32 / total as f32 * 100.0
-                        } else {
-                            0.0
-                        },
-                        done: false,
-                        error: None,
-                    },
-                );
-                last_event = std::time::Instant::now();
+
+        let is_resumed = status == 206;
+        if is_resumed {
+            let range_start = response
+                .headers()
+                .get(reqwest::header::CONTENT_RANGE)
+                .and_then(|v| v.to_str().ok())
+                .and_then(content_range_start);
+            if range_start != Some(existing_bytes) {
+                let _ = tokio::fs::remove_file(&partial).await;
+                return Err("Server resumed download at an unexpected offset. Please retry.".into());
             }
         }
-        if downloaded < 4 || (total > 0 && downloaded != total) {
-            return Err("Model download is incomplete.".into());
+
+        let total = if already_complete {
+            existing_bytes
+        } else if is_resumed {
+            existing_bytes.saturating_add(response.content_length().unwrap_or(0))
+        } else {
+            existing_bytes = 0;
+            response.content_length().unwrap_or(0)
+        };
+
+        let mut downloaded = existing_bytes;
+        let _ = app.emit(
+            "download-progress",
+            DownloadProgressPayload {
+                filename: filename.clone(),
+                downloaded,
+                total,
+                percent: if total > 0 {
+                    (downloaded as f32 / total as f32) * 100.0
+                } else {
+                    0.0
+                },
+                speed_bps: 0,
+                eta_secs: None,
+                stage: "downloading".into(),
+                done: false,
+                error: None,
+            },
+        );
+
+        if !already_complete {
+            let mut file = if is_resumed && existing_bytes > 0 {
+                tokio::fs::OpenOptions::new()
+                    .append(true)
+                    .open(&partial)
+                    .await
+                    .map_err(|e| format!("Cannot open partial download: {e}"))?
+            } else {
+                tokio::fs::File::create(&partial)
+                    .await
+                    .map_err(|e| format!("Cannot create download file: {e}"))?
+            };
+
+            let mut stream = response.bytes_stream();
+            let mut last_event = std::time::Instant::now();
+            let mut bytes_at_last_event = downloaded;
+            let mut speed_bps: f64 = 0.0;
+
+            loop {
+                let next_chunk = tokio::select! {
+                    _ = cancel_token.cancelled() => {
+                        let _ = file.flush().await;
+                        drop(file);
+                        let _ = app.emit(
+                            "download-progress",
+                            DownloadProgressPayload {
+                                filename: filename.clone(),
+                                downloaded,
+                                total,
+                                percent: if total > 0 { (downloaded as f32 / total as f32) * 100.0 } else { 0.0 },
+                                speed_bps: 0,
+                                eta_secs: None,
+                                stage: "cancelled".into(),
+                                done: true,
+                                error: Some("Download paused. Click Download again to resume.".into()),
+                            },
+                        );
+                        return Err("Download cancelled.".into());
+                    }
+                    chunk = stream.next() => chunk,
+                };
+
+                let Some(chunk_res) = next_chunk else {
+                    break;
+                };
+                let chunk = chunk_res
+                    .map_err(|e| format!("Download interrupted (resume supported): {}", e.without_url()))?;
+                file.write_all(&chunk).await.map_err(|e| e.to_string())?;
+                downloaded = downloaded.saturating_add(chunk.len() as u64);
+
+                let elapsed = last_event.elapsed();
+                if elapsed >= std::time::Duration::from_millis(200) {
+                    let instant =
+                        (downloaded.saturating_sub(bytes_at_last_event)) as f64 / elapsed.as_secs_f64();
+                    speed_bps = if speed_bps == 0.0 {
+                        instant
+                    } else {
+                        speed_bps * 0.7 + instant * 0.3
+                    };
+                    let speed_u64 = speed_bps as u64;
+                    let eta_secs = if total > downloaded && speed_u64 > 0 {
+                        Some((total - downloaded) / speed_u64)
+                    } else {
+                        None
+                    };
+                    let _ = app.emit(
+                        "download-progress",
+                        DownloadProgressPayload {
+                            filename: filename.clone(),
+                            downloaded,
+                            total,
+                            percent: if total > 0 {
+                                (downloaded as f32 / total as f32) * 100.0
+                            } else {
+                                0.0
+                            },
+                            speed_bps: speed_u64,
+                            eta_secs,
+                            stage: "downloading".into(),
+                            done: false,
+                            error: None,
+                        },
+                    );
+                    last_event = std::time::Instant::now();
+                    bytes_at_last_event = downloaded;
+                }
+            }
+
+            if downloaded < 4 || (total > 0 && downloaded + (total / 100).max(1024) < total) {
+                return Err("Model download is incomplete. Click Download again to resume.".into());
+            }
+            file.flush().await.map_err(|e| e.to_string())?;
+            file.sync_all().await.map_err(|e| e.to_string())?;
+            drop(file);
         }
-        file.flush().await.map_err(|e| e.to_string())?;
-        file.sync_all().await.map_err(|e| e.to_string())?;
-        drop(file);
+
+        let _ = app.emit(
+            "download-progress",
+            DownloadProgressPayload {
+                filename: filename.clone(),
+                downloaded,
+                total: total.max(downloaded),
+                percent: 100.0,
+                speed_bps: 0,
+                eta_secs: Some(0),
+                stage: "verifying".into(),
+                done: false,
+                error: None,
+            },
+        );
+
         let mut header = [0u8; 4];
         tokio::fs::File::open(&partial)
             .await
@@ -755,8 +944,18 @@ pub async fn download_model(
             .await
             .map_err(|e| e.to_string())?;
         if &header != b"GGUF" {
-            return Err("The server response is not a GGUF model.".into());
+            let _ = tokio::fs::remove_file(&partial).await;
+            return Err("Downloaded file is not a valid GGUF model (possibly an error page).".into());
         }
+
+        if let Some(expected) = expected_hash {
+            let actual = compute_file_sha256(partial.clone()).await?;
+            if actual != expected {
+                let _ = tokio::fs::remove_file(&partial).await;
+                return Err("Downloaded file failed SHA-256 checksum verification. Please download again.".into());
+            }
+        }
+
         tokio::fs::rename(&partial, &dest)
             .await
             .map_err(|e| e.to_string())?;
@@ -768,8 +967,11 @@ pub async fn download_model(
             DownloadProgressPayload {
                 filename: filename.clone(),
                 downloaded,
-                total,
+                total: total.max(downloaded),
                 percent: 100.0,
+                speed_bps: 0,
+                eta_secs: Some(0),
+                stage: "finished".into(),
                 done: true,
                 error: None,
             },
@@ -778,19 +980,23 @@ pub async fn download_model(
     }
     .await;
 
-    drop(cleanup);
     if let Err(ref error) = result {
-        let _ = app.emit(
-            "download-progress",
-            DownloadProgressPayload {
-                filename,
-                downloaded: 0,
-                total: 0,
-                percent: 0.0,
-                done: true,
-                error: Some(error.clone()),
-            },
-        );
+        if !cancel_token.is_cancelled() {
+            let _ = app.emit(
+                "download-progress",
+                DownloadProgressPayload {
+                    filename,
+                    downloaded: 0,
+                    total: 0,
+                    percent: 0.0,
+                    speed_bps: 0,
+                    eta_secs: None,
+                    stage: "error".into(),
+                    done: true,
+                    error: Some(error.clone()),
+                },
+            );
+        }
     }
     result
 }
@@ -1027,5 +1233,28 @@ mod tests {
         cfg.chunk_overlap = 50;
         cfg.token_budget = 100;
         assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn download_helpers_parse_sha256_and_content_range() {
+        let hash = "a".repeat(64);
+        assert_eq!(sha256_from_header(&format!("\"{hash}\"")), Some(hash.clone()));
+        assert_eq!(sha256_from_header(&format!("W/\"{hash}\"")), Some(hash));
+        assert_eq!(sha256_from_header("\"abc123\""), None);
+
+        assert_eq!(content_range_start("bytes 1024-4095/4096"), Some(1024));
+        assert_eq!(content_range_start("bytes 0-0/1"), Some(0));
+        assert_eq!(content_range_start("bytes */1000"), None);
+    }
+
+    #[test]
+    fn download_registration_and_cancellation_work() {
+        let state = AppState::new(PathBuf::new());
+        let handle = state.register_download("model.gguf").unwrap();
+        assert!(state.register_download("model.gguf").is_err());
+        assert!(state.cancel_download("model.gguf").unwrap());
+        assert!(handle.token.is_cancelled());
+        drop(handle);
+        assert!(state.register_download("model.gguf").is_ok());
     }
 }
