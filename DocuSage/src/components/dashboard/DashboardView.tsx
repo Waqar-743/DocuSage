@@ -557,6 +557,7 @@ export const DashboardView: React.FC<{
               attachedCount={activeChat.attachedDocPaths.length}
               onBranch={(msgId) => branchFromMessage(activeChat.id, msgId)}
               onQuickPrompt={(text) => void sendMessage(text)}
+              onAttachDocument={() => void handleIngestDocument()}
             />
             <ChatComposer focusSignal={focusSignal} />
           </div>
