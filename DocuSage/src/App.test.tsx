@@ -106,6 +106,9 @@ vi.mock('./lib/api', async (original) => {
       models: [{ id: 'gpt-4.1', label: 'GPT-4.1' }],
     })),
     downloadModel: vi.fn(async (_url: string, filename: string) => `/app-data/models/${filename}`),
+    cancelDownload: vi.fn(async () => true),
+    listPartialDownloads: vi.fn(async () => []),
+    deletePartialDownload: vi.fn(async () => {}),
     installLocalRuntime: vi.fn(async () => ({
       installed: true,
       binaryPath: '/app-data/runtime/llama-server',
@@ -149,6 +152,7 @@ vi.mock('./lib/api', async (original) => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(api.listPartialDownloads).mockResolvedValue([]);
   events.clear();
   localStorage.clear();
   localStorage.setItem(
@@ -169,6 +173,8 @@ beforeEach(() => {
     providers: [],
     activeProviderId: 'local',
     connectedModel: 'test.gguf',
+    partialDownloads: [],
+    modelDownloads: {},
     verificationByProvider: {},
     modelsByProvider: {},
     isConnectingModel: false,
@@ -192,6 +198,7 @@ beforeEach(() => {
     settingsOpen: false,
     settingsTab: 'providers',
     highlightedProviderKind: null,
+    selectedLocalModelId: null,
     commandPaletteOpen: false,
     shortcutsOpen: false,
     compareOpen: false,
@@ -694,4 +701,167 @@ test('runtime install failure clears resolving progress bar and displays inline 
 
   expect(await screen.findByText(/Runtime setup error/i)).toBeTruthy();
   expect(screen.queryByText(/resolving…/i)).toBeNull();
+});
+
+test('surfaces saved partial download on reopen with Resume & Details instead of starting over', async () => {
+  vi.mocked(api.listDownloadedModels).mockResolvedValueOnce([]);
+  vi.mocked(api.listPartialDownloads).mockResolvedValue([
+    {
+      filename: 'Qwen3.5-2B-Q4_K_M.gguf',
+      path: '/app-data/models/Qwen3.5-2B-Q4_K_M.gguf.part',
+      downloadedBytes: 640 * 1024 * 1024,
+    },
+  ]);
+
+  await ready();
+
+  // Main-page banner automatically restores paused progress instead of restarting from 0%
+  expect(await screen.findByText(/Paused download: Qwen 3\.5 2B/i)).toBeTruthy();
+  expect(screen.getByRole('button', { name: /Resume/i })).toBeTruthy();
+
+  // Clicking Details on the main page banner opens that exact model's specification view
+  fireEvent.click(screen.getByRole('button', { name: /Details/i }));
+  expect(await screen.findByText('Model Specifications')).toBeTruthy();
+  expect(screen.getByRole('button', { name: /Resume Download/i })).toBeTruthy();
+});
+
+test('pausing an active download keeps paused state without false Setup failed error and guards focus', async () => {
+  let rejectDownload!: (reason: Error) => void;
+  vi.mocked(api.listDownloadedModels).mockResolvedValue([]);
+  vi.mocked(api.downloadModel).mockImplementationOnce(
+    () =>
+      new Promise((_resolve, reject) => {
+        rejectDownload = reject;
+      }),
+  );
+  vi.mocked(api.listPartialDownloads).mockResolvedValue([
+    {
+      filename: 'Qwen3.5-2B-Q4_K_M.gguf',
+      path: '/app-data/models/Qwen3.5-2B-Q4_K_M.gguf.part',
+      downloadedBytes: 320 * 1024 * 1024,
+    },
+  ]);
+
+  await ready();
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Local AI & GGUF' }));
+
+  // Start downloading the recommended model (redirects to main page & sets busy focus guard)
+  const downloadBtns = await screen.findAllByRole('button', { name: /Download & Run/i });
+  fireEvent.click(downloadBtns[0]);
+
+  await waitFor(() =>
+    expect(api.setAssistantFocusGuard).toHaveBeenCalledWith({ busy: true }),
+  );
+
+  // Pause from the main page banner
+  const pauseBtn = await screen.findByRole('button', { name: /Pause/i });
+  fireEvent.click(pauseBtn);
+  await act(async () => {
+    rejectDownload(new Error('Download cancelled.'));
+  });
+
+  // Clean paused state with Resume button — NOT a scary "Setup failed" error
+  expect(await screen.findByRole('button', { name: /Resume/i })).toBeTruthy();
+  expect(screen.queryByText(/Setup failed/i)).toBeNull();
+  await waitFor(() =>
+    expect(api.setAssistantFocusGuard).toHaveBeenCalledWith({ busy: false }),
+  );
+});
+
+test('surfaces recovery notice on startup when previous native model load was interrupted', async () => {
+  vi.mocked(api.getLocalRuntimeStatus).mockResolvedValueOnce({
+    installed: true,
+    binaryPath: 'built-in (llama.cpp)',
+    running: false,
+    port: null,
+    baseUrl: null,
+    loadedModel: null,
+    loadedModelPath: null,
+    embeddingRunning: false,
+    embeddingPort: null,
+    embeddingModel: null,
+    detectedBackend: 'built-in',
+    platformSummary: 'windows-x86_64 (8 GB RAM · 4 threads)',
+    version: 'llama.cpp (built-in)',
+    lastInterruptedModel: 'Qwen3.5-4B-Q4_K_M.gguf',
+  });
+
+  await ready();
+  expect(await screen.findByText(/Previous load of Qwen 3\.5 4B was interrupted/i)).toBeTruthy();
+});
+
+test('disables Load Chat while Test Local Model is in flight and reports Load Failed with log path on error', async () => {
+  let resolveTest!: (res: api.LocalModelTestResult) => void;
+  vi.mocked(api.listDownloadedModels).mockResolvedValue([
+    {
+      filename: 'qwen2.5-1.5b-instruct-q4_k_m.gguf',
+      path: '/app-data/models/qwen2.5-1.5b-instruct-q4_k_m.gguf',
+      sizeBytes: 1_117_320_736,
+    },
+  ]);
+  vi.mocked(api.getLocalRuntimeStatus)
+    .mockResolvedValueOnce({
+      installed: true,
+      binaryPath: 'built-in (isolated llama.cpp worker)',
+      running: false,
+      port: null,
+      baseUrl: null,
+      loadedModel: null,
+      loadedModelPath: null,
+      embeddingRunning: false,
+      embeddingPort: null,
+      embeddingModel: null,
+      detectedBackend: 'isolated-cpu',
+      platformSummary: 'windows-x86_64 (8 GB RAM · 4 threads)',
+      version: 'llama.cpp (isolated worker)',
+      engineMode: 'isolated-worker',
+      logPath: 'C:\\Users\\test\\AppData\\Local\\com.docusage.app\\logs\\local-engine.log',
+      lastError: null,
+    })
+    .mockResolvedValue({
+      installed: true,
+      binaryPath: 'built-in (isolated llama.cpp worker)',
+      running: false,
+      port: null,
+      baseUrl: null,
+      loadedModel: null,
+      loadedModelPath: null,
+      embeddingRunning: false,
+      embeddingPort: null,
+      embeddingModel: null,
+      detectedBackend: 'isolated-cpu',
+      platformSummary: 'windows-x86_64 (8 GB RAM · 4 threads)',
+      version: 'llama.cpp (isolated worker)',
+      engineMode: 'isolated-worker',
+      logPath: 'C:\\Users\\test\\AppData\\Local\\com.docusage.app\\logs\\local-engine.log',
+      lastError: 'Local AI worker exited unexpectedly (0xc0000005).',
+    });
+  vi.mocked(api.testLocalModel).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        resolveTest = resolve;
+      }),
+  );
+
+  await ready();
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Local AI & GGUF' }));
+
+  const testBtn = await screen.findByRole('button', { name: /Test Local Model/i });
+  const loadChatBtn = await screen.findByRole('button', { name: /Load Chat/i });
+
+  fireEvent.click(testBtn);
+  await waitFor(() => expect((loadChatBtn as HTMLButtonElement).disabled).toBe(true));
+  expect(await screen.findByText('Testing Model…')).toBeTruthy();
+
+  await act(async () => {
+    resolveTest({
+      ok: false,
+      message: 'Local AI worker exited unexpectedly (0xc0000005).',
+    });
+  });
+
+  expect(await screen.findByText('Load Failed')).toBeTruthy();
+  expect(screen.getByText(/Diagnostic log:.*local-engine\.log/i)).toBeTruthy();
 });
