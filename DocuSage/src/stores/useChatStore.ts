@@ -363,6 +363,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const providerState = useProviderStore.getState();
     const targetProviderId = opts?.providerId ?? providerState.activeProviderId;
     const provider = providerState.providers.find((p) => p.id === targetProviderId);
+    const isLocalProvider = !provider || provider.provider === 'local';
+
+    if (
+      isLocalProvider &&
+      providerState.localSetup.stage === 'downloading' &&
+      !providerState.runtimeStatus.running &&
+      providerState.downloadedModels.length === 0
+    ) {
+      const pct = Math.min(100, Math.max(0, providerState.localSetup.percent)).toFixed(0);
+      useUiStore.getState().pushToast(
+        'info',
+        `${providerState.localSetup.modelName || 'Local model'} is still downloading (${pct}%). Wait for it to finish, or switch to a cloud model.`,
+        { dedupeKey: 'local-still-downloading' },
+      );
+      return;
+    }
+
     const providerLabel = provider?.name ?? 'Local';
     const modelLabel =
       opts?.modelOverride ??

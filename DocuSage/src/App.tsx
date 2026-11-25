@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import * as api from './lib/api';
 import { THEMES } from './lib/themes';
 import { CommandPalette } from './components/common/CommandPalette';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { ModelCompare } from './components/common/ModelCompare';
 import { ShortcutsModal } from './components/common/ShortcutsModal';
 import { ToastStack } from './components/common/ToastStack';
@@ -214,19 +215,23 @@ export default function App() {
     setShortcutsOpen,
   ]);
 
-  return (
-    <div className={`h-screen w-screen overflow-hidden bg-transparent ${theme.text}`}>
-      {windowMode === 'spotlight' ? (
-        <SpotlightView focusSignal={focusSignal} />
-      ) : (
-        <DashboardView focusSignal={focusSignal} />
-      )}
+  const triggerFocusComposer = () => setFocusSignal((n) => n + 1);
 
-      <CommandPalette />
-      <ModelCompare />
-      <ShortcutsModal />
-      <SettingsModal />
-      <ToastStack />
-    </div>
+  return (
+    <ErrorBoundary>
+      <div className={`h-screen w-screen overflow-hidden bg-transparent ${theme.text}`}>
+        {windowMode === 'spotlight' ? (
+          <SpotlightView focusSignal={focusSignal} onFocusComposer={triggerFocusComposer} />
+        ) : (
+          <DashboardView focusSignal={focusSignal} onFocusComposer={triggerFocusComposer} />
+        )}
+
+        <CommandPalette />
+        <ModelCompare />
+        <ShortcutsModal />
+        <SettingsModal />
+        <ToastStack />
+      </div>
+    </ErrorBoundary>
   );
 }

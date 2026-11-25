@@ -21,7 +21,10 @@ import { BranchSelector } from '../common/BranchSelector';
 import { LocalSetupBanner } from '../common/LocalSetupBanner';
 import { ModelSelector } from '../common/ModelSelector';
 
-export const SpotlightView: React.FC<{ focusSignal: number }> = ({ focusSignal }) => {
+export const SpotlightView: React.FC<{
+  focusSignal: number;
+  onFocusComposer?: () => void;
+}> = ({ focusSignal, onFocusComposer }) => {
   const theme = useUiStore((s) => THEMES[s.theme]);
   const isPinned = useUiStore((s) => s.isPinned);
   const setPinned = useUiStore((s) => s.setPinned);
@@ -113,7 +116,7 @@ export const SpotlightView: React.FC<{ focusSignal: number }> = ({ focusSignal }
         </div>
       </header>
 
-      <LocalSetupBanner compact />
+      <LocalSetupBanner compact onFocusComposer={onFocusComposer} />
       <BranchSelector />
 
       <MessageList

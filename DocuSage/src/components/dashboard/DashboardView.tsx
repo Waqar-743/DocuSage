@@ -34,7 +34,10 @@ import { LocalSetupBanner } from '../common/LocalSetupBanner';
 import { ModelSelector } from '../common/ModelSelector';
 import { RagDebugPanel } from '../common/RagDebugPanel';
 
-export const DashboardView: React.FC<{ focusSignal: number }> = ({ focusSignal }) => {
+export const DashboardView: React.FC<{
+  focusSignal: number;
+  onFocusComposer?: () => void;
+}> = ({ focusSignal, onFocusComposer }) => {
   const theme = useUiStore((s) => THEMES[s.theme]);
   const sidebarWidth = useUiStore((s) => s.sidebarWidth);
   const setSidebarWidth = useUiStore((s) => s.setSidebarWidth);
@@ -508,7 +511,7 @@ export const DashboardView: React.FC<{ focusSignal: number }> = ({ focusSignal }
           </div>
         </header>
 
-        <LocalSetupBanner />
+        <LocalSetupBanner onFocusComposer={onFocusComposer} />
 
         <div className="flex-1 flex min-h-0 overflow-hidden">
           <div className="flex-1 flex flex-col min-w-0 overflow-hidden">

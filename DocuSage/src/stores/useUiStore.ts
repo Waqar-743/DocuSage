@@ -32,6 +32,7 @@ type UiState = {
   settingsOpen: boolean;
   settingsTab: SettingsTab;
   highlightedProviderKind: AiProviderKind | null;
+  selectedLocalModelId: string | null;
   commandPaletteOpen: boolean;
   shortcutsOpen: boolean;
   compareOpen: boolean;
@@ -50,6 +51,8 @@ type UiState = {
   toggleSidebarCollapsed: () => void;
   setSidebarTab: (tab: SidebarTab) => void;
   openSettings: (tab?: SettingsTab, providerKind?: AiProviderKind | null) => void;
+  openLocalModelDetails: (modelId: string) => void;
+  setSelectedLocalModelId: (modelId: string | null) => void;
   closeSettings: () => void;
   setSettingsTab: (tab: SettingsTab) => void;
   setCommandPaletteOpen: (open: boolean) => void;
@@ -88,6 +91,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   settingsOpen: false,
   settingsTab: 'providers',
   highlightedProviderKind: null,
+  selectedLocalModelId: null,
   commandPaletteOpen: false,
   shortcutsOpen: false,
   compareOpen: false,
@@ -183,6 +187,18 @@ export const useUiStore = create<UiState>((set, get) => ({
     }));
     void api.setAssistantFocusGuard({ settingsOpen: true });
   },
+
+  openLocalModelDetails: (modelId) => {
+    set({
+      settingsOpen: true,
+      settingsTab: 'localRuntime',
+      highlightedProviderKind: null,
+      selectedLocalModelId: modelId,
+    });
+    void api.setAssistantFocusGuard({ settingsOpen: true });
+  },
+
+  setSelectedLocalModelId: (selectedLocalModelId) => set({ selectedLocalModelId }),
 
   closeSettings: () => {
     set({ settingsOpen: false, highlightedProviderKind: null });
