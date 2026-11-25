@@ -19,10 +19,11 @@ use llama_cpp_2::model::LlamaModel;
 use llama_cpp_2::sampling::LlamaSampler;
 use llama_cpp_2::token::LlamaToken;
 use llama_cpp_2::{LlamaStateSeqFlags, SeqState};
-use llama_cpp_sys_2::{LLAMA_FLASH_ATTN_TYPE_DISABLED, LLAMA_FLASH_ATTN_TYPE_ENABLED};
+use llama_cpp_sys_2::{LLAMA_FLASH_ATTN_TYPE_AUTO, LLAMA_FLASH_ATTN_TYPE_DISABLED};
 use log::{error, info, warn};
 use tokio_util::sync::CancellationToken;
 
+use crate::services::local_log;
 use crate::services::local_stream::{self, ReplyFilter, StreamChunk, Utf8Assembler};
 use crate::services::local_template::{ChatTemplate, TemplateMessage};
 
@@ -89,6 +90,7 @@ pub struct LoadOptions {
     pub kv_cache_quant: String,
     pub flash_attention: bool,
     pub gpu_layers: u32,
+    pub use_mmap: bool,
 }
 
 impl Default for LoadOptions {
@@ -97,9 +99,11 @@ impl Default for LoadOptions {
         Self {
             context_length: crate::services::device::recommended_context_length(mem),
             threads: crate::services::device::inference_threads(),
-            kv_cache_quant: "q8_0".to_string(),
-            flash_attention: true,
+            // Safe CPU reference defaults: F16 KV cache without experimental CPU Flash Attention.
+            kv_cache_quant: "f16".to_string(),
+            flash_attention: false,
             gpu_layers: 0,
+            use_mmap: true,
         }
     }
 }
@@ -159,8 +163,10 @@ unsafe extern "C" fn forward_log(
     }
     if level == llama_cpp_sys_2::GGML_LOG_LEVEL_ERROR {
         error!("llama.cpp: {message}");
+        local_log::log_line("llama.cpp:error", message);
     } else if level == llama_cpp_sys_2::GGML_LOG_LEVEL_WARN {
         warn!("llama.cpp: {message}");
+        local_log::log_line("llama.cpp:warn", message);
     }
 }
 
@@ -168,9 +174,15 @@ fn backend() -> Result<&'static LlamaBackend, String> {
     static BACKEND: OnceLock<Result<LlamaBackend, String>> = OnceLock::new();
     BACKEND
         .get_or_init(|| {
+            local_log::log_line("backend_init", "calling llama_log_set + LlamaBackend::init()");
             unsafe { llama_cpp_sys_2::llama_log_set(Some(forward_log), std::ptr::null_mut()) };
-            LlamaBackend::init()
-                .map_err(|e| format!("Could not initialize built-in llama.cpp engine: {e}"))
+            let res = LlamaBackend::init()
+                .map_err(|e| format!("Could not initialize built-in llama.cpp engine: {e}"));
+            match &res {
+                Ok(_) => local_log::log_line("backend_ready", "LlamaBackend initialized"),
+                Err(e) => local_log::log_line("backend_error", e),
+            }
+            res
         })
         .as_ref()
         .map_err(Clone::clone)
@@ -184,47 +196,113 @@ fn special_token_text(model: &LlamaModel, token: LlamaToken) -> String {
     String::from_utf8_lossy(&vocab.token_to_piece(token, true, None)).into_owned()
 }
 
+pub fn validate_gguf_file(model_name: &str, model_path: &Path) -> Result<u64, String> {
+    use std::io::Read;
+    local_log::log_line(
+        "validate_gguf",
+        &format!("inspecting {} ({})", model_name, model_path.display()),
+    );
+    let meta = std::fs::metadata(model_path)
+        .map_err(|e| format!("Cannot access model file {model_name}: {e}"))?;
+    if !meta.is_file() || meta.len() < 4096 {
+        return Err(format!(
+            "{model_name} is incomplete or empty ({} bytes). Delete it and download again.",
+            meta.len()
+        ));
+    }
+    let mut file = std::fs::File::open(model_path)
+        .map_err(|e| format!("Cannot open {model_name}: {e}"))?;
+    let mut header = [0u8; 24];
+    file.read_exact(&mut header)
+        .map_err(|e| format!("Cannot read {model_name} header: {e}"))?;
+    if &header[..4] != b"GGUF" {
+        return Err(format!(
+            "{model_name} is not a valid GGUF model file (missing GGUF magic header). Delete it and download again."
+        ));
+    }
+    let version = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
+    let tensor_count = u64::from_le_bytes([
+        header[8], header[9], header[10], header[11], header[12], header[13], header[14],
+        header[15],
+    ]);
+    let metadata_kv_count = u64::from_le_bytes([
+        header[16], header[17], header[18], header[19], header[20], header[21], header[22],
+        header[23],
+    ]);
+    if !(2..=3).contains(&version) || tensor_count == 0 || tensor_count > 100_000 || metadata_kv_count > 1_000_000 {
+        return Err(format!(
+            "{model_name} has a corrupted GGUF header (version={version}, tensors={tensor_count}, metadata={metadata_kv_count}). Delete it and download again."
+        ));
+    }
+    local_log::log_line(
+        "validate_gguf_ok",
+        &format!(
+            "model={model_name} bytes={} gguf_v={version} tensors={tensor_count} kv={metadata_kv_count}",
+            meta.len()
+        ),
+    );
+    Ok(meta.len())
+}
+
 pub fn load_model_from_disk(
     model_name: &str,
     model_path: &Path,
     options: LoadOptions,
 ) -> Result<LoadedModel, String> {
+    let model_file_bytes = validate_gguf_file(model_name, model_path)?;
     let backend = backend()?;
     let started = Instant::now();
 
+    let total_mem = crate::services::device::total_memory_bytes();
+    let avail_mem = crate::services::device::available_memory_bytes();
     info!("Loading {model_name} from {}", model_path.display());
     let mut gpu_layers = options.gpu_layers.min(999);
     if gpu_layers != 0 && !backend.supports_gpu_offload() {
         gpu_layers = 0;
     }
 
-    let load_weights = |layers| {
-        let params = LlamaModelParams::default().with_n_gpu_layers(layers);
+    let load_weights = |layers: u32, use_mmap: bool| {
+        local_log::log_line(
+            "model_load",
+            &format!(
+                "calling LlamaModel::load_from_file(model={model_name}, bytes={model_file_bytes}, gpu_layers={layers}, use_mmap={use_mmap}, total_ram={total_mem:?}, avail_ram={avail_mem:?})"
+            ),
+        );
+        let params = LlamaModelParams::default()
+            .with_n_gpu_layers(layers)
+            .with_use_mmap(use_mmap);
         LlamaModel::load_from_file(backend, model_path, &params)
     };
-    let weights = match load_weights(gpu_layers) {
+    let weights = match load_weights(gpu_layers, options.use_mmap) {
         Err(e) if gpu_layers != 0 => {
             warn!("GPU offload failed for {model_name} ({e}); retrying on CPU");
-            load_weights(0)
+            local_log::log_line("model_load_retry", &format!("GPU failed ({e}), retrying CPU"));
+            load_weights(0, options.use_mmap)
+        }
+        Err(e) if options.use_mmap => {
+            warn!("mmap load failed for {model_name} ({e}); retrying without mmap");
+            local_log::log_line("model_load_retry", &format!("mmap failed ({e}), retrying use_mmap=false"));
+            load_weights(0, false)
         }
         result => result,
     };
     let model = weights.map_err(|e| {
+        local_log::log_line("model_load_error", &format!("{model_name}: {e}"));
         format!(
             "Could not load {model_name} ({e}). The GGUF file may be damaged — delete it and download again."
         )
     })?;
+    local_log::log_line("model_loaded", &format!("loaded weights for {model_name}"));
     let model = Box::new(model);
 
     let trained = model.n_ctx_train().max(512);
-    let n_ctx = options.context_length.clamp(512, trained);
+    let safe_ctx = crate::services::device::safe_context_length(
+        total_mem,
+        avail_mem,
+        model_file_bytes,
+    );
+    let n_ctx = options.context_length.min(safe_ctx).clamp(512, trained);
     let threads = options.threads.clamp(1, 32) as i32;
-
-    let base_params = LlamaContextParams::default()
-        .with_n_ctx(NonZeroU32::new(n_ctx))
-        .with_n_batch(PROMPT_BATCH as u32)
-        .with_n_threads(threads)
-        .with_n_threads_batch(threads);
 
     // SAFETY: `model` is heap-allocated in a `Box` and stored in `Session`
     // after `ctx`, so `ctx` is always dropped before `model`.
@@ -238,29 +316,66 @@ pub fn load_model_from_disk(
         (true, "q4_0") => KvCacheType::Q4_0,
         _ => KvCacheType::F16,
     };
-    let new_context = |flash, cache_type| {
+    let new_context = |ctx_len: u32, flash: bool, cache_type: KvCacheType| {
+        local_log::log_line(
+            "context_create",
+            &format!(
+                "calling model.new_context(model={model_name}, n_ctx={ctx_len}, n_batch={PROMPT_BATCH}, threads={threads}, flash={flash}, kv={cache_type:?})"
+            ),
+        );
         let policy = if flash {
-            LLAMA_FLASH_ATTN_TYPE_ENABLED
+            LLAMA_FLASH_ATTN_TYPE_AUTO
         } else {
             LLAMA_FLASH_ATTN_TYPE_DISABLED
         };
-        model_ref.new_context(
-            backend,
-            base_params
-                .clone()
-                .with_flash_attention_policy(policy)
-                .with_type_k(cache_type)
-                .with_type_v(cache_type),
-        )
+        let params = LlamaContextParams::default()
+            .with_n_ctx(NonZeroU32::new(ctx_len))
+            .with_n_batch(PROMPT_BATCH as u32)
+            .with_n_threads(threads)
+            .with_n_threads_batch(threads)
+            .with_flash_attention_policy(policy)
+            .with_type_k(cache_type)
+            .with_type_v(cache_type);
+        model_ref.new_context(backend, params)
     };
-    let context = match new_context(flash_attention, kv_type) {
-        Err(e) if flash_attention || kv_type != KvCacheType::F16 => {
-            warn!("Context setup failed for {model_name} ({e}); retrying with F16 and Flash Attention off");
-            new_context(false, KvCacheType::F16)
+
+    let mut attempts: Vec<(u32, bool, KvCacheType)> = vec![(n_ctx, flash_attention, kv_type)];
+    if flash_attention || kv_type != KvCacheType::F16 {
+        attempts.push((n_ctx, false, KvCacheType::F16));
+    }
+    if n_ctx > 2048 {
+        attempts.push((2048, false, KvCacheType::F16));
+    }
+    if n_ctx > 1024 {
+        attempts.push((1024, false, KvCacheType::F16));
+    }
+
+    let mut last_err = None;
+    let mut ctx_opt = None;
+    for (ctx_len, flash, cache_type) in attempts {
+        match new_context(ctx_len, flash, cache_type) {
+            Ok(c) => {
+                local_log::log_line(
+                    "context_ready",
+                    &format!("context created for {model_name} (n_ctx={})", c.n_ctx()),
+                );
+                ctx_opt = Some(c);
+                break;
+            }
+            Err(e) => {
+                warn!("Context setup failed for {model_name} (ctx={ctx_len}, flash={flash}, kv={cache_type:?}): {e}");
+                local_log::log_line(
+                    "context_create_error",
+                    &format!("ctx={ctx_len} flash={flash} kv={cache_type:?}: {e}"),
+                );
+                last_err = Some(e);
+            }
         }
-        result => result,
-    };
-    let ctx = context.map_err(|e| {
+    }
+    let ctx = ctx_opt.ok_or_else(|| {
+        let e = last_err
+            .map(|err| err.to_string())
+            .unwrap_or_else(|| "unknown error".to_string());
         format!(
             "Not enough memory to start {model_name} ({e}). Close other apps or choose a smaller model."
         )
@@ -506,6 +621,7 @@ impl LoadedModel {
         .then_some(prompt.stable_len);
 
         let mut batch = LlamaBatch::new(PROMPT_BATCH, 1);
+        let mut logged_decode = false;
         while self.cached.len() < tokens.len() {
             if cancel.is_cancelled() {
                 return Ok(false);
@@ -523,9 +639,26 @@ impl LoadedModel {
                     .add(*token, position as i32, &[0], position + 1 == tokens.len())
                     .map_err(|e| format!("Failed to queue prompt tokens: {e}"))?;
             }
+            if !logged_decode {
+                local_log::log_line(
+                    "prompt_decode",
+                    &format!(
+                        "calling ctx.decode(model={}, tokens={}..{}/{})",
+                        self.model_name,
+                        from,
+                        to,
+                        tokens.len()
+                    ),
+                );
+            }
             if let Err(e) = self.session.ctx.decode(&mut batch) {
+                local_log::log_line("prompt_decode_error", &format!("{}: {e}", self.model_name));
                 self.reset_context();
                 return Err(format!("Local model failed while reading prompt: {e}"));
+            }
+            if !logged_decode {
+                local_log::log_line("prompt_decoded", &format!("first prompt batch decoded for {}", self.model_name));
+                logged_decode = true;
             }
             self.cached.extend_from_slice(&tokens[from..to]);
 
@@ -575,10 +708,14 @@ impl LoadedModel {
             }
         };
 
+        let mut logged_first_token = false;
         loop {
             if cancel.is_cancelled() {
                 stopped = true;
                 break;
+            }
+            if !logged_first_token {
+                local_log::log_line("first_token_sample", &format!("sampling first token for {}", self.model_name));
             }
             let token = sampler.sample(&self.session.ctx, -1);
             let vocab = self.session.model.vocab();
@@ -613,9 +750,17 @@ impl LoadedModel {
             batch
                 .add(token, self.cached.len() as i32, &[0], true)
                 .map_err(|e| format!("Failed to queue token: {e}"))?;
+            if !logged_first_token {
+                local_log::log_line("first_token_decode", &format!("decoding first generated token for {}", self.model_name));
+            }
             if let Err(e) = self.session.ctx.decode(&mut batch) {
+                local_log::log_line("token_decode_error", &format!("{}: {e}", self.model_name));
                 self.reset_context();
                 return Err(format!("Local model failed while generating: {e}"));
+            }
+            if !logged_first_token {
+                local_log::log_line("first_token_ok", &format!("first token decoded for {}", self.model_name));
+                logged_first_token = true;
             }
             self.cached.push(token);
         }
@@ -645,5 +790,33 @@ mod tests {
         assert_eq!(gemma.top_k, 64);
         let lfm = SamplingDefaults::for_model_filename("LFM2.5-1.2B-Instruct-Q5_K_M.gguf");
         assert_eq!(lfm.top_k, 50);
+    }
+
+    #[test]
+    fn validate_gguf_rejects_corrupt_or_truncated_files() {
+        let tmp = std::env::temp_dir().join(format!("docusage-gguf-test-{}.gguf", std::process::id()));
+        std::fs::write(&tmp, b"NOT_A_GGUF_FILE").unwrap();
+        assert!(validate_gguf_file("broken.gguf", &tmp).is_err());
+
+        let mut bad_magic = vec![0u8; 4096];
+        bad_magic[..4].copy_from_slice(b"HTML");
+        std::fs::write(&tmp, &bad_magic).unwrap();
+        assert!(validate_gguf_file("html.gguf", &tmp).is_err());
+
+        let mut bad_version = vec![0u8; 4096];
+        bad_version[..4].copy_from_slice(b"GGUF");
+        bad_version[4..8].copy_from_slice(&99u32.to_le_bytes());
+        std::fs::write(&tmp, &bad_version).unwrap();
+        assert!(validate_gguf_file("badver.gguf", &tmp).is_err());
+
+        let mut valid = vec![0u8; 4096];
+        valid[..4].copy_from_slice(b"GGUF");
+        valid[4..8].copy_from_slice(&3u32.to_le_bytes());
+        valid[8..16].copy_from_slice(&42u64.to_le_bytes());
+        valid[16..24].copy_from_slice(&12u64.to_le_bytes());
+        std::fs::write(&tmp, &valid).unwrap();
+        assert_eq!(validate_gguf_file("valid.gguf", &tmp).unwrap(), 4096);
+
+        let _ = std::fs::remove_file(&tmp);
     }
 }
