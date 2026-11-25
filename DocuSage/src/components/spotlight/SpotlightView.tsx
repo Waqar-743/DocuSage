@@ -48,10 +48,9 @@ export const SpotlightView: React.FC<{
     <div
       className={`relative h-full w-full flex flex-col overflow-hidden rounded-2xl border shadow-2xl ${theme.appBg} ${theme.border}`}
     >
-      {/* Compact Draggable Spotlight Header (Double-click to expand to Dashboard) */}
+      {/* Compact Draggable Spotlight Header */}
       <header
-        data-tauri-drag-region
-        onDoubleClick={() => void toggleWindowMode()}
+        onMouseDown={api.handleWindowDragMouseDown}
         className={`flex items-center justify-between gap-2 px-3 py-2 border-b select-none ${theme.sidebarBg} ${theme.border}`}
       >
         <div className="flex items-center gap-1.5 min-w-0">
@@ -107,7 +106,7 @@ export const SpotlightView: React.FC<{
             type="button"
             onClick={() => void toggleWindowMode()}
             aria-label="Expand to Dashboard"
-            title="Expand to Dashboard (Double-click titlebar)"
+            title="Expand to Dashboard"
             className={`p-1.5 rounded-lg ${theme.hoverBg}`}
           >
             <Maximize2 className="w-3.5 h-3.5" />

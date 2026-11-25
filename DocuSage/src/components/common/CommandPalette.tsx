@@ -73,7 +73,6 @@ export const CommandPalette: React.FC = () => {
         id: 'toggle-mode',
         group: 'Window',
         label: windowMode === 'spotlight' ? 'Expand to Dashboard' : 'Collapse to Spotlight',
-        hint: 'Double-click header',
         icon: windowMode === 'spotlight' ? <Maximize2 className="w-4 h-4" /> : <Minimize2 className="w-4 h-4" />,
         run: () => void toggleWindowMode(),
       },

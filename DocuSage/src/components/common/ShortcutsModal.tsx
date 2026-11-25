@@ -10,7 +10,6 @@ const SHORTCUTS = [
   { keys: 'Ctrl + N', desc: 'Start a new conversation' },
   { keys: 'Ctrl + /', desc: 'Show keyboard shortcuts' },
   { keys: 'Enter / Shift + Enter', desc: 'Send message / insert newline' },
-  { keys: 'Double-click Header', desc: 'Toggle Spotlight ↔ Dashboard mode' },
   { keys: 'Escape', desc: 'Close active modal or hide Spotlight' },
 ];
 

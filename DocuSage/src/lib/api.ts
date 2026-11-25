@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import type {
   AiProviderConfig,
   AiProviderConfigInput,
@@ -95,6 +96,23 @@ export type ChatSendResponse = {
 
 export function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+}
+
+/**
+ * Start native window drag on primary single-click only — deliberately ignores
+ * double-clicks so double-clicking a header never maximizes or toggles fullscreen.
+ */
+export function handleWindowDragMouseDown(e: {
+  button: number;
+  detail: number;
+  target: EventTarget | null;
+}): void {
+  if (!isTauri() || e.button !== 0 || e.detail > 1) return;
+  const el = e.target as HTMLElement | null;
+  if (el?.closest('button, input, select, textarea, a, [role="button"], [role="listbox"], [role="option"]')) {
+    return;
+  }
+  void getCurrentWindow().startDragging().catch(() => {});
 }
 
 function mockDelay(ms = 400): Promise<void> {
