@@ -22,6 +22,7 @@ import {
   X,
 } from 'lucide-react';
 import * as api from '../../lib/api';
+import docusageLogo from '../../assets/docusage-logo.png';
 import { THEMES } from '../../lib/themes';
 import { useChatStore } from '../../stores/useChatStore';
 import { useDocumentStore } from '../../stores/useDocumentStore';
@@ -195,34 +196,54 @@ export const DashboardView: React.FC<{
             style={{ width: sidebarWidth }}
             className={`shrink-0 flex flex-col border-r overflow-hidden ${theme.sidebarBg} ${theme.border}`}
           >
-            {/* Brand + Quick Create */}
-            <div data-tauri-drag-region className={`px-3 py-3 border-b flex items-center justify-between gap-2 ${theme.border}`}>
-              <div className="flex items-center gap-2 font-semibold text-sm tracking-tight">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
-                <span>DocuSage</span>
-                <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${theme.accentSoft}`}>
-                  v2
-                </span>
-              </div>
-              <div className="flex items-center gap-1">
+            {/* Brand Logo */}
+            <div data-tauri-drag-region className={`px-3 pt-3 pb-2.5 border-b flex items-center gap-2.5 ${theme.border}`}>
+              <img
+                src={docusageLogo}
+                alt="DocuSage logo"
+                className="w-7 h-7 rounded-lg object-contain shrink-0"
+              />
+              <span className="font-semibold text-[15px] tracking-tight truncate">DocuSage</span>
+            </div>
+
+            {/* Quick Actions directly below App Logo: New Chat, New Folder, Add Document */}
+            <div className={`px-2.5 py-2 border-b space-y-1.5 ${theme.border}`}>
+              <button
+                type="button"
+                onClick={() => {
+                  setSidebarTab('chats');
+                  createChat();
+                }}
+                aria-label="New Chat"
+                title="New Chat (Ctrl+N)"
+                className={`w-full inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-colors ${theme.accent}`}
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>New Chat</span>
+              </button>
+              <div className="grid grid-cols-2 gap-1.5">
                 <button
                   type="button"
-                  onClick={() => setCreatingFolder((v) => !v)}
+                  onClick={() => {
+                    setSidebarTab('chats');
+                    setCreatingFolder((v) => !v);
+                  }}
                   aria-label="New Folder"
-                  title="New Folder"
-                  className={`p-1.5 rounded-lg ${theme.hoverBg}`}
+                  title="Create a folder to organize chats"
+                  className={`inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-xl border text-[11.5px] font-medium transition-colors ${theme.surfaceBg} ${theme.border} ${theme.hoverBg}`}
                 >
-                  <FolderPlus className="w-3.5 h-3.5" />
+                  <FolderPlus className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">New Folder</span>
                 </button>
                 <button
                   type="button"
-                  onClick={() => createChat()}
-                  aria-label="New Chat"
-                  title="New Chat (Ctrl+N)"
-                  className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs ${theme.accent}`}
+                  onClick={() => void handleIngestDocument()}
+                  aria-label="Add Document"
+                  title="Import & index PDF, Markdown, or code"
+                  className={`inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-xl border text-[11.5px] font-medium transition-colors ${theme.surfaceBg} ${theme.border} ${theme.hoverBg}`}
                 >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>New</span>
+                  <FileUp className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">Document</span>
                 </button>
               </div>
             </div>

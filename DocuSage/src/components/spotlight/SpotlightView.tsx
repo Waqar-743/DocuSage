@@ -11,6 +11,7 @@ import {
   X,
 } from 'lucide-react';
 import * as api from '../../lib/api';
+import docusageLogo from '../../assets/docusage-logo.png';
 import { THEMES } from '../../lib/themes';
 import { useChatStore } from '../../stores/useChatStore';
 import { useDocumentStore } from '../../stores/useDocumentStore';
@@ -54,6 +55,11 @@ export const SpotlightView: React.FC<{
         className={`flex items-center justify-between gap-2 px-3 py-2 border-b select-none ${theme.sidebarBg} ${theme.border}`}
       >
         <div className="flex items-center gap-1.5 min-w-0">
+          <img
+            src={docusageLogo}
+            alt="DocuSage logo"
+            className="w-5 h-5 rounded-md object-contain shrink-0"
+          />
           <ModelSelector compact />
           <ContextBadge telemetry={latestTelemetry} compact />
         </div>

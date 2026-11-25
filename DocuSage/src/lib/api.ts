@@ -127,7 +127,7 @@ export async function chatSend(req: ChatSendRequest): Promise<ChatSendResponse> 
     return {
       reply: hasDocs
         ? `**Smart Context (${telemetry.mode})**: Preview answer grounded in ${req.attachedPaths.length} attached document(s) for: _"${req.prompt}"_.`
-        : `**DocuSage v2 Preview**: Streaming response for _"${req.prompt}"_. Launch the desktop app to run real local GGUF or cloud inference.`,
+        : `**DocuSage Preview**: Streaming response for _"${req.prompt}"_. Launch the desktop app to run real offline or cloud inference.`,
       stopped: false,
       telemetry,
     };
