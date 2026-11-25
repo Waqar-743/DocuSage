@@ -221,7 +221,7 @@ export const LocalSetupBanner: React.FC<{
                 className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[11px] font-medium ${theme.border} ${theme.hoverBg}`}
               >
                 <Settings2 className="w-3 h-3" />
-                <span>Local AI Settings</span>
+                <span>Offline models</span>
               </button>
             </>
           )}

@@ -47,7 +47,7 @@ export const ModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false
   const activeDisplayName = isLocal
     ? connectedModel
       ? getModelDisplayName('local', connectedModel)
-      : 'Local GGUF (Not Loaded)'
+      : 'Offline models (Not Loaded)'
     : getModelDisplayName(active.provider, active.model, modelsByProvider[active.id]) || active.name;
 
   const isReady = isLocal
@@ -136,15 +136,15 @@ export const ModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false
             className={`absolute left-0 mt-1.5 w-80 rounded-xl border shadow-2xl z-40 p-1.5 ${theme.surfaceElevated} ${theme.border} ${theme.text}`}
           >
             <div className="max-h-[70vh] overflow-y-auto space-y-2 p-0.5">
-              {/* Built-in Local (GGUF) Group */}
+              {/* Offline models Group */}
               <div>
                 <div className="flex items-center justify-between px-2 py-1">
                   <span className={`text-[10.5px] font-semibold uppercase tracking-wider flex items-center gap-1.5 ${theme.textMuted}`}>
                     <HardDrive className="w-3 h-3" />
-                    Built-in Local (GGUF)
+                    Offline models
                   </span>
                   <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${theme.badgeBg}`}>
-                    Offline
+                    Private
                   </span>
                 </div>
 
@@ -158,7 +158,7 @@ export const ModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false
                     className={`w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-left text-xs transition-colors ${theme.hoverBg}`}
                   >
                     <div className="min-w-0">
-                      <div className="font-medium">Download a Local GGUF Model</div>
+                      <div className="font-medium">Download an Offline Model</div>
                       <div className={`text-[11px] ${theme.textMuted}`}>
                         1-click setup — no manual path required
                       </div>
@@ -344,7 +344,7 @@ export const ModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false
                 className={`flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-medium ${theme.hoverBg}`}
               >
                 <Cpu className="w-3.5 h-3.5" />
-                <span>Local GGUF</span>
+                <span>Offline models</span>
               </button>
               <button
                 type="button"

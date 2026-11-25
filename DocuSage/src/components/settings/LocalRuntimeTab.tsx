@@ -192,7 +192,7 @@ export const LocalRuntimeTab: React.FC = () => {
             className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border font-medium ${theme.border} ${theme.hoverBg}`}
           >
             <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Back to Local Models</span>
+            <span>Back to Offline models</span>
           </button>
           <span className={`text-[10.5px] font-mono ${theme.textMuted}`}>
             {selectedModel.hfRepo}
@@ -842,7 +842,7 @@ export const LocalRuntimeTab: React.FC = () => {
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h4 className="font-semibold text-[13px]">Local Model Store</h4>
+            <h4 className="font-semibold text-[13px]">Offline Models Store</h4>
             <p className={`text-[11px] ${theme.textMuted}`}>
               Click any model to inspect full specifications, RAM fit, quantization, and download progress.
             </p>

@@ -919,8 +919,8 @@ export const REASONING_LABELS: Record<ModelReasoning, string> = {
 };
 
 export const PROVIDER_LABELS: Record<AiProviderKind, string> = {
-  local: 'Built-in Local (GGUF)',
-  openAi: 'OpenAI',
+  local: 'Offline models',
+  openAi: 'OpenAI (ChatGPT)',
   anthropic: 'Anthropic Claude',
   googleGemini: 'Google Gemini',
   openRouter: 'OpenRouter',

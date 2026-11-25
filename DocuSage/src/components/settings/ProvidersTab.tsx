@@ -469,7 +469,7 @@ export const ProvidersTab: React.FC = () => {
           <div>
             <h4 className="text-[13px] font-semibold">Local &amp; Custom Providers</h4>
             <p className={`text-[11px] ${theme.textMuted}`}>
-              Built-in Local GGUF, Ollama, LM Studio, OpenRouter, or any OpenAI-compatible endpoint.
+              Offline models, Ollama, LM Studio, OpenRouter, or any OpenAI-compatible endpoint.
             </p>
           </div>
           <button

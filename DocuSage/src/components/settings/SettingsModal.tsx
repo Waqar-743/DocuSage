@@ -12,7 +12,7 @@ import { ShortcutsTab } from './ShortcutsTab';
 
 const TABS: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
   { id: 'providers', label: 'Providers', icon: <Cloud className="w-4 h-4" /> },
-  { id: 'localRuntime', label: 'Local AI & GGUF', icon: <Cpu className="w-4 h-4" /> },
+  { id: 'localRuntime', label: 'Offline models', icon: <Cpu className="w-4 h-4" /> },
   { id: 'ragContext', label: 'RAG & Context', icon: <Database className="w-4 h-4" /> },
   { id: 'appearance', label: 'Appearance', icon: <Palette className="w-4 h-4" /> },
   { id: 'shortcuts', label: 'Shortcuts & Tray', icon: <Keyboard className="w-4 h-4" /> },

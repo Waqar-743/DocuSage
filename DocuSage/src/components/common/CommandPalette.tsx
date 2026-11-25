@@ -95,14 +95,14 @@ export const CommandPalette: React.FC = () => {
       {
         id: 'offline-local',
         group: 'Models',
-        label: 'Switch to Offline Built-in Local AI (GGUF)',
+        label: 'Switch to Offline models',
         icon: <WifiOff className="w-4 h-4 text-emerald-400" />,
         run: () => void setActiveProvider('local'),
       },
       {
         id: 'settings-local',
         group: 'Settings',
-        label: 'Manage Local GGUF Runtime & Models',
+        label: 'Manage Offline models',
         icon: <Cpu className="w-4 h-4" />,
         run: () => openSettings('localRuntime'),
       },
