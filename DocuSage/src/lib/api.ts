@@ -483,8 +483,9 @@ export async function testAiProviderConnection(providerId: string): Promise<Prov
       status: 'verified',
       message: 'Verified (preview)',
       models: [
-        { id: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
-        { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+        { id: 'gpt-6.2-sol', label: 'GPT-6.2 Sol' },
+        { id: 'gemini-4-hydrogen', label: 'Gemini 4 Hydrogen' },
+        { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5' },
       ],
     };
   }

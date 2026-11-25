@@ -660,7 +660,7 @@ export const ProvidersTab: React.FC = () => {
                   required
                   value={draft.model}
                   onChange={(e) => setDraft({ ...draft, model: e.target.value })}
-                  placeholder="e.g. llama3.2, openai/gpt-4.1-mini"
+                  placeholder="e.g. llama3.2, openai/gpt-6.2-sol"
                   className={`w-full rounded-lg border px-2.5 py-1.5 ${theme.inputBg} ${theme.border}`}
                 />
               </label>

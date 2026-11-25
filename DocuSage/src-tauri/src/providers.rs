@@ -131,19 +131,19 @@ pub fn provider_defaults(kind: &AiProviderKind) -> (Option<String>, Option<Strin
         AiProviderKind::Local => (None, None),
         AiProviderKind::OpenAi => (
             Some("https://api.openai.com/v1".to_string()),
-            Some("gpt-4.1-mini".to_string()),
+            Some("gpt-6.2-sol".to_string()),
         ),
         AiProviderKind::Anthropic => (
             Some("https://api.anthropic.com/v1".to_string()),
-            Some("claude-haiku-4-5-20251001".to_string()),
+            Some("claude-sonnet-5-5".to_string()),
         ),
         AiProviderKind::GoogleGemini => (
             Some("https://generativelanguage.googleapis.com/v1beta".to_string()),
-            Some("gemini-2.5-flash".to_string()),
+            Some("gemini-4-hydrogen".to_string()),
         ),
         AiProviderKind::OpenRouter => (
             Some("https://openrouter.ai/api/v1".to_string()),
-            Some("openai/gpt-4.1-mini".to_string()),
+            Some("openai/gpt-6.2-sol".to_string()),
         ),
         AiProviderKind::OllamaLocal | AiProviderKind::OllamaRemote => (
             Some("http://localhost:11434".to_string()),

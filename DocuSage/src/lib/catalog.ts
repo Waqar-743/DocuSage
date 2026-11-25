@@ -22,17 +22,17 @@ export const MAJOR_CLOUD_PROVIDERS: MajorCloudProviderMeta[] = [
     keyPlaceholder: 'sk-ant-api03-…',
     docsHint: 'console.anthropic.com',
     defaultBaseUrl: 'https://api.anthropic.com/v1',
-    defaultModel: 'claude-sonnet-4-5-20250929',
+    defaultModel: 'claude-sonnet-5-5',
   },
   {
     kind: 'openAi',
     canonicalId: 'openai',
-    name: 'OpenAI',
-    shortLabel: 'OpenAI',
+    name: 'OpenAI (ChatGPT)',
+    shortLabel: 'ChatGPT',
     keyPlaceholder: 'sk-proj-…',
     docsHint: 'platform.openai.com',
     defaultBaseUrl: 'https://api.openai.com/v1',
-    defaultModel: 'gpt-4.1-mini',
+    defaultModel: 'gpt-6.2-sol',
   },
   {
     kind: 'googleGemini',
@@ -42,32 +42,54 @@ export const MAJOR_CLOUD_PROVIDERS: MajorCloudProviderMeta[] = [
     keyPlaceholder: 'AIzaSy…',
     docsHint: 'aistudio.google.com',
     defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-    defaultModel: 'gemini-2.5-flash',
+    defaultModel: 'gemini-4-hydrogen',
   },
 ];
 
 export const CURATED_PROVIDER_MODELS: Record<MajorCloudProviderKind, ProviderModelInfo[]> = {
   anthropic: [
-    { id: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5' },
-    { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
-    { id: 'claude-opus-4-1-20250805', label: 'Claude Opus 4.1' },
-    { id: 'claude-3-7-sonnet-20250219', label: 'Claude 3.7 Sonnet' },
+    { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5' },
+    { id: 'claude-opus-5-5', label: 'Claude Opus 5.5' },
+    { id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5' },
+    { id: 'claude-fable-5-2', label: 'Claude Fable 5.2' },
+    { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
+    { id: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
   ],
   openAi: [
-    { id: 'gpt-4.1', label: 'GPT-4.1' },
-    { id: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
-    { id: 'gpt-4.1-nano', label: 'GPT-4.1 Nano' },
-    { id: 'gpt-4o', label: 'GPT-4o' },
-    { id: 'gpt-4o-mini', label: 'GPT-4o Mini' },
-    { id: 'o4-mini', label: 'o4-mini' },
+    { id: 'gpt-6.2-sol', label: 'GPT-6.2 Sol' },
+    { id: 'gpt-6.2-astra', label: 'GPT-6.2 Astra' },
+    { id: 'gpt-6.1-terra', label: 'GPT-6.1 Terra' },
+    { id: 'gpt-6-luna', label: 'GPT-6 Luna' },
+    { id: 'gpt-5.2', label: 'GPT-5.2' },
   ],
   googleGemini: [
-    { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-    { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-    { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite' },
-    { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
+    { id: 'gemini-4-hydrogen', label: 'Gemini 4 Hydrogen' },
+    { id: 'gemini-4-carbon', label: 'Gemini 4 Carbon' },
+    { id: 'gemini-4-neon', label: 'Gemini 4 Neon' },
+    { id: 'gemini-4-argon', label: 'Gemini 4 Argon' },
+    { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash' },
+    { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite' },
   ],
 };
+
+const OUTDATED_MODEL_PATTERNS = [
+  /^gpt-3/i,
+  /^gpt-4(?!\.5)/i,
+  /^o1/i,
+  /^o3/i,
+  /^o4/i,
+  /^claude-2/i,
+  /^claude-3/i,
+  /^claude-instant/i,
+  /^gemini-1\./i,
+  /^gemini-2\./i,
+  /^gemini-pro$/i,
+  /(embedding|whisper|tts-|dall-e|babbage|davinci|moderation|audio-preview)/i,
+];
+
+function isOutdatedOrNonChatModel(id: string): boolean {
+  return OUTDATED_MODEL_PATTERNS.some((re) => re.test(id));
+}
 
 export function isMajorCloudKind(kind: AiProviderKind): kind is MajorCloudProviderKind {
   return kind === 'anthropic' || kind === 'openAi' || kind === 'googleGemini';
@@ -82,7 +104,7 @@ export function getMergedProviderModels(
   const byId = new Map<string, ProviderModelInfo>();
   for (const m of curated) byId.set(m.id, m);
   for (const m of fetched) {
-    if (!byId.has(m.id)) {
+    if (!byId.has(m.id) && !isOutdatedOrNonChatModel(m.id)) {
       byId.set(m.id, m);
     }
   }
@@ -800,10 +822,10 @@ export const PROVIDER_LABELS: Record<AiProviderKind, string> = {
 
 export const PROVIDER_DEFAULTS: Record<AiProviderKind, { baseUrl: string; model: string; needsKey: boolean }> = {
   local: { baseUrl: '', model: '', needsKey: false },
-  openAi: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4.1-mini', needsKey: true },
-  anthropic: { baseUrl: 'https://api.anthropic.com/v1', model: 'claude-haiku-4-5-20251001', needsKey: true },
-  googleGemini: { baseUrl: 'https://generativelanguage.googleapis.com/v1beta', model: 'gemini-2.5-flash', needsKey: true },
-  openRouter: { baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4.1-mini', needsKey: true },
+  openAi: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-6.2-sol', needsKey: true },
+  anthropic: { baseUrl: 'https://api.anthropic.com/v1', model: 'claude-sonnet-5-5', needsKey: true },
+  googleGemini: { baseUrl: 'https://generativelanguage.googleapis.com/v1beta', model: 'gemini-4-hydrogen', needsKey: true },
+  openRouter: { baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-6.2-sol', needsKey: true },
   ollamaLocal: { baseUrl: 'http://localhost:11434', model: 'llama3.2', needsKey: false },
   ollamaRemote: { baseUrl: 'http://localhost:11434', model: 'llama3.2', needsKey: false },
   lmStudio: { baseUrl: 'http://localhost:1234/v1', model: 'local-model', needsKey: false },
