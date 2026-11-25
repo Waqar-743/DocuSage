@@ -154,7 +154,7 @@ export const ModelCompare: React.FC = () => {
               <button
                 type="button"
                 onClick={addTarget}
-                className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-dashed text-xs hover:border-emerald-500/60 ${theme.border}`}
+                className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-dashed text-xs ${theme.border} ${theme.accentHoverBorder}`}
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>Add Model</span>

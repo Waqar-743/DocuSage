@@ -65,7 +65,7 @@ export const MessageList: React.FC<Props> = ({
               key={p}
               type="button"
               onClick={() => onQuickPrompt?.(p)}
-              className={`text-left text-xs px-3.5 py-2.5 rounded-xl border transition-colors hover:border-emerald-500/50 ${theme.surfaceBg} ${theme.border}`}
+              className={`text-left text-xs px-3.5 py-2.5 rounded-xl border transition-colors ${theme.surfaceBg} ${theme.border} ${theme.accentHoverBorder}`}
             >
               {p}
             </button>

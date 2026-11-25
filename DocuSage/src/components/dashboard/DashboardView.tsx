@@ -328,7 +328,7 @@ export const DashboardView: React.FC<{
                             setActiveChat(hit.chatId);
                             setSearchQuery('');
                           }}
-                          className={`w-full text-left p-2.5 rounded-xl border text-xs hover:border-emerald-500/50 ${theme.surfaceBg} ${theme.border}`}
+                          className={`w-full text-left p-2.5 rounded-xl border text-xs ${theme.surfaceBg} ${theme.border} ${theme.accentHoverBorder}`}
                         >
                           <div className="font-semibold truncate">{hit.chatName}</div>
                           <div className={`text-[11px] mt-0.5 line-clamp-2 ${theme.textMuted}`}>
@@ -354,7 +354,7 @@ export const DashboardView: React.FC<{
                                 ) : (
                                   <ChevronDown className="w-3 h-3" />
                                 )}
-                                <Folder className="w-3.5 h-3.5 text-emerald-400" />
+                                <Folder className={`w-3.5 h-3.5 ${theme.accentText}`} />
                                 <span className="truncate">{folder.name}</span>
                                 <span className="opacity-60">({folderChats.length})</span>
                               </button>
@@ -402,13 +402,13 @@ export const DashboardView: React.FC<{
                         <div
                           key={doc.path}
                           className={`rounded-xl border p-2.5 text-xs space-y-1.5 ${theme.surfaceBg} ${
-                            attached ? 'border-emerald-500/60' : theme.border
+                            attached ? theme.accentBorder : theme.border
                           }`}
                         >
                           <div className="flex items-start justify-between gap-1.5">
                             <div className="min-w-0">
                               <div className="font-medium truncate flex items-center gap-1.5" title={doc.path}>
-                                <FileText className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                <FileText className={`w-3.5 h-3.5 shrink-0 ${theme.accentText}`} />
                                 <span className="truncate">{doc.name}</span>
                               </div>
                               <div className={`text-[10.5px] mt-0.5 ${theme.textMuted}`}>
@@ -454,7 +454,7 @@ export const DashboardView: React.FC<{
           {/* Drag-resize handle */}
           <div
             onMouseDown={startResize}
-            className="w-1 cursor-col-resize hover:bg-emerald-500/50 transition-colors shrink-0"
+            className={`w-1 cursor-col-resize transition-colors shrink-0 ${theme.hoverBg}`}
             title="Drag to resize sidebar"
           />
         </>

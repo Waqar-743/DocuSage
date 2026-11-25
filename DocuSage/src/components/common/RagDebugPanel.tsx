@@ -73,10 +73,10 @@ export const RagDebugPanel: React.FC = () => {
                   >
                     <div className="flex items-center justify-between gap-1.5">
                       <span className="inline-flex items-center gap-1 font-medium truncate">
-                        <FileText className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        <FileText className={`w-3.5 h-3.5 shrink-0 ${theme.accentText}`} />
                         <span className="truncate">{c.documentName}</span>
                       </span>
-                      <span className="font-mono text-[10.5px] text-emerald-400 shrink-0">
+                      <span className={`font-mono text-[10.5px] shrink-0 ${theme.accentText}`}>
                         {c.score.toFixed(4)}
                       </span>
                     </div>
@@ -92,7 +92,7 @@ export const RagDebugPanel: React.FC = () => {
             </div>
 
             {history.length > 1 && (
-              <div className="space-y-1.5 pt-2 border-t border-zinc-800/60">
+              <div className={`space-y-1.5 pt-2 border-t ${theme.border}`}>
                 <div className={`text-[11px] font-semibold uppercase tracking-wider ${theme.textMuted}`}>
                   Recent Turns ({history.length})
                 </div>

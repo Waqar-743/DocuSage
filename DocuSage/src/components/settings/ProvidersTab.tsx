@@ -313,9 +313,9 @@ export const ProvidersTab: React.FC = () => {
               aria-label={`${meta.name} API Configuration`}
               className={`rounded-xl border p-4 space-y-3 transition-colors ${theme.surfaceBg} ${
                 isHighlighted
-                  ? 'border-emerald-400 ring-1 ring-emerald-400/40'
+                  ? `${theme.accentBorder} ring-1 ring-current/30`
                   : isActive
-                  ? 'border-emerald-500/60'
+                  ? theme.accentBorder
                   : theme.border
               }`}
             >
@@ -490,7 +490,7 @@ export const ProvidersTab: React.FC = () => {
               <div
                 key={p.id}
                 className={`rounded-xl border p-3.5 space-y-2.5 ${theme.surfaceBg} ${
-                  isActive ? 'border-emerald-500/60' : theme.border
+                  isActive ? theme.accentBorder : theme.border
                 }`}
               >
                 <div className="flex items-start justify-between gap-2">

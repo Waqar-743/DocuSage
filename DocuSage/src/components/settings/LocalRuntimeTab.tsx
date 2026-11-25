@@ -61,23 +61,29 @@ const MeterBars: React.FC<{ label: string; value: number; accentClass: string; m
   </span>
 );
 
-function fitBadge(fit: DeviceFit): { label: string; cls: string } | null {
+function fitBadge(fit: DeviceFit, isDark: boolean): { label: string; cls: string } | null {
   if (fit === 'unknown') return null;
   if (fit === 'good') {
     return {
       label: 'Fits comfortably',
-      cls: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/35',
+      cls: isDark
+        ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+        : 'bg-emerald-50 text-emerald-800 border-emerald-300',
     };
   }
   if (fit === 'tight') {
     return {
       label: 'Tight fit',
-      cls: 'bg-amber-500/15 text-amber-300 border-amber-500/35',
+      cls: isDark
+        ? 'bg-amber-500/15 text-amber-200 border-amber-500/40'
+        : 'bg-amber-50 text-amber-800 border-amber-300',
     };
   }
   return {
     label: 'May be slow',
-    cls: 'bg-rose-500/15 text-rose-300 border-rose-500/35',
+    cls: isDark
+      ? 'bg-rose-500/15 text-rose-200 border-rose-500/40'
+      : 'bg-red-50 text-red-800 border-red-300',
   };
 }
 
@@ -176,7 +182,7 @@ export const LocalRuntimeTab: React.FC = () => {
       connectedModel?.toLowerCase() === selectedModel.filename.toLowerCase() &&
       runtimeStatus.running;
     const fit = modelFit(selectedModel, deviceMemory);
-    const badge = fitBadge(fit);
+    const badge = fitBadge(fit, theme.isDark);
     const warnFit = fit === 'tight' || fit === 'too_big';
     const dlBytes = prog?.downloaded ?? 0;
     const totalBytes = prog?.total || selectedModel.sizeBytes;
@@ -703,7 +709,7 @@ export const LocalRuntimeTab: React.FC = () => {
                 <div
                   key={m.path}
                   className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2.5 ${theme.surfaceBg} ${
-                    isChatConnected ? 'border-emerald-500/60' : theme.border
+                    isChatConnected ? theme.accentBorder : theme.border
                   }`}
                 >
                   <button
@@ -784,7 +790,7 @@ export const LocalRuntimeTab: React.FC = () => {
         !searchQuery.trim() &&
         activeFilter === 'All' &&
         !downloadedByName.has(recommendedPick.filename.toLowerCase()) && (
-          <div className={`rounded-xl border-2 border-emerald-500/50 p-3.5 space-y-2.5 ${theme.surfaceBg}`}>
+          <div className={`rounded-xl border-2 p-3.5 space-y-2.5 ${theme.surfaceBg} ${theme.accentBorder}`}>
             <div className="flex items-center justify-between gap-2">
               <span className={`inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider ${theme.accentText}`}>
                 <Sparkles className="w-3 h-3" />
@@ -903,7 +909,7 @@ export const LocalRuntimeTab: React.FC = () => {
                 connectedModel?.toLowerCase() === entry.filename.toLowerCase() &&
                 runtimeStatus.running;
               const fit = modelFit(entry, deviceMemory);
-              const badge = fitBadge(fit);
+              const badge = fitBadge(fit, theme.isDark);
               const dlBytes = prog?.downloaded ?? 0;
               const totalBytes = prog?.total || entry.sizeBytes;
               const speedBps = prog?.speedBps ?? 0;
@@ -923,8 +929,8 @@ export const LocalRuntimeTab: React.FC = () => {
                   aria-label={`${entry.name} by ${entry.company}, ${entry.size}`}
                   className={`rounded-xl border p-3 flex flex-col justify-between gap-2.5 cursor-pointer transition-colors ${theme.surfaceBg} ${
                     isActive
-                      ? 'border-emerald-500/60'
-                      : `${theme.border} hover:border-emerald-500/40`
+                      ? theme.accentBorder
+                      : `${theme.border} ${theme.accentHoverBorder}`
                   }`}
                 >
                   <div className="space-y-1.5">

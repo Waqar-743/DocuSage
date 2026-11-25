@@ -246,8 +246,8 @@ export const LocalSetupBanner: React.FC<{
               isPaused
                 ? 'bg-amber-400'
                 : localSetup.stage === 'loadingModel' || isVerifying
-                ? 'w-full animate-pulse bg-emerald-500'
-                : 'bg-emerald-500'
+                ? `w-full animate-pulse ${theme.accentBg}`
+                : theme.accentBg
             }`}
             style={
               localSetup.stage === 'loadingModel' || isVerifying
