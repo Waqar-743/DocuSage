@@ -14,6 +14,14 @@ pub fn total_memory_bytes() -> Option<u64> {
         .and_then(|text| parse_mem_total(&text))
 }
 
+/// Currently available physical RAM in bytes, when the platform exposes it.
+#[cfg(not(any(windows, target_os = "macos")))]
+pub fn available_memory_bytes() -> Option<u64> {
+    fs::read_to_string("/proc/meminfo")
+        .ok()
+        .and_then(|text| parse_mem_available(&text))
+}
+
 #[cfg(target_os = "macos")]
 pub fn total_memory_bytes() -> Option<u64> {
     use std::ffi::{c_char, c_int, c_void};
@@ -42,8 +50,13 @@ pub fn total_memory_bytes() -> Option<u64> {
     (result == 0 && bytes > 0).then_some(bytes)
 }
 
+#[cfg(target_os = "macos")]
+pub fn available_memory_bytes() -> Option<u64> {
+    None
+}
+
 #[cfg(windows)]
-pub fn total_memory_bytes() -> Option<u64> {
+fn windows_memory_status() -> Option<(u64, u64)> {
     #[repr(C)]
     #[derive(Default)]
     struct MemoryStatus {
@@ -68,19 +81,39 @@ pub fn total_memory_bytes() -> Option<u64> {
         ..Default::default()
     };
     let ok = unsafe { GlobalMemoryStatusEx(&mut status) };
-    (ok != 0).then_some(status.total_phys)
+    (ok != 0).then_some((status.total_phys, status.avail_phys))
+}
+
+#[cfg(windows)]
+pub fn total_memory_bytes() -> Option<u64> {
+    windows_memory_status().map(|(total, _)| total)
+}
+
+#[cfg(windows)]
+pub fn available_memory_bytes() -> Option<u64> {
+    windows_memory_status().map(|(_, avail)| avail)
 }
 
 #[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
-fn parse_mem_total(meminfo: &str) -> Option<u64> {
+fn parse_mem_field(meminfo: &str, key: &str) -> Option<u64> {
     meminfo
         .lines()
-        .find(|line| line.starts_with("MemTotal:"))?
+        .find(|line| line.starts_with(key))?
         .split_whitespace()
         .nth(1)?
         .parse::<u64>()
         .ok()
         .map(|kb| kb * 1024)
+}
+
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+fn parse_mem_total(meminfo: &str) -> Option<u64> {
+    parse_mem_field(meminfo, "MemTotal:")
+}
+
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+fn parse_mem_available(meminfo: &str) -> Option<u64> {
+    parse_mem_field(meminfo, "MemAvailable:").or_else(|| parse_mem_field(meminfo, "MemFree:"))
 }
 
 fn per_core(leaf: &str) -> Vec<u64> {
@@ -136,14 +169,42 @@ pub fn recommended_context_length(total_memory_bytes: Option<u64>) -> u32 {
     }
 }
 
+/// Context length conservatively bounded by both total RAM and currently available RAM
+/// after accounting for the GGUF model's size so in-process allocation avoids OOM crashes.
+pub fn safe_context_length(
+    total_memory_bytes: Option<u64>,
+    available_memory_bytes: Option<u64>,
+    model_file_bytes: u64,
+) -> u32 {
+    let mut ctx = recommended_context_length(total_memory_bytes);
+    let gib = 1024u64 * 1024 * 1024;
+    if let Some(avail) = available_memory_bytes {
+        let headroom = avail.saturating_sub(model_file_bytes);
+        let cap = if headroom < (3 * gib) / 2 {
+            1024
+        } else if headroom < 3 * gib {
+            2048
+        } else if headroom < 6 * gib {
+            4096
+        } else {
+            8192
+        };
+        ctx = ctx.min(cap);
+    } else if model_file_bytes >= 3 * gib {
+        ctx = ctx.min(4096);
+    }
+    ctx.max(1024)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn reads_mem_total() {
-        let sample = "MemTotal:        8040348 kB\nMemFree:          123456 kB\n";
+    fn reads_mem_total_and_available() {
+        let sample = "MemTotal:        8040348 kB\nMemFree:          123456 kB\nMemAvailable:    3145728 kB\n";
         assert_eq!(parse_mem_total(sample), Some(8_040_348 * 1024));
+        assert_eq!(parse_mem_available(sample), Some(3_145_728 * 1024));
     }
 
     #[test]
@@ -155,9 +216,14 @@ mod tests {
 
     #[test]
     fn context_length_scales_with_ram() {
-        assert_eq!(recommended_context_length(Some(16 * 1024u64.pow(3))), 8192);
-        assert_eq!(recommended_context_length(Some(8 * 1024u64.pow(3))), 4096);
-        assert_eq!(recommended_context_length(Some(4 * 1024u64.pow(3))), 2048);
+        let gib = 1024u64.pow(3);
+        assert_eq!(recommended_context_length(Some(16 * gib)), 8192);
+        assert_eq!(recommended_context_length(Some(8 * gib)), 4096);
+        assert_eq!(recommended_context_length(Some(4 * gib)), 2048);
         assert_eq!(recommended_context_length(None), 4096);
+        // Tight free RAM caps context safely even on a 16 GB machine.
+        assert_eq!(safe_context_length(Some(16 * gib), Some(2 * gib), gib), 1024);
+        assert_eq!(safe_context_length(Some(16 * gib), Some(4 * gib), 2 * gib), 2048);
+        assert_eq!(safe_context_length(Some(16 * gib), Some(10 * gib), 2 * gib), 8192);
     }
 }
