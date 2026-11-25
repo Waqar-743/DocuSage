@@ -103,7 +103,7 @@ vi.mock('./lib/api', async (original) => {
       ok: true,
       status: 'verified' as const,
       message: 'Verified! Connected (3 models available).',
-      models: [{ id: 'gpt-4.1', label: 'GPT-4.1' }],
+      models: [{ id: 'gpt-6.2-sol', label: 'GPT-6.2 Sol' }],
     })),
     downloadModel: vi.fn(async (_url: string, filename: string) => `/app-data/models/${filename}`),
     cancelDownload: vi.fn(async () => true),
@@ -194,6 +194,7 @@ beforeEach(() => {
   });
   useUiStore.setState({
     theme: 'dark',
+    appOpacity: 1,
     windowMode: 'dashboard',
     settingsOpen: false,
     settingsTab: 'providers',
@@ -388,15 +389,15 @@ test('provides separate API key config & verification for Anthropic, OpenAI, and
   // Open Settings -> Providers and confirm all 3 independent cloud sections exist
   fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
   expect(screen.getByLabelText('Anthropic API Key')).toBeTruthy();
-  expect(screen.getByLabelText('OpenAI API Key')).toBeTruthy();
+  expect(screen.getByLabelText('OpenAI (ChatGPT) API Key')).toBeTruthy();
   expect(screen.getByLabelText('Google Gemini API Key')).toBeTruthy();
 
   // Save & Verify OpenAI key (masked input cleared after save)
-  const openaiInput = screen.getByLabelText('OpenAI API Key') as HTMLInputElement;
+  const openaiInput = screen.getByLabelText('OpenAI (ChatGPT) API Key') as HTMLInputElement;
   expect(openaiInput.type).toBe('password');
   fireEvent.change(openaiInput, { target: { value: 'sk-test-secret-key' } });
 
-  const openaiSection = screen.getByRole('region', { name: 'OpenAI API Configuration' });
+  const openaiSection = screen.getByRole('region', { name: 'OpenAI (ChatGPT) API Configuration' });
   const verifyBtn = Array.from(openaiSection.querySelectorAll('button')).find((b) =>
     b.textContent?.includes('Verify'),
   )!;
@@ -406,18 +407,19 @@ test('provides separate API key config & verification for Anthropic, OpenAI, and
   await waitFor(() => expect(openaiInput.value).toBe(''));
   expect(screen.getByText('Verified')).toBeTruthy();
 
-  // Close settings and verify grouped Model Selector in top-left navigation
+  // Close settings and verify grouped Model Selector in top-left navigation with latest models
   fireEvent.keyDown(window, { key: 'Escape' });
   fireEvent.click(screen.getByRole('button', { name: 'Select AI model' }));
   expect(screen.getByText('Anthropic')).toBeTruthy();
-  expect(screen.getByText('OpenAI')).toBeTruthy();
+  expect(screen.getByText('OpenAI (ChatGPT)')).toBeTruthy();
   expect(screen.getByText('Google Gemini')).toBeTruthy();
-  expect(screen.getByRole('option', { name: /GPT-4\.1 Mini/i })).toBeTruthy();
-  expect(screen.getByRole('option', { name: /Claude Sonnet 4\.5/i })).toBeTruthy();
-  expect(screen.getByRole('option', { name: /Gemini 2\.5 Flash-Lite/i })).toBeTruthy();
+  expect(screen.getByRole('option', { name: /GPT-6\.2 Sol/i })).toBeTruthy();
+  expect(screen.getByRole('option', { name: /Claude Sonnet 5\.5/i })).toBeTruthy();
+  expect(screen.getByRole('option', { name: /Gemini 4 Hydrogen/i })).toBeTruthy();
+  expect(screen.queryByRole('option', { name: /GPT-4o/i })).toBeNull();
 
-  // Switch to GPT-4.1 under OpenAI
-  fireEvent.click(screen.getByRole('option', { name: /GPT-4\.1\s*gpt-4\.1/i }));
+  // Switch to GPT-6.2 Astra under OpenAI
+  fireEvent.click(screen.getByRole('option', { name: /GPT-6\.2 Astra/i }));
   await waitFor(() => expect(api.setActiveAiProvider).toHaveBeenCalledWith('openai'));
 });
 
@@ -440,7 +442,7 @@ test('deduplicates repeated runtime-not-installed error notifications when loadi
 
   await ready();
   fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Local AI & GGUF' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Offline models' }));
 
   const loadChatBtn = await screen.findByRole('button', { name: /Load Chat/i });
 
@@ -503,7 +505,7 @@ test('1-click local model download redirects to workspace, auto-installs runtime
 
   await ready();
   fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Local AI & GGUF' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Offline models' }));
 
   const downloadButtons = await screen.findAllByRole('button', { name: /Download & Run/i });
   fireEvent.click(downloadButtons[0]);
@@ -583,7 +585,7 @@ test('clicking Install Local Runtime downloads runtime and automatically starts 
 
   await ready();
   fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Local AI & GGUF' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Offline models' }));
 
   const installBtn = await screen.findByRole('button', { name: /Install Local Runtime \(vulkan\)/i });
   fireEvent.click(installBtn);
@@ -619,7 +621,7 @@ test('displays Neurix local models, opens full specs on click, and shows live do
 
   await ready();
   fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Local AI & GGUF' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Offline models' }));
 
   // Neurix store models and category filters are shown
   expect(await screen.findByText('Qwen 3.5 2B')).toBeTruthy();
@@ -657,8 +659,8 @@ test('displays Neurix local models, opens full specs on click, and shows live do
   expect(screen.getByRole('button', { name: /Pause Download/i })).toBeTruthy();
 
   // Back button returns to the model catalog
-  fireEvent.click(screen.getByRole('button', { name: /Back to Local Models/i }));
-  expect(await screen.findByText('Local Model Store')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: /Back to Offline models/i }));
+  expect(await screen.findByText('Offline Models Store')).toBeTruthy();
 });
 
 test('runtime install failure clears resolving progress bar and displays inline error', async () => {
@@ -694,7 +696,7 @@ test('runtime install failure clears resolving progress bar and displays inline 
 
   await ready();
   fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Local AI & GGUF' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Offline models' }));
 
   const installBtn = await screen.findByRole('button', { name: /Install Local Runtime \(vulkan\)/i });
   fireEvent.click(installBtn);
@@ -744,7 +746,7 @@ test('pausing an active download keeps paused state without false Setup failed e
 
   await ready();
   fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Local AI & GGUF' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Offline models' }));
 
   // Start downloading the recommended model (redirects to main page & sets busy focus guard)
   const downloadBtns = await screen.findAllByRole('button', { name: /Download & Run/i });
@@ -846,7 +848,7 @@ test('disables Load Chat while Test Local Model is in flight and reports Load Fa
 
   await ready();
   fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Local AI & GGUF' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Offline models' }));
 
   const testBtn = await screen.findByRole('button', { name: /Test Local Model/i });
   const loadChatBtn = await screen.findByRole('button', { name: /Load Chat/i });
@@ -864,4 +866,54 @@ test('disables Load Chat while Test Local Model is in flight and reports Load Fa
 
   expect(await screen.findByText('Load Failed')).toBeTruthy();
   expect(screen.getByText(/Diagnostic log:.*local-engine\.log/i)).toBeTruthy();
+});
+
+test('shows logo without v2 badge, places New Chat/Folder/Document below logo, and deletes conversation from chat header', async () => {
+  await ready();
+  expect(screen.getByAltText('DocuSage logo')).toBeTruthy();
+  expect(screen.queryByText('v2')).toBeNull();
+  expect(screen.getByRole('button', { name: 'New Chat' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'New Folder' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Add Document' })).toBeTruthy();
+
+  // Create a second chat and delete it from the chat header
+  fireEvent.click(screen.getByRole('button', { name: 'New Chat' }));
+  expect(useChatStore.getState().chats.length).toBe(2);
+  fireEvent.click(screen.getByRole('button', { name: 'Delete conversation' }));
+  expect(useChatStore.getState().chats.length).toBe(1);
+});
+
+test('renders 3-dot loading indicator while waiting for model response and disables header double-click toggle', async () => {
+  vi.mocked(api.chatSend).mockImplementation(() => new Promise(() => {}));
+  await ready();
+
+  // Double-clicking the header does not switch to Spotlight mode
+  const header = document.querySelector('header')!;
+  fireEvent.doubleClick(header);
+  expect(useUiStore.getState().windowMode).toBe('dashboard');
+
+  // Sending a prompt renders 3-dot loading animation
+  const box = screen.getByRole('textbox', { name: 'Message' });
+  fireEvent.change(box, { target: { value: 'Hello' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+  const loader = await screen.findByRole('status', { name: 'Model is thinking' });
+  expect(loader.querySelectorAll('.ds-loading-dot').length).toBe(3);
+});
+
+test('supports Shift + - and Shift + + transparency shortcuts and includes ultra-small offline models', async () => {
+  await ready();
+  // Blur textarea so plain Shift+- / Shift++ triggers outside editable fields
+  (document.activeElement as HTMLElement | null)?.blur();
+  fireEvent.keyDown(document.body, { key: '_', code: 'Minus', shiftKey: true });
+  expect(useUiStore.getState().appOpacity).toBe(0.9);
+  fireEvent.keyDown(document.body, { key: '+', code: 'Equal', shiftKey: true });
+  expect(useUiStore.getState().appOpacity).toBe(1);
+
+  // Verify ultra-small fast offline models are available in Settings -> Offline models
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Offline models' }));
+  expect(await screen.findByText('LFM 2 350M')).toBeTruthy();
+  expect(screen.getByText('Gemma 3 270M')).toBeTruthy();
+  expect(screen.getByText('SmolLM2 360M Instruct')).toBeTruthy();
+  expect(screen.getByText('Qwen 3 0.6B')).toBeTruthy();
 });
