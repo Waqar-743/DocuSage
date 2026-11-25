@@ -130,7 +130,7 @@ export const ChatComposer: React.FC<Props> = ({ compact = false, focusSignal = 0
               ? 'Ask about your attached document(s)…'
               : 'Ask DocuSage… (Ctrl+K commands · Ctrl+Shift+V quote clipboard)'
           }
-          className="w-full resize-none bg-transparent outline-none text-[13.5px] leading-relaxed px-1.5 py-0.5 max-h-40"
+          className="composer-input w-full resize-none bg-transparent border-0 outline-none focus:outline-none focus:ring-0 text-[13.5px] leading-relaxed px-1.5 py-0.5 max-h-40"
         />
 
         <div className="flex items-center justify-between gap-2 pt-1">

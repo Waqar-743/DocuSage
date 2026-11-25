@@ -17,29 +17,21 @@ textarea {
 }
 
 button:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible {
-  outline: 2px solid #10b981;
+select:focus-visible {
+  outline: 2px solid color-mix(in srgb, currentColor 45%, transparent);
   outline-offset: 2px;
 }
 
-[data-theme="navy"] button:focus-visible,
-[data-theme="navy"] input:focus-visible,
-[data-theme="navy"] select:focus-visible,
-[data-theme="navy"] textarea:focus-visible,
-[data-theme="ocean"] button:focus-visible,
-[data-theme="ocean"] input:focus-visible,
-[data-theme="ocean"] select:focus-visible,
-[data-theme="ocean"] textarea:focus-visible {
-  outline-color: #60a5fa;
+input:focus-visible,
+textarea:focus-visible {
+  outline: none;
 }
 
-[data-theme="cream"] button:focus-visible,
-[data-theme="cream"] input:focus-visible,
-[data-theme="cream"] select:focus-visible,
-[data-theme="cream"] textarea:focus-visible {
-  outline-color: #9a4f1b;
+.composer-input:focus,
+.composer-input:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  border-color: transparent !important;
 }
 
 textarea {
