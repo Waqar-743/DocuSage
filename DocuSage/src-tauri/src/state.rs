@@ -186,6 +186,20 @@ impl AppState {
             Ok(false)
         }
     }
+
+    pub fn has_active_downloads(&self) -> bool {
+        self.active_downloads
+            .lock()
+            .map(|map| !map.is_empty())
+            .unwrap_or(false)
+    }
+
+    pub fn has_active_requests(&self) -> bool {
+        self.active_requests
+            .lock()
+            .map(|map| !map.is_empty())
+            .unwrap_or(false)
+    }
 }
 
 pub struct DownloadHandle<'a> {

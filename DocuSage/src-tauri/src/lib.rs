@@ -125,6 +125,7 @@ pub fn run() {
             Some(vec!["--hidden"]),
         ))
         .setup(|app| {
+            let _ = services::local_runtime::engine_log_path(app.handle());
             let models = app.path().app_data_dir()?.join("models");
             if path_has_gguf(&models)
                 && !path_has_gguf(
@@ -137,7 +138,34 @@ pub fn run() {
                 *app.state::<AppState>()
                     .model_path
                     .write()
-                    .map_err(|e| e.to_string())? = models;
+                    .map_err(|e| e.to_string())? = models.clone();
+            }
+
+            // Restore persisted local model selection & detect interrupted native loads
+            // so reopening after a restart remembers the user's model without crash-looping.
+            let mut persisted_local =
+                services::local_runtime::read_persisted_local_state(app.handle());
+            if let Some(interrupted) = persisted_local.loading_in_progress.take() {
+                app.state::<AppState>()
+                    .local_runtime
+                    .set_last_interrupted_model(Some(interrupted));
+                services::local_runtime::write_persisted_local_state(
+                    app.handle(),
+                    &persisted_local,
+                );
+            }
+            if let Some(ref saved_model) = persisted_local.last_connected_model {
+                let exists = persisted_local
+                    .last_connected_path
+                    .as_deref()
+                    .map(Path::new)
+                    .is_some_and(Path::is_file)
+                    || models.join(saved_model).is_file();
+                if exists {
+                    if let Ok(mut cf) = app.state::<AppState>().connected_model_file.write() {
+                        *cf = Some(saved_model.clone());
+                    }
+                }
             }
             let path = app.path().app_config_dir()?.join("rag-config.json");
             if let Some(config) = std::fs::read_to_string(path)
@@ -191,6 +219,8 @@ pub fn run() {
             commands::restart_ai_engine,
             commands::download_model,
             commands::cancel_download,
+            commands::list_partial_downloads,
+            commands::delete_partial_download,
             commands::list_downloaded_models,
             commands::delete_model,
             commands::get_models_dir,

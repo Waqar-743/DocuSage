@@ -16,7 +16,9 @@ use crate::services::document_pipeline::{
     ALLOWED_EXTENSIONS,
 };
 use crate::services::embedding::embed_texts;
-use crate::services::local_runtime::LocalRuntimeStatus;
+use crate::services::local_runtime::{
+    read_persisted_local_state, write_persisted_local_state, LocalRuntimeStatus,
+};
 use crate::services::vector_store::{ChunkInput, IndexedDocument, VectorStore};
 use crate::state::{AppState, RagConfig};
 
@@ -40,6 +42,14 @@ pub struct DownloadedModel {
     pub filename: String,
     pub path: String,
     pub size_bytes: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PartialDownload {
+    pub filename: String,
+    pub path: String,
+    pub downloaded_bytes: u64,
 }
 
 #[derive(Serialize)]
@@ -104,7 +114,15 @@ pub async fn chat_send(
     let is_local = provider.provider == AiProviderKind::Local;
     if is_local && !state.local_runtime.is_chat_loaded().await {
         // Zero-config auto-start: automatically load a downloaded GGUF model in-process.
-        load_model(app.clone(), state.clone(), None).await?;
+        if let Err(err) = load_model(app.clone(), state.clone(), None).await {
+            if state.has_active_downloads() && err.contains("No downloaded GGUF models") {
+                return Err(
+                    "Your local model is still downloading. Wait for the download on the main banner to finish, or switch to a cloud model."
+                        .to_string(),
+                );
+            }
+            return Err(err);
+        }
     }
 
     let rag_cfg = state
@@ -613,11 +631,19 @@ pub async fn connect_embedding_model(
 }
 
 #[tauri::command]
-pub async fn disconnect_model(state: tauri::State<'_, AppState>) -> Result<(), String> {
+pub async fn disconnect_model(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
     state.local_runtime.stop_chat().await;
     if let Ok(mut cf) = state.connected_model_file.write() {
         *cf = None;
     }
+    let mut persisted = read_persisted_local_state(&app);
+    persisted.last_connected_model = None;
+    persisted.last_connected_path = None;
+    persisted.loading_in_progress = None;
+    write_persisted_local_state(&app, &persisted);
     Ok(())
 }
 
@@ -660,6 +686,11 @@ fn content_range_start(value: &str) -> Option<u64> {
     let range = value.trim().strip_prefix("bytes ")?;
     let (start, _) = range.split_once('-')?;
     start.trim().parse().ok()
+}
+
+fn content_range_total(value: &str) -> Option<u64> {
+    let (_, total_str) = value.trim().rsplit_once('/')?;
+    total_str.trim().parse().ok()
 }
 
 async fn compute_file_sha256(path: PathBuf) -> Result<String, String> {
@@ -799,7 +830,12 @@ pub async fn download_model(
         let total = if already_complete {
             existing_bytes
         } else if is_resumed {
-            existing_bytes.saturating_add(response.content_length().unwrap_or(0))
+            response
+                .headers()
+                .get(reqwest::header::CONTENT_RANGE)
+                .and_then(|v| v.to_str().ok())
+                .and_then(content_range_total)
+                .unwrap_or_else(|| existing_bytes.saturating_add(response.content_length().unwrap_or(0)))
         } else {
             existing_bytes = 0;
             response.content_length().unwrap_or(0)
@@ -982,11 +1018,15 @@ pub async fn download_model(
 
     if let Err(ref error) = result {
         if !cancel_token.is_cancelled() {
+            let saved_bytes = tokio::fs::metadata(&partial)
+                .await
+                .map(|m| m.len())
+                .unwrap_or(0);
             let _ = app.emit(
                 "download-progress",
                 DownloadProgressPayload {
                     filename,
-                    downloaded: 0,
+                    downloaded: saved_bytes,
                     total: 0,
                     percent: 0.0,
                     speed_bps: 0,
@@ -999,6 +1039,99 @@ pub async fn download_model(
         }
     }
     result
+}
+
+#[tauri::command]
+pub fn list_partial_downloads(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<PartialDownload>, String> {
+    let state_dir = state
+        .model_path
+        .read()
+        .map_err(|e| format!("Lock error: {e}"))?
+        .clone();
+    let app_dir = app.path().app_data_dir().ok().map(|p| p.join("models"));
+    let docs_dir = dirs::document_dir().map(|p| p.join("DocuSage").join("models"));
+
+    let mut dirs_to_scan = Vec::new();
+    for dir in [app_dir, Some(state_dir), docs_dir].into_iter().flatten() {
+        if !dirs_to_scan.contains(&dir) {
+            dirs_to_scan.push(dir);
+        }
+    }
+
+    let mut partials = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for dir in &dirs_to_scan {
+        if !dir.is_dir() {
+            continue;
+        }
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let raw_name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let Some(filename) = raw_name.strip_suffix(".part") else {
+                    continue;
+                };
+                if !filename.to_ascii_lowercase().ends_with(".gguf") {
+                    continue;
+                }
+                let downloaded_bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                if downloaded_bytes == 0 {
+                    continue;
+                }
+                if seen.insert(filename.to_string()) {
+                    partials.push(PartialDownload {
+                        filename: filename.to_string(),
+                        path: path.to_string_lossy().into_owned(),
+                        downloaded_bytes,
+                    });
+                }
+            }
+        }
+    }
+
+    partials.sort_by(|a, b| a.filename.cmp(&b.filename));
+    Ok(partials)
+}
+
+#[tauri::command]
+pub fn delete_partial_download(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    filename: String,
+) -> Result<(), String> {
+    if filename.is_empty()
+        || filename.contains(['/', '\\'])
+        || !filename.to_lowercase().ends_with(".gguf")
+    {
+        return Err("Use a plain .gguf filename without directory components.".into());
+    }
+    let _ = state.cancel_download(&filename);
+
+    let mut dirs_to_scan = Vec::new();
+    if let Ok(app_models) = app.path().app_data_dir().map(|p| p.join("models")) {
+        dirs_to_scan.push(app_models);
+    }
+    if let Ok(state_dir) = state.model_path.read() {
+        if !dirs_to_scan.contains(&*state_dir) {
+            dirs_to_scan.push(state_dir.clone());
+        }
+    }
+
+    let part_name = format!("{filename}.part");
+    for dir in dirs_to_scan {
+        let candidate = dir.join(&part_name);
+        if candidate.is_file() {
+            let _ = std::fs::remove_file(&candidate);
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1060,6 +1193,7 @@ pub fn list_downloaded_models(
 
 #[tauri::command]
 pub fn delete_model(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     file_path: String,
 ) -> Result<(), String> {
@@ -1077,17 +1211,25 @@ pub fn delete_model(
         .unwrap_or("")
         .to_string();
 
-    let connected = state
-        .connected_model_file
-        .read()
-        .map_err(|e| format!("Lock error: {e}"))?
-        .clone();
-    if connected.as_deref() == Some(filename.as_str()) {
+    let is_loaded_in_memory = state.local_runtime.is_busy()
+        || state.local_runtime.loaded_model_name().as_deref() == Some(filename.as_str());
+    if is_loaded_in_memory {
         return Err(
-            "Cannot delete the currently connected model. Click Disconnect first.".to_string(),
+            "Cannot delete the currently loaded model. Click Unload first.".to_string(),
         );
     }
     std::fs::remove_file(&path).map_err(|e| format!("Failed to delete: {e}"))?;
+    if let Ok(mut cf) = state.connected_model_file.write() {
+        if cf.as_deref() == Some(filename.as_str()) {
+            *cf = None;
+        }
+    }
+    let mut persisted = read_persisted_local_state(&app);
+    if persisted.last_connected_model.as_deref() == Some(filename.as_str()) {
+        persisted.last_connected_model = None;
+        persisted.last_connected_path = None;
+        write_persisted_local_state(&app, &persisted);
+    }
     Ok(())
 }
 
@@ -1245,6 +1387,8 @@ mod tests {
         assert_eq!(content_range_start("bytes 1024-4095/4096"), Some(1024));
         assert_eq!(content_range_start("bytes 0-0/1"), Some(0));
         assert_eq!(content_range_start("bytes */1000"), None);
+        assert_eq!(content_range_total("bytes 1024-4095/4096"), Some(4096));
+        assert_eq!(content_range_total("bytes 0-0/*"), None);
     }
 
     #[test]

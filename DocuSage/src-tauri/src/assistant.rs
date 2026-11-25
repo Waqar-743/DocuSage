@@ -35,6 +35,7 @@ pub struct AssistantRuntime {
     pinned: AtomicBool,
     dialog_open: AtomicBool,
     settings_open: AtomicBool,
+    busy_guard: AtomicBool,
     pending_show: AtomicBool,
     suppress_blur_until: Mutex<Option<Instant>>,
 }
@@ -780,8 +781,17 @@ pub fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
             if rt.pinned.load(Ordering::Relaxed)
                 || rt.dialog_open.load(Ordering::Relaxed)
                 || rt.settings_open.load(Ordering::Relaxed)
+                || rt.busy_guard.load(Ordering::Relaxed)
             {
                 return;
+            }
+            if let Some(app_state) = app.try_state::<crate::state::AppState>() {
+                if app_state.has_active_downloads()
+                    || app_state.has_active_requests()
+                    || app_state.local_runtime.is_busy()
+                {
+                    return;
+                }
             }
             if let Ok(guard) = rt.suppress_blur_until.lock() {
                 if guard.is_some_and(|until| Instant::now() < until) {
@@ -856,13 +866,26 @@ pub fn set_assistant_focus_guard(
     app: AppHandle,
     dialog_open: Option<bool>,
     settings_open: Option<bool>,
+    busy: Option<bool>,
 ) -> Result<(), String> {
     if let Some(rt) = app.try_state::<AssistantRuntime>() {
         if let Some(v) = dialog_open {
             rt.dialog_open.store(v, Ordering::Relaxed);
+            if !v {
+                suppress_blur_briefly(&app, 1_500);
+            }
         }
         if let Some(v) = settings_open {
-            rt.settings_open.store(v, Ordering::Relaxed);
+            let was_open = rt.settings_open.swap(v, Ordering::Relaxed);
+            if was_open && !v {
+                suppress_blur_briefly(&app, 2_000);
+            }
+        }
+        if let Some(v) = busy {
+            rt.busy_guard.store(v, Ordering::Relaxed);
+            if !v {
+                suppress_blur_briefly(&app, 1_500);
+            }
         }
     }
     Ok(())
