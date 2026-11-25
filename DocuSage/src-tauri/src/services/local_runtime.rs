@@ -1,20 +1,34 @@
-//! Built-in in-process `llama.cpp` runtime manager (Neurix architecture).
+//! Built-in crash-isolated `llama.cpp` runtime manager.
 //!
-//! Runs GGUF models directly inside the DocuSage process via `llama-cpp-2` —
-//! no external `llama-server.exe` download, no localhost sidecar ports, and no
-//! Windows Vulkan DLL `0xc0000005` startup crashes.
+//! Runs GGUF models inside a supervised isolated child process spawned from the
+//! same `docusage` executable (`--local-engine-worker`) — no external server
+//! downloads, no localhost ports, and any native `llama.cpp` / `ggml` fault
+//! (such as Windows `0xc0000005` or `0xc000001d`) terminates only the worker,
+//! leaving the DocuSage UI intact with an actionable diagnostic error + log path.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::services::ai_client::{ChatMessage, ChatTokenPayload};
 use crate::services::device;
-use crate::services::local_engine::{self, GenerationRequest, LoadOptions, LoadedModel};
+use crate::services::local_engine::GenerationRequest;
+use crate::services::local_log;
+use crate::services::local_worker::{self, SupervisedWorker};
+
+const LOCAL_STATE_FILE: &str = "local-model-state.json";
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalModelPersistedState {
+    pub last_connected_model: Option<String>,
+    pub last_connected_path: Option<String>,
+    pub loading_in_progress: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,8 +47,15 @@ pub struct LocalRuntimeStatus {
     pub platform_summary: String,
     pub version: Option<String>,
     pub total_memory_bytes: Option<u64>,
+    pub available_memory_bytes: Option<u64>,
     pub recommended_threads: u32,
     pub context_length: Option<usize>,
+    pub loading: bool,
+    pub generating: bool,
+    pub last_interrupted_model: Option<String>,
+    pub engine_mode: String,
+    pub log_path: Option<String>,
+    pub last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -50,18 +71,94 @@ pub struct RuntimeDownloadProgress {
 }
 
 struct LoadedSlot {
-    model: LoadedModel,
+    worker: SupervisedWorker,
     model_path: PathBuf,
     model_name: String,
 }
 
+#[derive(Debug, Clone, Default)]
+struct RuntimeMetadata {
+    loaded_model: Option<String>,
+    loaded_model_path: Option<PathBuf>,
+    context_length: Option<usize>,
+    is_loading: bool,
+    is_generating: bool,
+    last_interrupted_model: Option<String>,
+    last_error: Option<String>,
+}
+
 #[derive(Clone, Default)]
 pub struct LocalRuntimeManager {
+    /// Serializes model load / unload / inference operations so two callers never
+    /// allocate duplicate copies of a GGUF model in RAM at the same time.
+    op_lock: Arc<Mutex<()>>,
+    /// The active isolated worker slot, always accessed under `op_lock`.
     chat: Arc<Mutex<Option<LoadedSlot>>>,
+    /// Lock-free readable status mirror so `status()`, `is_chat_loaded()`, and
+    /// `is_busy()` never block on inference and never falsely report unloaded.
+    meta: Arc<RwLock<RuntimeMetadata>>,
+}
+
+struct BusyFlagGuard {
+    meta: Arc<RwLock<RuntimeMetadata>>,
+    loading: bool,
+    generating: bool,
+}
+
+impl Drop for BusyFlagGuard {
+    fn drop(&mut self) {
+        if let Ok(mut guard) = self.meta.write() {
+            if self.loading {
+                guard.is_loading = false;
+            }
+            if self.generating {
+                guard.is_generating = false;
+            }
+        }
+    }
+}
+
+fn persisted_state_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|d| d.join(LOCAL_STATE_FILE))
+}
+
+pub fn engine_log_path(app: &AppHandle) -> PathBuf {
+    let path = app
+        .path()
+        .app_data_dir()
+        .map(|d| d.join("logs").join("local-engine.log"))
+        .unwrap_or_else(|_| local_log::resolve_log_path());
+    local_log::init_log_path(path.clone());
+    path
+}
+
+pub fn read_persisted_local_state(app: &AppHandle) -> LocalModelPersistedState {
+    let Some(path) = persisted_state_path(app) else {
+        return LocalModelPersistedState::default();
+    };
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<LocalModelPersistedState>(&raw).ok())
+        .unwrap_or_default()
+}
+
+pub fn write_persisted_local_state(app: &AppHandle, state: &LocalModelPersistedState) {
+    let Some(path) = persisted_state_path(app) else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_string_pretty(state) {
+        let _ = std::fs::write(path, json);
+    }
 }
 
 pub fn detect_hardware_backend() -> String {
-    "built-in".to_string()
+    "isolated-cpu".to_string()
 }
 
 pub fn platform_summary() -> String {
@@ -88,40 +185,65 @@ impl LocalRuntimeManager {
         Self::default()
     }
 
-    pub async fn status(&self, _app: &AppHandle) -> LocalRuntimeStatus {
-        let guard = self.chat.lock().await;
-        let (running, loaded_model, loaded_model_path, context_length) = match &*guard {
-            Some(slot) => (
-                true,
-                Some(slot.model_name.clone()),
-                Some(slot.model_path.to_string_lossy().into_owned()),
-                Some(slot.model.context_length),
-            ),
-            None => (false, None, None, None),
-        };
+    pub fn set_last_interrupted_model(&self, model: Option<String>) {
+        if let Ok(mut meta) = self.meta.write() {
+            meta.last_interrupted_model = model;
+        }
+    }
+
+    pub fn is_busy(&self) -> bool {
+        self.meta
+            .read()
+            .map(|m| m.is_loading || m.is_generating)
+            .unwrap_or(false)
+    }
+
+    pub fn loaded_model_name(&self) -> Option<String> {
+        self.meta
+            .read()
+            .ok()
+            .and_then(|m| m.loaded_model.clone())
+    }
+
+    pub async fn status(&self, app: &AppHandle) -> LocalRuntimeStatus {
+        let snap = self.meta.read().map(|m| m.clone()).unwrap_or_default();
+        let running = snap.loaded_model.is_some();
+        let log_path = engine_log_path(app).to_string_lossy().into_owned();
 
         LocalRuntimeStatus {
             installed: true,
-            binary_path: Some("built-in (llama.cpp)".to_string()),
+            binary_path: Some("built-in (isolated llama.cpp worker)".to_string()),
             running,
             port: None,
             base_url: None,
-            loaded_model,
-            loaded_model_path,
+            loaded_model: snap.loaded_model,
+            loaded_model_path: snap
+                .loaded_model_path
+                .map(|p| p.to_string_lossy().into_owned()),
             embedding_running: false,
             embedding_port: None,
             embedding_model: None,
             detected_backend: detect_hardware_backend(),
             platform_summary: platform_summary(),
-            version: Some("llama.cpp (built-in)".to_string()),
+            version: Some("llama.cpp (isolated worker)".to_string()),
             total_memory_bytes: device::total_memory_bytes(),
+            available_memory_bytes: device::available_memory_bytes(),
             recommended_threads: device::inference_threads(),
-            context_length,
+            context_length: snap.context_length,
+            loading: snap.is_loading,
+            generating: snap.is_generating,
+            last_interrupted_model: snap.last_interrupted_model,
+            engine_mode: "isolated-worker".to_string(),
+            log_path: Some(log_path),
+            last_error: snap.last_error,
         }
     }
 
     pub async fn is_chat_loaded(&self) -> bool {
-        self.chat.lock().await.is_some()
+        self.meta
+            .read()
+            .map(|m| m.loaded_model.is_some())
+            .unwrap_or(false)
     }
 
     pub async fn chat_base_url(&self) -> Option<String> {
@@ -132,8 +254,8 @@ impl LocalRuntimeManager {
         None
     }
 
-    /// The llama.cpp runtime is compiled directly into DocuSage, so this simply
-    /// confirms readiness immediately without downloading any external binary.
+    /// The llama.cpp worker is compiled directly into DocuSage, so this confirms
+    /// readiness immediately without downloading any external binary.
     pub async fn install_runtime(
         &self,
         app: &AppHandle,
@@ -143,7 +265,7 @@ impl LocalRuntimeManager {
             "runtime-download-progress",
             RuntimeDownloadProgress {
                 stage: "ready".into(),
-                asset_name: "built-in llama.cpp".into(),
+                asset_name: "built-in llama.cpp worker".into(),
                 downloaded: 1,
                 total: 1,
                 percent: 100.0,
@@ -154,7 +276,7 @@ impl LocalRuntimeManager {
         Ok(self.status(app).await)
     }
 
-    /// Load a `.gguf` chat model directly into memory via `llama-cpp-2`.
+    /// Load a `.gguf` chat model inside a supervised isolated worker process.
     pub async fn start_chat_model(
         &self,
         app: &AppHandle,
@@ -165,35 +287,89 @@ impl LocalRuntimeManager {
             return Err(format!("Model file not found: {}", gguf_path.display()));
         }
 
+        // Single-flight guard: reject overlapping load/test clicks instead of queuing duplicate allocations.
+        let Ok(_op) = self.op_lock.try_lock() else {
+            return Err(
+                "Local AI engine is already busy loading or testing a model. Please wait for it to finish."
+                    .to_string(),
+            );
+        };
+
+        // If this exact model file is already loaded in a live worker and no custom ctx_size was requested, reuse it.
+        if ctx_size.is_none() {
+            let already_loaded = {
+                let guard = self.chat.lock().await;
+                guard
+                    .as_ref()
+                    .is_some_and(|slot| slot.model_path == gguf_path && slot.worker.is_alive())
+            };
+            if already_loaded {
+                return Ok(self.status(app).await);
+            }
+        }
+
+        let log_path = engine_log_path(app);
         let model_name = gguf_path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "local-model.gguf".into());
 
-        // Free any previously loaded model before allocating the new one so peak RAM stays bounded.
-        self.stop_chat().await;
-
-        let path_owned = gguf_path.to_path_buf();
-        let name_owned = model_name.clone();
-        let mut options = LoadOptions::default();
-        if let Some(ctx) = ctx_size {
-            options.context_length = ctx;
+        if let Ok(mut meta) = self.meta.write() {
+            meta.is_loading = true;
+            meta.last_interrupted_model = None;
+            meta.last_error = None;
         }
+        let _loading_guard = BusyFlagGuard {
+            meta: self.meta.clone(),
+            loading: true,
+            generating: false,
+        };
 
-        let loaded = tokio::task::spawn_blocking(move || {
-            local_engine::load_model_from_disk(&name_owned, &path_owned, options)
-        })
-        .await
-        .map_err(|e| format!("Local model loader task failed: {e}"))??;
+        // Stop any previously running worker before spawning the next one so peak RAM stays bounded.
+        self.unload_chat_locked().await;
+
+        let mut persisted = read_persisted_local_state(app);
+        persisted.loading_in_progress = Some(model_name.clone());
+        write_persisted_local_state(app, &persisted);
+
+        let load_res =
+            local_worker::spawn_and_load_with_fallback(gguf_path, ctx_size, log_path).await;
+
+        persisted.loading_in_progress = None;
+
+        let (worker, outcome) = match load_res {
+            Ok(pair) => pair,
+            Err(err) => {
+                if let Ok(mut meta) = self.meta.write() {
+                    meta.loaded_model = None;
+                    meta.loaded_model_path = None;
+                    meta.context_length = None;
+                    meta.last_error = Some(err.clone());
+                }
+                write_persisted_local_state(app, &persisted);
+                return Err(err);
+            }
+        };
 
         {
             let mut guard = self.chat.lock().await;
             *guard = Some(LoadedSlot {
-                model: loaded,
+                worker,
                 model_path: gguf_path.to_path_buf(),
-                model_name,
+                model_name: outcome.model_name.clone(),
             });
         }
+        if let Ok(mut meta) = self.meta.write() {
+            meta.loaded_model = Some(outcome.model_name.clone());
+            meta.loaded_model_path = Some(gguf_path.to_path_buf());
+            meta.context_length = Some(outcome.context_length);
+            meta.is_loading = false;
+            meta.last_error = None;
+        }
+
+        persisted.last_connected_model = Some(outcome.model_name);
+        persisted.last_connected_path = Some(gguf_path.to_string_lossy().into_owned());
+        write_persisted_local_state(app, &persisted);
 
         Ok(self.status(app).await)
     }
@@ -209,21 +385,31 @@ impl LocalRuntimeManager {
         )
     }
 
-    pub async fn stop_chat(&self) {
+    async fn unload_chat_locked(&self) {
         let old = {
             let mut guard = self.chat.lock().await;
             guard.take()
         };
-        if let Some(slot) = old {
-            let _ = tokio::task::spawn_blocking(move || drop(slot)).await;
+        if let Ok(mut meta) = self.meta.write() {
+            meta.loaded_model = None;
+            meta.loaded_model_path = None;
+            meta.context_length = None;
         }
+        if let Some(slot) = old {
+            slot.worker.shutdown().await;
+        }
+    }
+
+    pub async fn stop_chat(&self) {
+        let _op = self.op_lock.lock().await;
+        self.unload_chat_locked().await;
     }
 
     pub async fn stop_all(&self) {
         self.stop_chat().await;
     }
 
-    /// Stream a chat completion directly from the in-process loaded GGUF model.
+    /// Stream a chat completion from the isolated local GGUF worker.
     #[allow(clippy::too_many_arguments)]
     pub async fn stream_chat(
         &self,
@@ -236,6 +422,8 @@ impl LocalRuntimeManager {
         grounded: bool,
         cancel_token: CancellationToken,
     ) -> Result<(String, bool), String> {
+        let _op = self.op_lock.lock().await;
+
         let pairs = history_to_pairs(history);
         let temp = if grounded {
             temperature.min(0.25)
@@ -252,8 +440,6 @@ impl LocalRuntimeManager {
             enable_thinking: false,
         };
 
-        // Take the slot out of the mutex while generating so we don't block status checks,
-        // then return it cleanly when generation completes.
         let mut slot = {
             let mut guard = self.chat.lock().await;
             guard.take().ok_or_else(|| {
@@ -262,12 +448,22 @@ impl LocalRuntimeManager {
             })?
         };
 
+        if let Ok(mut meta) = self.meta.write() {
+            meta.is_generating = true;
+            meta.last_error = None;
+        }
+        let _gen_guard = BusyFlagGuard {
+            meta: self.meta.clone(),
+            loading: false,
+            generating: true,
+        };
+
         let app_clone = app.clone();
         let req_id_owned = request_id.to_string();
-        let cancel_clone = cancel_token.clone();
 
-        let join_res = tokio::task::spawn_blocking(move || {
-            let res = slot.model.generate_streaming(&req, &cancel_clone, |tok| {
+        let gen_res = slot
+            .worker
+            .generate_streaming(&req, &cancel_token, |tok| {
                 let _ = app_clone.emit(
                     "chat-token",
                     ChatTokenPayload {
@@ -276,10 +472,8 @@ impl LocalRuntimeManager {
                         done: false,
                     },
                 );
-            });
-            (slot, res)
-        })
-        .await;
+            })
+            .await;
 
         let _ = app.emit(
             "chat-token",
@@ -290,27 +484,56 @@ impl LocalRuntimeManager {
             },
         );
 
-        let (slot, gen_res) =
-            join_res.map_err(|e| format!("Local inference task failed: {e}"))?;
-
-        {
-            let mut guard = self.chat.lock().await;
-            if guard.is_none() {
-                *guard = Some(slot);
+        match gen_res {
+            Ok(output) => {
+                if slot.worker.is_alive() {
+                    let mut guard = self.chat.lock().await;
+                    *guard = Some(slot);
+                } else {
+                    self.clear_loaded_meta(None);
+                }
+                Ok((output.reply, output.stopped))
+            }
+            Err(err) => {
+                if slot.worker.is_alive() {
+                    let mut guard = self.chat.lock().await;
+                    *guard = Some(slot);
+                    if let Ok(mut meta) = self.meta.write() {
+                        meta.last_error = Some(err.clone());
+                    }
+                } else {
+                    slot.worker.shutdown().await;
+                    self.clear_loaded_meta(Some(err.clone()));
+                }
+                Err(err)
             }
         }
-
-        let output = gen_res?;
-        Ok((output.reply, output.stopped))
     }
 
-    /// Run a fast live inference smoke test against the currently loaded local GGUF model.
+    /// Run a fast live inference smoke test against the currently loaded local GGUF worker.
     pub async fn quick_test_chat(&self) -> Result<(String, String, u64), String> {
+        let Ok(_op) = self.op_lock.try_lock() else {
+            return Err(
+                "Local AI engine is busy loading or generating. Wait for the current operation to finish."
+                    .to_string(),
+            );
+        };
+
         let mut slot = {
             let mut guard = self.chat.lock().await;
             guard
                 .take()
                 .ok_or_else(|| "No local GGUF model is currently loaded.".to_string())?
+        };
+
+        if let Ok(mut meta) = self.meta.write() {
+            meta.is_generating = true;
+            meta.last_error = None;
+        }
+        let _gen_guard = BusyFlagGuard {
+            meta: self.meta.clone(),
+            loading: false,
+            generating: true,
         };
 
         let model_name = slot.model_name.clone();
@@ -325,28 +548,48 @@ impl LocalRuntimeManager {
         };
         let cancel = CancellationToken::new();
 
-        let join_res = tokio::task::spawn_blocking(move || {
-            let res = slot.model.generate_streaming(&req, &cancel, |_| {});
-            (slot, res)
-        })
-        .await;
+        let gen_res = slot.worker.generate_streaming(&req, &cancel, |_| {}).await;
 
-        let (slot, gen_res) =
-            join_res.map_err(|e| format!("Local model test task failed: {e}"))?;
-        {
-            let mut guard = self.chat.lock().await;
-            if guard.is_none() {
-                *guard = Some(slot);
+        match gen_res {
+            Ok(output) => {
+                if slot.worker.is_alive() {
+                    let mut guard = self.chat.lock().await;
+                    *guard = Some(slot);
+                } else {
+                    self.clear_loaded_meta(None);
+                }
+                let reply = if output.reply.is_empty() {
+                    "Local model is ready!".to_string()
+                } else {
+                    output.reply
+                };
+                Ok((model_name, reply, output.duration_ms))
+            }
+            Err(err) => {
+                if slot.worker.is_alive() {
+                    let mut guard = self.chat.lock().await;
+                    *guard = Some(slot);
+                    if let Ok(mut meta) = self.meta.write() {
+                        meta.last_error = Some(err.clone());
+                    }
+                } else {
+                    slot.worker.shutdown().await;
+                    self.clear_loaded_meta(Some(err.clone()));
+                }
+                Err(err)
             }
         }
+    }
 
-        let output = gen_res?;
-        let reply = if output.reply.is_empty() {
-            "Local model is ready!".to_string()
-        } else {
-            output.reply
-        };
-        Ok((model_name, reply, output.duration_ms))
+    fn clear_loaded_meta(&self, last_error: Option<String>) {
+        if let Ok(mut meta) = self.meta.write() {
+            meta.loaded_model = None;
+            meta.loaded_model_path = None;
+            meta.context_length = None;
+            if last_error.is_some() {
+                meta.last_error = last_error;
+            }
+        }
     }
 }
 
