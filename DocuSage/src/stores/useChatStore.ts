@@ -166,15 +166,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   deleteChat: (chatId) => {
+    const runningEntries = Object.entries(get().activeStreams).filter(
+      ([, meta]) => meta.kind === 'chat' && meta.chatId === chatId,
+    );
+    for (const [reqId] of runningEntries) {
+      void api.stopChat(reqId).catch(() => {});
+    }
     set((s) => {
       const remaining = s.chats.filter((c) => c.id !== chatId);
       const chats = remaining.length > 0 ? remaining : [createEmptyChat('New Chat')];
       const activeChatId = s.activeChatId === chatId ? chats[0].id : s.activeChatId;
       const drafts = { ...s.drafts };
       delete drafts[chatId];
-      return { chats, activeChatId, drafts };
+      const activeStreams = { ...s.activeStreams };
+      for (const [reqId] of runningEntries) {
+        delete activeStreams[reqId];
+      }
+      return { chats, activeChatId, drafts, activeStreams };
     });
     syncPersist(get());
+    useUiStore.getState().pushToast('info', 'Conversation deleted.', { dedupeKey: 'chat-deleted' });
   },
 
   moveChatToFolder: (chatId, folderId) => {

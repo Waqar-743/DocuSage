@@ -152,7 +152,7 @@ export const DashboardView: React.FC<{
           )}
         </button>
 
-        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity shrink-0">
+        <div className="flex items-center gap-0.5 opacity-60 group-hover:opacity-100 focus-within:opacity-100 transition-opacity shrink-0">
           {folders.length > 0 && (
             <select
               aria-label={`Move ${chat.name} to folder`}
@@ -171,8 +171,12 @@ export const DashboardView: React.FC<{
           )}
           <button
             type="button"
-            onClick={() => deleteChat(chat.id)}
+            onClick={(e) => {
+              e.stopPropagation();
+              deleteChat(chat.id);
+            }}
             aria-label={`Delete chat ${chat.name}`}
+            title="Delete conversation"
             className="p-1 rounded hover:text-rose-400"
           >
             <Trash2 className="w-3 h-3" />
@@ -453,6 +457,15 @@ export const DashboardView: React.FC<{
           </div>
 
           <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => deleteChat(activeChat.id)}
+              aria-label="Delete conversation"
+              title="Delete current conversation"
+              className={`p-1.5 rounded-lg hover:text-rose-400 ${theme.hoverBg}`}
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
             <button
               type="button"
               onClick={() => setCompareOpen(true)}

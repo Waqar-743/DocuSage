@@ -7,6 +7,7 @@ import {
   PinOff,
   Plus,
   Settings,
+  Trash2,
   X,
 } from 'lucide-react';
 import * as api from '../../lib/api';
@@ -36,6 +37,7 @@ export const SpotlightView: React.FC<{
   const activeChat = useChatStore((s) => s.getActiveChat());
   const activeBranch = useChatStore((s) => s.getActiveBranch(activeChat));
   const createChat = useChatStore((s) => s.createChat);
+  const deleteChat = useChatStore((s) => s.deleteChat);
   const branchFromMessage = useChatStore((s) => s.branchFromMessage);
   const sendMessage = useChatStore((s) => s.sendMessage);
 
@@ -65,6 +67,15 @@ export const SpotlightView: React.FC<{
             className={`p-1.5 rounded-lg ${theme.hoverBg}`}
           >
             <Plus className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => deleteChat(activeChat.id)}
+            aria-label="Delete conversation"
+            title="Delete current conversation"
+            className={`p-1.5 rounded-lg hover:text-rose-400 ${theme.hoverBg}`}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
           </button>
           <button
             type="button"
