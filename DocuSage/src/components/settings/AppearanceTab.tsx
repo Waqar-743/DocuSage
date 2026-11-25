@@ -6,7 +6,10 @@ import { useUiStore } from '../../stores/useUiStore';
 export const AppearanceTab: React.FC = () => {
   const current = useUiStore((s) => s.theme);
   const setTheme = useUiStore((s) => s.setTheme);
+  const appOpacity = useUiStore((s) => s.appOpacity);
+  const setAppOpacity = useUiStore((s) => s.setAppOpacity);
   const theme = THEMES[current];
+  const opacityPct = Math.round(appOpacity * 100);
 
   return (
     <div className="space-y-5 text-xs">
@@ -15,6 +18,42 @@ export const AppearanceTab: React.FC = () => {
         <p className={`mt-0.5 ${theme.textMuted}`}>
           Switch themes instantly across the entire app — every theme uses a solid, high-contrast palette tuned for comfortable reading.
         </p>
+      </div>
+
+      {/* Whole-App Transparency / Opacity Control */}
+      <div className={`rounded-xl border p-3.5 space-y-2.5 ${theme.surfaceBg} ${theme.border}`}>
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div>
+            <div className="font-semibold text-[13px]">Window Transparency</div>
+            <p className={`text-[11px] mt-0.5 ${theme.textMuted}`}>
+              Adjust opacity anytime with <kbd className={`px-1.5 py-0.5 rounded border font-mono text-[10px] ${theme.badgeBg}`}>Shift + -</kbd> (more transparent) or <kbd className={`px-1.5 py-0.5 rounded border font-mono text-[10px] ${theme.badgeBg}`}>Shift + +</kbd> (less transparent). While typing, use <kbd className={`px-1.5 py-0.5 rounded border font-mono text-[10px] ${theme.badgeBg}`}>Ctrl + Shift + +/-</kbd>.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className={`font-mono text-xs font-semibold px-2 py-0.5 rounded-md ${theme.badgeBg}`}>
+              {opacityPct}%
+            </span>
+            {opacityPct < 100 && (
+              <button
+                type="button"
+                onClick={() => setAppOpacity(1)}
+                className={`px-2 py-1 rounded-lg border text-[11px] font-medium ${theme.border} ${theme.hoverBg}`}
+              >
+                Reset 100%
+              </button>
+            )}
+          </div>
+        </div>
+        <input
+          type="range"
+          aria-label="Window opacity"
+          min={35}
+          max={100}
+          step={5}
+          value={opacityPct}
+          onChange={(e) => setAppOpacity(Number(e.target.value) / 100)}
+          className="w-full cursor-pointer"
+        />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">

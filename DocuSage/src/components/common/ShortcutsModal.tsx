@@ -9,6 +9,8 @@ const SHORTCUTS = [
   { keys: 'Ctrl + Shift + V', desc: 'Quote clipboard directly into prompt composer' },
   { keys: 'Ctrl + N', desc: 'Start a new conversation' },
   { keys: 'Ctrl + /', desc: 'Show keyboard shortcuts' },
+  { keys: 'Shift + -', desc: 'Increase app transparency (or Ctrl+Shift+- while typing)' },
+  { keys: 'Shift + +', desc: 'Decrease app transparency (or Ctrl+Shift++ while typing)' },
   { keys: 'Enter / Shift + Enter', desc: 'Send message / insert newline' },
   { keys: 'Escape', desc: 'Close active modal or hide Spotlight' },
 ];

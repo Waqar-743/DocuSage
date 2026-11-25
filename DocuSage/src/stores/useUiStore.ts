@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import * as api from '../lib/api';
-import { loadOrMigrateState, persistV2State } from '../lib/migration';
+import { clampAppOpacity, loadOrMigrateState, persistV2State } from '../lib/migration';
 import type {
   AiProviderKind,
   AppearanceTheme,
@@ -21,6 +21,7 @@ export type PushToastOptions = {
 
 type UiState = {
   theme: AppearanceTheme;
+  appOpacity: number;
   windowMode: AssistantWindowMode;
   isPinned: boolean;
   autostartEnabled: boolean;
@@ -42,6 +43,8 @@ type UiState = {
 
   hydrateAssistant: () => Promise<void>;
   setTheme: (theme: AppearanceTheme) => void;
+  setAppOpacity: (opacity: number) => void;
+  adjustAppOpacity: (delta: number) => number;
   setWindowMode: (mode: AssistantWindowMode, syncBackend?: boolean) => Promise<void>;
   toggleWindowMode: () => Promise<void>;
   setPinned: (pinned: boolean) => Promise<void>;
@@ -67,13 +70,16 @@ type UiState = {
 const initial = loadOrMigrateState();
 const toastTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-function persistUiPatch(patch: Partial<{ theme: AppearanceTheme; sidebarWidth: number; sidebarCollapsed: boolean }>) {
+function persistUiPatch(
+  patch: Partial<{ theme: AppearanceTheme; appOpacity: number; sidebarWidth: number; sidebarCollapsed: boolean }>,
+) {
   const cur = loadOrMigrateState();
   persistV2State({ ...cur, ...patch });
 }
 
 export const useUiStore = create<UiState>((set, get) => ({
   theme: initial.theme,
+  appOpacity: clampAppOpacity(initial.appOpacity),
   windowMode: api.isTauri() ? 'spotlight' : 'dashboard',
   isPinned: false,
   autostartEnabled: false,
@@ -117,6 +123,19 @@ export const useUiStore = create<UiState>((set, get) => ({
   setTheme: (theme) => {
     set({ theme });
     persistUiPatch({ theme });
+  },
+
+  setAppOpacity: (opacity) => {
+    const clamped = clampAppOpacity(opacity);
+    set({ appOpacity: clamped });
+    persistUiPatch({ appOpacity: clamped });
+  },
+
+  adjustAppOpacity: (delta) => {
+    const next = clampAppOpacity(get().appOpacity + delta);
+    set({ appOpacity: next });
+    persistUiPatch({ appOpacity: next });
+    return next;
   },
 
   setWindowMode: async (mode, syncBackend = true) => {

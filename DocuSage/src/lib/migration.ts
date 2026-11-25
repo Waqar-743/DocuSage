@@ -7,6 +7,7 @@ export const V2_STORAGE_KEY = 'docusage:app-state:v2';
 export type PersistedV2State = {
   version: 2;
   theme: AppearanceTheme;
+  appOpacity?: number;
   chats: ChatSession[];
   folders: ChatFolder[];
   activeChatId: string;
@@ -14,6 +15,11 @@ export type PersistedV2State = {
   sidebarWidth: number;
   sidebarCollapsed: boolean;
 };
+
+export function clampAppOpacity(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 1;
+  return Math.round(Math.min(1, Math.max(0.35, value)) * 100) / 100;
+}
 
 type LegacyMessage = {
   id: string;
@@ -89,6 +95,7 @@ export function loadOrMigrateState(): PersistedV2State {
   const defaults: PersistedV2State = {
     version: 2,
     theme: 'dark',
+    appOpacity: 1,
     chats: [fallbackChat],
     folders: [],
     activeChatId: fallbackChat.id,
@@ -133,6 +140,7 @@ export function loadOrMigrateState(): PersistedV2State {
       return {
         version: 2,
         theme: isValidTheme(parsed.theme) ? parsed.theme : 'dark',
+        appOpacity: clampAppOpacity(parsed.appOpacity),
         chats,
         folders: Array.isArray(parsed.folders) ? parsed.folders : [],
         activeChatId,

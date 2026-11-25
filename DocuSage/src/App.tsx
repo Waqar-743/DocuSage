@@ -25,6 +25,8 @@ import './App.css';
 export default function App() {
   const themeKey = useUiStore((s) => s.theme);
   const theme = THEMES[themeKey];
+  const appOpacity = useUiStore((s) => s.appOpacity);
+  const adjustAppOpacity = useUiStore((s) => s.adjustAppOpacity);
   const windowMode = useUiStore((s) => s.windowMode);
   const setWindowMode = useUiStore((s) => s.setWindowMode);
   const hydrateAssistant = useUiStore((s) => s.hydrateAssistant);
@@ -139,10 +141,36 @@ export default function App() {
     updateRuntimeProgress,
   ]);
 
-  // Global keyboard workflows (Ctrl+K, Ctrl+/, Ctrl+Shift+V, Ctrl+N, Escape)
+  // Global keyboard workflows (Ctrl+K, Ctrl+/, Ctrl+Shift+V, Ctrl+N, Shift++/Shift+-, Escape)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
+      const target = e.target as HTMLElement | null;
+      const isEditable = Boolean(
+        target &&
+          (target.tagName === 'INPUT' ||
+            target.tagName === 'TEXTAREA' ||
+            target.tagName === 'SELECT' ||
+            target.isContentEditable),
+      );
+
+      if (e.shiftKey && (!isEditable || mod)) {
+        const isIncreaseOpacity =
+          e.key === '+' || e.code === 'Equal' || e.code === 'NumpadAdd';
+        const isDecreaseOpacity =
+          e.key === '-' || e.key === '_' || e.code === 'Minus' || e.code === 'NumpadSubtract';
+
+        if (isIncreaseOpacity || isDecreaseOpacity) {
+          e.preventDefault();
+          const next = adjustAppOpacity(isIncreaseOpacity ? 0.1 : -0.1);
+          const pct = Math.round(next * 100);
+          pushToast('info', `Window opacity: ${pct}% (Shift + / Shift -)`, {
+            dedupeKey: 'app-opacity',
+            durationMs: 1800,
+          });
+          return;
+        }
+      }
 
       if (mod && e.key.toLowerCase() === 'k') {
         e.preventDefault();
@@ -206,6 +234,7 @@ export default function App() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [
+    adjustAppOpacity,
     appendQuoteToActiveDraft,
     closeSettings,
     createChat,
@@ -219,7 +248,11 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-      <div className={`h-screen w-screen overflow-hidden bg-transparent ${theme.text}`}>
+      <div
+        data-desktop-app
+        style={{ opacity: appOpacity }}
+        className={`h-screen w-screen overflow-hidden bg-transparent transition-opacity duration-150 ${theme.text}`}
+      >
         {windowMode === 'spotlight' ? (
           <SpotlightView focusSignal={focusSignal} onFocusComposer={triggerFocusComposer} />
         ) : (
