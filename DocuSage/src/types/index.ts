@@ -73,6 +73,7 @@ export type LocalModelTestResult = {
 export type LocalSetupStage =
   | 'idle'
   | 'downloading'
+  | 'paused'
   | 'installingRuntime'
   | 'loadingModel'
   | 'ready'
@@ -192,8 +193,15 @@ export type LocalRuntimeStatus = {
   platformSummary: string;
   version: string | null;
   totalMemoryBytes?: number | null;
+  availableMemoryBytes?: number | null;
   recommendedThreads?: number;
   contextLength?: number | null;
+  loading?: boolean;
+  generating?: boolean;
+  lastInterruptedModel?: string | null;
+  engineMode?: string;
+  logPath?: string | null;
+  lastError?: string | null;
 };
 
 export type RuntimeDownloadProgress = {
@@ -222,6 +230,12 @@ export type DownloadedModel = {
   filename: string;
   path: string;
   sizeBytes: number;
+};
+
+export type PartialDownload = {
+  filename: string;
+  path: string;
+  downloadedBytes: number;
 };
 
 export type IndexedDocument = {

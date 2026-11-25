@@ -34,6 +34,10 @@ export const ModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false
   const downloadedModels = useProviderStore((s) => s.downloadedModels);
   const connectedModel = useProviderStore((s) => s.connectedModel);
   const runtimeStatus = useProviderStore((s) => s.runtimeStatus);
+  const isConnectingModel = useProviderStore((s) => s.isConnectingModel);
+  const isTestingLocalModel = useProviderStore((s) => s.isTestingLocalModel);
+  const isLocalBusy =
+    isConnectingModel || isTestingLocalModel || Boolean(runtimeStatus.loading);
 
   const [open, setOpen] = useState(false);
 
@@ -46,7 +50,7 @@ export const ModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false
     : getModelDisplayName(active.provider, active.model, modelsByProvider[active.id]) || active.name;
 
   const isReady = isLocal
-    ? runtimeStatus.running || Boolean(connectedModel)
+    ? runtimeStatus.running
     : Boolean(active?.enabled && (active.apiKeySet || !isMajorCloudKind(active.provider)));
 
   const otherProviders = providers.filter(
@@ -80,6 +84,7 @@ export const ModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false
   };
 
   const handleSelectLocalModel = async (filePath: string, filename: string) => {
+    if (isLocalBusy) return;
     setOpen(false);
     await setActiveProvider('local');
     if (connectedModel !== filename || !runtimeStatus.running) {
@@ -161,9 +166,10 @@ export const ModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false
                           key={m.path}
                           type="button"
                           role="option"
+                          disabled={isLocalBusy}
                           aria-selected={selected}
                           onClick={() => void handleSelectLocalModel(m.path, m.filename)}
-                          className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-left text-xs transition-colors border ${
+                          className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-left text-xs transition-colors border disabled:opacity-50 ${
                             selected
                               ? theme.accentSoft
                               : `border-transparent ${theme.hoverBg}`
@@ -172,7 +178,11 @@ export const ModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false
                           <div className="min-w-0">
                             <div className="font-medium truncate">{label}</div>
                             <div className={`text-[10.5px] truncate ${theme.textMuted}`}>
-                              {selected && runtimeStatus.running ? 'Running locally' : m.filename}
+                              {isLocalBusy
+                                ? 'Engine busy…'
+                                : selected && runtimeStatus.running
+                                ? 'Running locally'
+                                : m.filename}
                             </div>
                           </div>
                           {selected && <Check className="w-3.5 h-3.5 shrink-0" />}

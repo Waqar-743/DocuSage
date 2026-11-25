@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import * as api from '../lib/api';
 import {
+  findCatalogEntryByFilename,
+  formatBytes,
   MAJOR_CLOUD_PROVIDERS,
   type MajorCloudProviderKind,
   type ModelCatalogEntry,
@@ -13,6 +15,7 @@ import type {
   LocalModelTestResult,
   LocalRuntimeStatus,
   LocalSetupState,
+  PartialDownload,
   ProviderModelInfo,
   ProviderTestResult,
   ProviderVerificationStatus,
@@ -34,6 +37,7 @@ type ProviderState = {
   modelsByProvider: Record<string, ProviderModelInfo[]>;
   verificationByProvider: Record<string, ProviderVerificationEntry>;
   downloadedModels: DownloadedModel[];
+  partialDownloads: PartialDownload[];
   connectedModel: string | null;
   modelsDir: string;
   runtimeStatus: LocalRuntimeStatus;
@@ -66,6 +70,8 @@ type ProviderState = {
   restartLocalEngine: () => Promise<void>;
   downloadCatalogModel: (url: string, filename: string, sha256?: string) => Promise<string | null>;
   cancelModelDownload: (filename: string) => Promise<void>;
+  discardPartialDownload: (filename: string) => Promise<void>;
+  resumePausedDownload: (filename: string) => Promise<boolean>;
   downloadAndSetupLocalModel: (
     entry: ModelCatalogEntry,
     opts?: { redirectToWorkspace?: boolean },
@@ -154,6 +160,7 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
   modelsByProvider: {},
   verificationByProvider: {},
   downloadedModels: [],
+  partialDownloads: [],
   connectedModel: null,
   modelsDir: '',
   runtimeStatus: DEFAULT_RUNTIME_STATUS,
@@ -169,14 +176,18 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
 
   hydrateProviders: async () => {
     try {
-      const [providerList, downloaded, connected, runtime, ragCfg, dir] = await Promise.all([
+      const [providerList, downloaded, partials, connected, runtime, ragCfg, dir] = await Promise.all([
         api.listAiProviderConfigs(),
         api.listDownloadedModels(),
+        api.listPartialDownloads().catch(() => [] as PartialDownload[]),
         api.getConnectedModel(),
         api.getLocalRuntimeStatus().catch(() => DEFAULT_RUNTIME_STATUS),
         api.getRagConfig(),
         api.getModelsDir().catch(() => ''),
       ]);
+      const downloadedNames = new Set(downloaded.map((m) => m.filename.toLowerCase()));
+      const activePartials = partials.filter((p) => !downloadedNames.has(p.filename.toLowerCase()));
+
       set((s) => {
         const nextVerification = { ...s.verificationByProvider };
         for (const p of providerList.providers) {
@@ -188,16 +199,77 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
             nextVerification[p.id] = { status: 'notConfigured' };
           }
         }
+
+        const nextDownloads = { ...s.modelDownloads };
+        for (const partial of activePartials) {
+          const existing = nextDownloads[partial.filename];
+          if (existing && !existing.done) continue;
+          const entry = findCatalogEntryByFilename(partial.filename);
+          const total = entry?.sizeBytes ?? 0;
+          const percent = total > 0 ? Math.min(99.9, (partial.downloadedBytes / total) * 100) : 0;
+          nextDownloads[partial.filename] = {
+            filename: partial.filename,
+            downloaded: partial.downloadedBytes,
+            total,
+            percent,
+            speedBps: 0,
+            etaSecs: null,
+            stage: 'cancelled',
+            done: true,
+            error: null,
+          };
+        }
+
+        let nextLocalSetup = s.localSetup;
+        if (s.localSetup.stage === 'idle') {
+          if (activePartials.length > 0) {
+            const first = activePartials[0];
+            const entry = findCatalogEntryByFilename(first.filename);
+            const total = entry?.sizeBytes ?? 0;
+            const percent = total > 0 ? Math.min(99.9, (first.downloadedBytes / total) * 100) : 0;
+            const label = entry?.name ?? first.filename;
+            nextLocalSetup = {
+              stage: 'paused',
+              modelName: label,
+              filename: first.filename,
+              kind: entry?.kind ?? 'chat',
+              percent,
+              downloaded: first.downloadedBytes,
+              total,
+              speedBps: 0,
+              etaSecs: null,
+              downloadStage: 'cancelled',
+              message: `Paused download: ${label} (${formatBytes(first.downloadedBytes)} saved)`,
+              error: null,
+            };
+          } else if (runtime.lastInterruptedModel) {
+            const entry = findCatalogEntryByFilename(runtime.lastInterruptedModel);
+            const label = entry?.name ?? runtime.lastInterruptedModel;
+            nextLocalSetup = {
+              stage: 'error',
+              modelName: label,
+              filename: runtime.lastInterruptedModel,
+              kind: entry?.kind ?? 'chat',
+              percent: 0,
+              message: `Previous load of ${label} was interrupted`,
+              error: 'Your system may have been low on RAM. Close other apps, retry, or pick a smaller model.',
+            };
+          }
+        }
+
         return {
           providers: providerList.providers,
           activeProviderId: providerList.activeProviderId,
           secureStorageAvailable: providerList.secureStorageAvailable,
           verificationByProvider: nextVerification,
           downloadedModels: downloaded,
+          partialDownloads: activePartials,
+          modelDownloads: nextDownloads,
           connectedModel: connected ?? runtime.loadedModel,
           runtimeStatus: runtime,
           ragConfig: ragCfg,
           modelsDir: dir,
+          localSetup: nextLocalSetup,
         };
       });
     } catch {
@@ -502,35 +574,84 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
   },
 
   connectLocalModel: async (filePath) => {
-    if (get().isConnectingModel) return false;
+    if (get().isConnectingModel || get().isTestingLocalModel) return false;
     if (!get().runtimeStatus.installed) {
       notifyMissingRuntime();
       return false;
     }
-    set({ isConnectingModel: true });
+    const rawName = filePath.split(/[\\/]/).pop() ?? filePath;
+    const entry = findCatalogEntryByFilename(rawName);
+    const displayName = entry?.name ?? rawName;
+    set({
+      isConnectingModel: true,
+      localSetup: {
+        stage: 'loadingModel',
+        modelName: displayName,
+        filename: rawName,
+        kind: 'chat',
+        percent: 100,
+        message: `Loading ${displayName} locally…`,
+        error: null,
+      },
+    });
+    void api.setAssistantFocusGuard({ busy: true });
     try {
       const msg = await api.connectModel(filePath);
       const [status, connected] = await Promise.all([
         api.getLocalRuntimeStatus().catch(() => get().runtimeStatus),
         api.getConnectedModel().catch(() => null),
       ]);
+      const resolved = connected ?? status.loadedModel ?? rawName;
+      const resolvedName = findCatalogEntryByFilename(resolved)?.name ?? displayName;
       set({
         runtimeStatus: status,
-        connectedModel: connected ?? status.loadedModel,
+        connectedModel: resolved,
         isConnectingModel: false,
         localTestResult: null,
+        localSetup: {
+          stage: 'ready',
+          modelName: resolvedName,
+          filename: resolved,
+          kind: 'chat',
+          percent: 100,
+          message: `${resolvedName} is loaded and ready to chat.`,
+          error: null,
+        },
       });
       useUiStore.getState().pushToast('success', msg, { dedupeKey: `local-connect:${filePath}` });
       return true;
     } catch (err) {
-      set({ isConnectingModel: false });
       const errText = String(err);
+      const freshStatus = await api.getLocalRuntimeStatus().catch(() => ({
+        ...get().runtimeStatus,
+        running: false,
+        loadedModel: null,
+        lastError: errText,
+      }));
+      set({
+        runtimeStatus: {
+          ...freshStatus,
+          lastError: freshStatus.lastError ?? errText,
+        },
+        isConnectingModel: false,
+        localSetup: {
+          stage: 'error',
+          modelName: displayName,
+          filename: rawName,
+          kind: 'chat',
+          percent: 0,
+          message: `Could not load ${displayName}`,
+          error: errText,
+        },
+      });
       if (isMissingRuntimeError(errText)) {
         notifyMissingRuntime();
       } else {
         useUiStore.getState().pushToast('error', errText, { dedupeKey: `local-connect-err:${errText}` });
       }
       return false;
+    } finally {
+      void api.setAssistantFocusGuard({ busy: false });
     }
   },
 
@@ -640,41 +761,106 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
   cancelModelDownload: async (filename) => {
     try {
       await api.cancelDownload(filename);
-      set((s) => ({
-        modelDownloads: {
-          ...s.modelDownloads,
-          [filename]: {
-            ...(s.modelDownloads[filename] ?? {
+      const partials = await api.listPartialDownloads().catch(() => get().partialDownloads);
+      const partial = partials.find((p) => p.filename.toLowerCase() === filename.toLowerCase());
+      const entry = findCatalogEntryByFilename(filename);
+      set((s) => {
+        const prev = s.modelDownloads[filename];
+        const savedBytes = partial?.downloadedBytes ?? prev?.downloaded ?? s.localSetup.downloaded ?? 0;
+        const total = prev?.total || entry?.sizeBytes || s.localSetup.total || 0;
+        const percent = total > 0 ? Math.min(99.9, (savedBytes / total) * 100) : prev?.percent ?? 0;
+        const label = entry?.name ?? s.localSetup.modelName ?? filename;
+        return {
+          partialDownloads: partials,
+          modelDownloads: {
+            ...s.modelDownloads,
+            [filename]: {
               filename,
-              downloaded: 0,
-              total: 0,
-              percent: 0,
-            }),
-            speedBps: 0,
-            etaSecs: null,
-            stage: 'cancelled',
-            done: true,
-            error: 'Download paused. Click Download again to resume.',
+              downloaded: savedBytes,
+              total,
+              percent,
+              speedBps: 0,
+              etaSecs: null,
+              stage: 'cancelled',
+              done: true,
+              error: 'Download paused. Click Resume to continue.',
+            },
           },
-        },
-        localSetup:
-          s.localSetup.filename === filename && s.localSetup.stage === 'downloading'
-            ? IDLE_LOCAL_SETUP
-            : s.localSetup,
-      }));
-      useUiStore.getState().pushToast('info', 'Download paused. Progress is saved so you can resume anytime.');
+          localSetup:
+            s.localSetup.filename === filename && s.localSetup.stage === 'downloading'
+              ? {
+                  ...s.localSetup,
+                  stage: 'paused',
+                  downloaded: savedBytes,
+                  total,
+                  percent,
+                  speedBps: 0,
+                  etaSecs: null,
+                  downloadStage: 'cancelled',
+                  message: `Paused download: ${label} (${formatBytes(savedBytes)} saved)`,
+                  error: null,
+                }
+              : s.localSetup,
+        };
+      });
+      useUiStore.getState().pushToast('info', 'Download paused. Progress is saved so you can resume anytime.', {
+        dedupeKey: `download-paused:${filename}`,
+      });
     } catch (err) {
       useUiStore.getState().pushToast('error', String(err));
     }
   },
 
+  discardPartialDownload: async (filename) => {
+    try {
+      await api.deletePartialDownload(filename);
+      const partials = await api.listPartialDownloads().catch(() => []);
+      set((s) => {
+        const nextDownloads = { ...s.modelDownloads };
+        delete nextDownloads[filename];
+        return {
+          partialDownloads: partials,
+          modelDownloads: nextDownloads,
+          localSetup:
+            s.localSetup.filename === filename &&
+            (s.localSetup.stage === 'paused' || s.localSetup.stage === 'error')
+              ? IDLE_LOCAL_SETUP
+              : s.localSetup,
+        };
+      });
+      useUiStore.getState().pushToast('info', 'Removed partial download.');
+    } catch (err) {
+      useUiStore.getState().pushToast('error', String(err));
+    }
+  },
+
+  resumePausedDownload: async (filename) => {
+    const entry = findCatalogEntryByFilename(filename);
+    if (!entry) {
+      useUiStore.getState().openSettings('localRuntime');
+      return false;
+    }
+    return get().downloadAndSetupLocalModel(entry, { redirectToWorkspace: false });
+  },
+
   downloadAndSetupLocalModel: async (entry, opts) => {
     const shouldRedirect = opts?.redirectToWorkspace ?? entry.kind === 'chat';
+
+    // Keep Spotlight window visible while downloading & loading so it never auto-hides.
+    void api.setAssistantFocusGuard({ busy: true });
 
     // Redirect user immediately to the main chat workspace while setup runs in the background.
     if (shouldRedirect) {
       useUiStore.getState().closeSettings();
     }
+
+    const existingPartial = get().partialDownloads.find(
+      (p) => p.filename.toLowerCase() === entry.filename.toLowerCase(),
+    );
+    const prevProg = get().modelDownloads[entry.filename];
+    const initialDownloaded = existingPartial?.downloadedBytes ?? prevProg?.downloaded ?? 0;
+    const initialPercent =
+      entry.sizeBytes > 0 ? Math.min(99.9, (initialDownloaded / entry.sizeBytes) * 100) : 0;
 
     set({
       localTestResult: null,
@@ -683,13 +869,16 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
         modelName: entry.name,
         filename: entry.filename,
         kind: entry.kind,
-        percent: 0,
-        downloaded: 0,
+        percent: initialPercent,
+        downloaded: initialDownloaded,
         total: entry.sizeBytes,
         speedBps: 0,
         etaSecs: null,
         downloadStage: 'downloading',
-        message: `Downloading ${entry.name} (${entry.size})…`,
+        message:
+          initialDownloaded > 0
+            ? `Resuming ${entry.name} from ${initialPercent.toFixed(1)}%…`
+            : `Downloading ${entry.name} (${entry.size})…`,
         error: null,
       },
     });
@@ -707,9 +896,9 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
             ...s.modelDownloads,
             [entry.filename]: {
               filename: entry.filename,
-              downloaded: 0,
+              downloaded: initialDownloaded,
               total: entry.sizeBytes,
-              percent: 0,
+              percent: initialPercent,
               speedBps: 0,
               etaSecs: null,
               stage: 'downloading',
@@ -719,8 +908,11 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
           },
         }));
         modelPath = await api.downloadModel(entry.directDownloadUrl, entry.filename, entry.sha256);
-        const downloaded = await api.listDownloadedModels();
-        set({ downloadedModels: downloaded });
+        const [downloaded, partials] = await Promise.all([
+          api.listDownloadedModels(),
+          api.listPartialDownloads().catch(() => [] as PartialDownload[]),
+        ]);
+        set({ downloadedModels: downloaded, partialDownloads: partials });
         existing = downloaded.find((m) => m.filename.toLowerCase() === entry.filename.toLowerCase());
         if (existing) modelPath = existing.path;
       }
@@ -804,27 +996,84 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
       return true;
     } catch (err) {
       const errMsg = String(err);
-      set((s) => ({
-        isInstallingRuntime: false,
-        isConnectingModel: false,
-        isConnectingEmbedding: false,
-        localSetup: {
-          ...s.localSetup,
-          stage: 'error',
-          message: `Setup failed for ${entry.name}`,
-          error: errMsg,
-        },
-      }));
+      const isCancelled =
+        errMsg.toLowerCase().includes('cancelled') ||
+        get().modelDownloads[entry.filename]?.stage === 'cancelled';
+      const partials = await api.listPartialDownloads().catch(() => get().partialDownloads);
+      const partial = partials.find((p) => p.filename.toLowerCase() === entry.filename.toLowerCase());
+
+      if (isCancelled) {
+        set((s) => {
+          const savedBytes =
+            partial?.downloadedBytes ??
+            s.modelDownloads[entry.filename]?.downloaded ??
+            s.localSetup.downloaded ??
+            0;
+          const total = entry.sizeBytes || s.localSetup.total || 0;
+          const percent = total > 0 ? Math.min(99.9, (savedBytes / total) * 100) : 0;
+          return {
+            partialDownloads: partials,
+            isInstallingRuntime: false,
+            isConnectingModel: false,
+            isConnectingEmbedding: false,
+            localSetup: {
+              ...s.localSetup,
+              stage: 'paused',
+              downloaded: savedBytes,
+              total,
+              percent,
+              speedBps: 0,
+              etaSecs: null,
+              downloadStage: 'cancelled',
+              message: `Paused download: ${entry.name} (${formatBytes(savedBytes)} saved)`,
+              error: null,
+            },
+          };
+        });
+        return false;
+      }
+
+      set((s) => {
+        const savedBytes =
+          partial?.downloadedBytes ??
+          s.modelDownloads[entry.filename]?.downloaded ??
+          s.localSetup.downloaded ??
+          0;
+        const total = entry.sizeBytes || s.localSetup.total || 0;
+        const percent = total > 0 ? Math.min(99.9, (savedBytes / total) * 100) : s.localSetup.percent;
+        return {
+          partialDownloads: partials,
+          isInstallingRuntime: false,
+          isConnectingModel: false,
+          isConnectingEmbedding: false,
+          localSetup: {
+            ...s.localSetup,
+            stage: 'error',
+            downloaded: savedBytes,
+            total,
+            percent,
+            message: `Setup failed for ${entry.name}`,
+            error: errMsg,
+          },
+        };
+      });
       useUiStore.getState().pushToast('error', `Local model setup failed: ${errMsg}`, {
         dedupeKey: `local-setup-err:${entry.filename}`,
       });
       return false;
+    } finally {
+      void api.setAssistantFocusGuard({ busy: false });
     }
   },
 
   testLocalModel: async () => {
-    if (get().isTestingLocalModel) {
-      return get().localTestResult ?? { ok: false, message: 'Test already running…' };
+    if (get().isTestingLocalModel || get().isConnectingModel) {
+      return (
+        get().localTestResult ?? {
+          ok: false,
+          message: 'Local model engine is busy loading or testing…',
+        }
+      );
     }
     set({ isTestingLocalModel: true, localTestResult: null });
     try {
@@ -875,25 +1124,59 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
 
   updateDownloadProgress: (progress) => {
     set((s) => {
+      const prev = s.modelDownloads[progress.filename];
+      const entry = findCatalogEntryByFilename(progress.filename);
+      const total = progress.total || prev?.total || entry?.sizeBytes || 0;
+      const downloaded =
+        progress.stage === 'error' && progress.downloaded === 0
+          ? prev?.downloaded ?? 0
+          : progress.downloaded;
+      const percent =
+        progress.percent > 0
+          ? progress.percent
+          : total > 0 && downloaded > 0
+          ? Math.min(99.9, (downloaded / total) * 100)
+          : prev?.percent ?? 0;
+
+      const normalized: DownloadProgress = {
+        ...progress,
+        downloaded,
+        total,
+        percent,
+      };
+
       const nextSetup =
         s.localSetup.stage === 'downloading' && s.localSetup.filename === progress.filename
-          ? {
-              ...s.localSetup,
-              percent: progress.percent,
-              downloaded: progress.downloaded,
-              total: progress.total,
-              speedBps: progress.speedBps ?? 0,
-              etaSecs: progress.etaSecs ?? null,
-              downloadStage: progress.stage ?? 'downloading',
-              message: progress.error
-                ? `Download error: ${progress.error}`
-                : progress.stage === 'verifying'
-                ? `Verifying SHA-256 checksum for ${s.localSetup.modelName}…`
-                : `Downloading ${s.localSetup.modelName}… ${progress.percent.toFixed(1)}%`,
-            }
+          ? progress.stage === 'cancelled'
+            ? {
+                ...s.localSetup,
+                stage: 'paused' as const,
+                percent,
+                downloaded,
+                total,
+                speedBps: 0,
+                etaSecs: null,
+                downloadStage: 'cancelled',
+                message: `Paused download: ${s.localSetup.modelName} (${formatBytes(downloaded)} saved)`,
+                error: null,
+              }
+            : {
+                ...s.localSetup,
+                percent,
+                downloaded,
+                total,
+                speedBps: progress.speedBps ?? 0,
+                etaSecs: progress.etaSecs ?? null,
+                downloadStage: progress.stage ?? 'downloading',
+                message: progress.error
+                  ? `Download error: ${progress.error}`
+                  : progress.stage === 'verifying'
+                  ? `Verifying SHA-256 checksum for ${s.localSetup.modelName}…`
+                  : `Downloading ${s.localSetup.modelName}… ${percent.toFixed(1)}%`,
+              }
           : s.localSetup;
       return {
-        modelDownloads: { ...s.modelDownloads, [progress.filename]: progress },
+        modelDownloads: { ...s.modelDownloads, [progress.filename]: normalized },
         localSetup: nextSetup,
       };
     });

@@ -12,6 +12,7 @@ import type {
   IngestResult,
   LocalModelTestResult,
   LocalRuntimeStatus,
+  PartialDownload,
   ProviderList,
   ProviderModelInfo,
   ProviderTestResult,
@@ -32,6 +33,7 @@ export type {
   IngestResult,
   LocalModelTestResult,
   LocalRuntimeStatus,
+  PartialDownload,
   ProviderList,
   ProviderModelInfo,
   ProviderTestResult,
@@ -245,6 +247,16 @@ export async function cancelDownload(filename: string): Promise<boolean> {
   return invoke<boolean>('cancel_download', { filename });
 }
 
+export async function listPartialDownloads(): Promise<PartialDownload[]> {
+  if (!isTauri()) return [];
+  return invoke<PartialDownload[]>('list_partial_downloads');
+}
+
+export async function deletePartialDownload(filename: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>('delete_partial_download', { filename });
+}
+
 export async function listDownloadedModels(): Promise<DownloadedModel[]> {
   if (!isTauri()) {
     return [
@@ -357,11 +369,16 @@ export async function setAssistantPinned(pinned: boolean): Promise<boolean> {
   return invoke<boolean>('set_assistant_pinned', { pinned });
 }
 
-export async function setAssistantFocusGuard(guard: { dialogOpen?: boolean; settingsOpen?: boolean }): Promise<void> {
+export async function setAssistantFocusGuard(guard: {
+  dialogOpen?: boolean;
+  settingsOpen?: boolean;
+  busy?: boolean;
+}): Promise<void> {
   if (!isTauri()) return;
   await invoke<void>('set_assistant_focus_guard', {
     dialogOpen: guard.dialogOpen ?? null,
     settingsOpen: guard.settingsOpen ?? null,
+    busy: guard.busy ?? null,
   });
 }
 

@@ -89,9 +89,16 @@ export const LocalRuntimeTab: React.FC = () => {
   const isConnectingModel = useProviderStore((s) => s.isConnectingModel);
   const isTestingLocalModel = useProviderStore((s) => s.isTestingLocalModel);
   const localTestResult = useProviderStore((s) => s.localTestResult);
+  const localSetup = useProviderStore((s) => s.localSetup);
   const downloadedModels = useProviderStore((s) => s.downloadedModels);
+  const partialDownloads = useProviderStore((s) => s.partialDownloads);
   const connectedModel = useProviderStore((s) => s.connectedModel);
   const modelDownloads = useProviderStore((s) => s.modelDownloads);
+  const isLocalBusy =
+    isConnectingModel ||
+    isTestingLocalModel ||
+    isInstallingRuntime ||
+    Boolean(runtimeStatus.loading);
 
   const installRuntime = useProviderStore((s) => s.installRuntime);
   const connectLocalModel = useProviderStore((s) => s.connectLocalModel);
@@ -99,16 +106,23 @@ export const LocalRuntimeTab: React.FC = () => {
   const restartLocalEngine = useProviderStore((s) => s.restartLocalEngine);
   const downloadAndSetupLocalModel = useProviderStore((s) => s.downloadAndSetupLocalModel);
   const cancelModelDownload = useProviderStore((s) => s.cancelModelDownload);
+  const discardPartialDownload = useProviderStore((s) => s.discardPartialDownload);
   const testLocalModel = useProviderStore((s) => s.testLocalModel);
   const deleteLocalModel = useProviderStore((s) => s.deleteLocalModel);
 
-  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  const selectedModelId = useUiStore((s) => s.selectedLocalModelId);
+  const setSelectedModelId = useUiStore((s) => s.setSelectedLocalModelId);
   const [activeFilter, setActiveFilter] = useState<'All' | ModelTag>('All');
   const [searchQuery, setSearchQuery] = useState('');
 
   const downloadedByName = useMemo(
     () => new Map(downloadedModels.map((m) => [m.filename.toLowerCase(), m])),
     [downloadedModels],
+  );
+
+  const partialByName = useMemo(
+    () => new Map(partialDownloads.map((p) => [p.filename.toLowerCase(), p])),
+    [partialDownloads],
   );
 
   const deviceMemory = runtimeStatus.totalMemoryBytes ?? null;
@@ -148,8 +162,14 @@ export const LocalRuntimeTab: React.FC = () => {
   // ── Model Detail View (Neurix ModelDetailPage style) ────────────────────────
   if (selectedModel) {
     const downloaded = downloadedByName.get(selectedModel.filename.toLowerCase());
+    const partial = partialByName.get(selectedModel.filename.toLowerCase());
     const prog = modelDownloads[selectedModel.filename];
     const downloading = Boolean(prog && !prog.done);
+    const hasSavedPartial = !downloaded && !downloading && Boolean(partial && partial.downloadedBytes > 0);
+    const partialPct =
+      hasSavedPartial && partial && selectedModel.sizeBytes > 0
+        ? Math.min(99.9, (partial.downloadedBytes / selectedModel.sizeBytes) * 100)
+        : 0;
     const isVerifying = downloading && prog?.stage === 'verifying';
     const isActive =
       connectedModel?.toLowerCase() === selectedModel.filename.toLowerCase() &&
@@ -328,7 +348,7 @@ export const LocalRuntimeTab: React.FC = () => {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  disabled={isActive || isConnectingModel}
+                  disabled={isActive || isLocalBusy}
                   onClick={() => void downloadAndSetupLocalModel(selectedModel)}
                   className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-colors disabled:opacity-55 ${
                     isActive ? theme.accentSoft : theme.accent
@@ -344,6 +364,13 @@ export const LocalRuntimeTab: React.FC = () => {
                       <Play className="w-4 h-4" />
                       <span>Load &amp; Use Now</span>
                     </>
+                  ) : hasSavedPartial && partial ? (
+                    <>
+                      <Play className="w-4 h-4" />
+                      <span>
+                        Resume Download · {partialPct.toFixed(1)}% ({formatBytes(partial.downloadedBytes)} saved)
+                      </span>
+                    </>
                   ) : (
                     <>
                       <Download className="w-4 h-4" />
@@ -351,6 +378,18 @@ export const LocalRuntimeTab: React.FC = () => {
                     </>
                   )}
                 </button>
+
+                {hasSavedPartial && (
+                  <button
+                    type="button"
+                    onClick={() => void discardPartialDownload(selectedModel.filename)}
+                    aria-label={`Discard partial download for ${selectedModel.name}`}
+                    className="px-3 py-2 rounded-lg border border-rose-500/30 text-rose-400 hover:bg-rose-500/15 inline-flex items-center gap-1"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Discard</span>
+                  </button>
+                )}
 
                 {downloaded && !isActive && (
                   <button
@@ -366,8 +405,8 @@ export const LocalRuntimeTab: React.FC = () => {
               </div>
               <div className={`text-[10.5px] text-center ${theme.textMuted}`}>
                 {selectedModel.sha256
-                  ? `Downloaded once (${selectedModel.size}), verified with SHA-256, then runs 100% offline in-process.`
-                  : `Downloaded once (${selectedModel.size}), verified as valid GGUF, then runs 100% offline in-process.`}
+                  ? `Downloaded once (${selectedModel.size}), verified with SHA-256, then runs 100% offline in an isolated local worker.`
+                  : `Downloaded once (${selectedModel.size}), verified as valid GGUF, then runs 100% offline in an isolated local worker.`}
               </div>
             </div>
           )}
@@ -437,29 +476,60 @@ export const LocalRuntimeTab: React.FC = () => {
   // ── Main Local AI & Model Catalog View ─────────────────────────────────────
   return (
     <div className="space-y-5 text-xs">
-      {/* Built-in In-Process Engine Status Card */}
+      {/* Built-in Crash-Isolated Engine Status Card */}
       <div className={`rounded-xl border p-4 space-y-3 ${theme.surfaceBg} ${theme.border}`}>
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
               <Cpu className={`w-4 h-4 ${theme.accentText}`} />
-              <h3 className="text-sm font-semibold">Built-in Offline Engine (In-Process llama.cpp)</h3>
+              <h3 className="text-sm font-semibold">
+                Built-in Offline Engine (Isolated llama.cpp Worker)
+              </h3>
             </div>
             <p className={`mt-0.5 ${theme.textMuted}`}>
-              Runs GGUF models directly inside DocuSage — no external server binary, no port setup, and 100% offline privacy. Click any model below to view full specs or download &amp; run it.
+              Runs GGUF models in a crash-isolated local worker process—no external downloads, no port setup, and a native engine fault can never close DocuSage.
             </p>
           </div>
-          <span
-            className={`px-2 py-0.5 rounded-full text-[10.5px] font-semibold shrink-0 border ${
-              runtimeStatus.installed
-                ? theme.accentSoft
-                : theme.isDark
-                ? 'bg-amber-500/20 text-amber-200 border-amber-400/50'
-                : 'bg-amber-50 text-amber-800 border-amber-300'
-            }`}
-          >
-            {runtimeStatus.installed ? 'Built-in Ready' : 'Not Installed'}
-          </span>
+          {(() => {
+            const hasLoadError = Boolean(
+              runtimeStatus.lastError ||
+                localTestResult?.ok === false ||
+                localSetup.stage === 'error',
+            );
+            const statusBadge = !runtimeStatus.installed
+              ? {
+                  label: 'Not Installed',
+                  cls: theme.isDark
+                    ? 'bg-amber-500/20 text-amber-200 border-amber-400/50'
+                    : 'bg-amber-50 text-amber-800 border-amber-300',
+                }
+              : isConnectingModel || runtimeStatus.loading
+              ? {
+                  label: 'Loading Model…',
+                  cls: theme.isDark
+                    ? 'bg-amber-500/20 text-amber-200 border-amber-400/50'
+                    : 'bg-amber-50 text-amber-800 border-amber-300',
+                }
+              : isTestingLocalModel
+              ? {
+                  label: 'Testing Model…',
+                  cls: theme.isDark
+                    ? 'bg-amber-500/20 text-amber-200 border-amber-400/50'
+                    : 'bg-amber-50 text-amber-800 border-amber-300',
+                }
+              : runtimeStatus.running && runtimeStatus.loadedModel
+              ? { label: 'Model Loaded', cls: theme.accentSoft }
+              : hasLoadError
+              ? { label: 'Load Failed', cls: theme.dangerSoft }
+              : { label: 'Standby', cls: `${theme.badgeBg} ${theme.border}` };
+            return (
+              <span
+                className={`px-2 py-0.5 rounded-full text-[10.5px] font-semibold shrink-0 border ${statusBadge.cls}`}
+              >
+                {statusBadge.label}
+              </span>
+            );
+          })()}
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
@@ -540,7 +610,7 @@ export const LocalRuntimeTab: React.FC = () => {
           {downloadedModels.length > 0 && (
             <button
               type="button"
-              disabled={isTestingLocalModel || isInstallingRuntime || isConnectingModel}
+              disabled={isLocalBusy}
               onClick={() => void testLocalModel()}
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border font-medium disabled:opacity-50 ${theme.border} ${theme.hoverBg}`}
             >
@@ -557,16 +627,18 @@ export const LocalRuntimeTab: React.FC = () => {
             <>
               <button
                 type="button"
+                disabled={isLocalBusy}
                 onClick={() => void restartLocalEngine()}
-                className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border ${theme.border} ${theme.hoverBg}`}
+                className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border disabled:opacity-50 ${theme.border} ${theme.hoverBg}`}
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 <span>Reload</span>
               </button>
               <button
                 type="button"
+                disabled={isLocalBusy}
                 onClick={() => void disconnectLocalModel()}
-                className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border ${theme.border} ${theme.hoverBg}`}
+                className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border disabled:opacity-50 ${theme.border} ${theme.hoverBg}`}
               >
                 <Link2Off className="w-3.5 h-3.5" />
                 <span>Unload</span>
@@ -574,6 +646,13 @@ export const LocalRuntimeTab: React.FC = () => {
             </>
           )}
         </div>
+
+        {runtimeStatus.lastError && !localTestResult && (
+          <div className={`rounded-xl border px-3 py-2 text-[11.5px] space-y-1 ${theme.dangerSoft}`}>
+            <div className="font-semibold">Local model load error</div>
+            <div className="opacity-90 break-words">{runtimeStatus.lastError}</div>
+          </div>
+        )}
 
         {localTestResult && (
           <div
@@ -585,6 +664,12 @@ export const LocalRuntimeTab: React.FC = () => {
             {localTestResult.reply && (
               <div className="opacity-90">Model reply: “{localTestResult.reply}”</div>
             )}
+          </div>
+        )}
+
+        {runtimeStatus.logPath && (
+          <div className={`text-[10.5px] font-mono truncate ${theme.textMuted}`} title={runtimeStatus.logPath}>
+            Diagnostic log: {runtimeStatus.logPath}
           </div>
         )}
       </div>
@@ -658,20 +743,23 @@ export const LocalRuntimeTab: React.FC = () => {
                     )}
                     <button
                       type="button"
-                      disabled={isConnectingModel || isInstallingRuntime || isChatConnected}
+                      disabled={isLocalBusy || isChatConnected}
                       onClick={() => void connectLocalModel(m.path)}
                       className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[11px] font-medium disabled:opacity-50 ${
                         isChatConnected ? theme.accentSoft : `${theme.border} ${theme.hoverBg}`
                       }`}
                     >
                       <Link className="w-3 h-3" />
-                      <span>{isChatConnected ? 'Chat Active' : 'Load Chat'}</span>
+                      <span>
+                        {isChatConnected ? 'Chat Active' : isConnectingModel ? 'Loading…' : 'Load Chat'}
+                      </span>
                     </button>
                     <button
                       type="button"
+                      disabled={isLocalBusy || isChatConnected}
                       onClick={() => void deleteLocalModel(m.path)}
                       aria-label={`Delete ${m.filename}`}
-                      className="p-1.5 rounded-lg text-rose-400 hover:bg-rose-500/15"
+                      className="p-1.5 rounded-lg text-rose-400 hover:bg-rose-500/15 disabled:opacity-40"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -793,8 +881,15 @@ export const LocalRuntimeTab: React.FC = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {filteredCatalog.map((entry) => {
               const downloaded = downloadedByName.get(entry.filename.toLowerCase());
+              const partial = partialByName.get(entry.filename.toLowerCase());
               const prog = modelDownloads[entry.filename];
               const downloading = Boolean(prog && !prog.done);
+              const hasSavedPartial =
+                !downloaded && !downloading && Boolean(partial && partial.downloadedBytes > 0);
+              const partialPct =
+                hasSavedPartial && partial && entry.sizeBytes > 0
+                  ? Math.min(99.9, (partial.downloadedBytes / entry.sizeBytes) * 100)
+                  : 0;
               const isVerifying = downloading && prog?.stage === 'verifying';
               const isActive =
                 connectedModel?.toLowerCase() === entry.filename.toLowerCase() &&
@@ -943,6 +1038,11 @@ export const LocalRuntimeTab: React.FC = () => {
                           <>
                             <Play className="w-3 h-3" />
                             <span>Load &amp; Use Now</span>
+                          </>
+                        ) : hasSavedPartial ? (
+                          <>
+                            <Play className="w-3 h-3" />
+                            <span>Resume · {partialPct.toFixed(0)}%</span>
                           </>
                         ) : (
                           <>
