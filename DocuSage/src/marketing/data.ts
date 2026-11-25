@@ -1,7 +1,7 @@
 export const LINKS = {
   release: 'https://github.com/Waqar-743/DocuSage/releases/latest',
   source: 'https://github.com/Waqar-743/DocuSage',
-  releaseNotes: 'https://github.com/Waqar-743/DocuSage/blob/main/DocuSage/docs/releases/v2.0.0.md',
+  releaseNotes: 'https://github.com/Waqar-743/DocuSage/blob/main/DocuSage/docs/releases/v2.0.5.md',
   docs: 'https://github.com/Waqar-743/DocuSage/blob/main/README.md',
   portfolio: 'https://waqarahmed.live',
 } as const;
@@ -14,6 +14,7 @@ export const IMAGES = {
   dashboardLight: media('desktop-light.webp'),
   modelCatalog: media('desktop-models.webp'),
   providerSettings: media('desktop-providers.webp'),
+  appearanceSettings: media('desktop-appearance.webp'),
   shortcutSettings: media('desktop-shortcuts.webp'),
   bored: media('bored.webp'),
   frustration: media('frustration.webp'),
@@ -247,51 +248,58 @@ export const GALLERY_TABS: GalleryTab[] = [
   {
     id: 'workspace',
     label: 'Workspace',
-    caption: 'Local RAG chat with expandable retrieved excerpts.',
+    caption: 'Clean document chat with 1-click Quick Start, folders, and expandable citations.',
     alt: 'DocuSage desktop workspace with private document RAG chat',
     hasThemeSwitch: true,
   },
   {
     id: 'models',
-    label: 'Model Catalog',
-    caption: 'One-click GGUF downloads via on-demand llama-server.',
+    label: 'Offline models',
+    caption: '1-click offline models starting at 229 MB — runs privately in a crash-isolated worker.',
     image: IMAGES.modelCatalog,
-    alt: 'DocuSage local GGUF model catalog',
+    alt: 'DocuSage offline models store with ultra-fast compact models',
   },
   {
     id: 'providers',
     label: 'AI Providers',
-    caption: '8 providers. Verify & Fetch models. OS keyring secrets.',
+    caption: 'Latest Gemini 4, OpenAI GPT-6.2, Anthropic Claude 5.5, plus Ollama & LM Studio.',
     image: IMAGES.providerSettings,
-    alt: 'DocuSage AI provider configuration panel',
+    alt: 'DocuSage AI provider configuration panel with latest cloud models',
+  },
+  {
+    id: 'appearance',
+    label: 'Appearance',
+    caption: '8 high-contrast themes plus Shift + - / Shift + + whole-app transparency control.',
+    image: IMAGES.appearanceSettings,
+    alt: 'DocuSage appearance themes and window transparency control',
   },
   {
     id: 'shortcuts',
     label: 'Shortcuts',
-    caption: 'Global Alt+Space toggle, tray lifecycle, and window modes.',
+    caption: 'Global Alt+Space toggle, Shift + - / + transparency, tray lifecycle, and window modes.',
     image: IMAGES.shortcutSettings,
     alt: 'DocuSage global shortcut and hidden assistant settings',
   },
 ];
 
 export const V2_HIGHLIGHTS = [
-  { title: 'Compare 2–4 Models', detail: 'Race local GGUF against cloud side-by-side.' },
-  { title: 'Branch Any Chat', detail: 'Fork a reply without losing the original thread.' },
-  { title: 'Command Palette', detail: 'Hit Ctrl+K to jump, switch, or quote clipboard.' },
-  { title: 'Under 10 MB', detail: 'Native Rust + SQLite. No heavy bundled runtimes.' },
+  { title: 'Offline Models from 229 MB', detail: 'Download ultra-fast models in seconds and chat with zero internet.' },
+  { title: 'Latest Cloud AI', detail: 'Switch seamlessly between Gemini 4, GPT-6.2, Claude 5.5, and offline models.' },
+  { title: 'Instant Transparency', detail: 'Tap Shift + - or Shift + + anytime to see through DocuSage while reading.' },
+  { title: 'Easy 1-Click Start', detail: 'Install, press Alt+Space, attach a PDF or note, and ask anything.' },
 ];
 
 export const INSTALL_STEPS = [
-  { num: '01', title: 'Download', line: 'Grab the <10 MB Windows .exe or .msi.' },
-  { num: '02', title: 'Launch once', line: 'Starts silently in your system tray.' },
-  { num: '03', title: 'Press Alt+Space', line: 'Spotlight appears right at your cursor.' },
-  { num: '04', title: 'Drop a file', line: 'Ask anything — offline or with your key.' },
+  { num: '01', title: 'Download', line: 'Grab the latest Windows .exe or .msi installer from GitHub Releases.' },
+  { num: '02', title: 'Open & Pick a Model', line: 'Download a 229 MB offline model in 1 click or add a Gemini / ChatGPT / Claude key.' },
+  { num: '03', title: 'Press Alt+Space', line: 'Summon DocuSage anywhere and use Shift + - / + for window transparency.' },
+  { num: '04', title: 'Drop Any File', line: 'PDF, Markdown, code, or notes — ask questions and get cited answers privately.' },
 ];
 
 export const FAQ_ITEMS = [
   {
     q: 'What do I need for 100% offline use?',
-    a: 'Download the lightweight llama-server runtime and a GGUF model once inside DocuSage. After that, search and chat run completely offline with zero network calls.',
+    a: 'Open Settings -> Offline models and click Download & Run on any model (starting at 229 MB). The built-in isolated llama.cpp engine is already included — after one download, search and chat run completely offline.',
   },
   {
     q: 'Which documents can I import?',
@@ -299,11 +307,11 @@ export const FAQ_ITEMS = [
   },
   {
     q: 'Does cloud mode upload my full files?',
-    a: 'No. Parsing, SQLite indexing, and retrieval stay on your machine. Cloud providers only receive your prompt, chat history, and retrieved excerpts.',
+    a: 'No. Parsing, SQLite indexing, and retrieval stay on your machine. Cloud providers (Gemini 4, OpenAI GPT-6.2, Anthropic Claude 5.5) only receive your prompt, chat history, and retrieved excerpts.',
   },
   {
-    q: 'How do I summon or quit DocuSage?',
-    a: 'Press Alt+Space anywhere to toggle Spotlight at your cursor, or use the system tray. Pressing Escape hides it without losing state; choose Quit from the tray to exit.',
+    q: 'How do I summon, adjust transparency, or quit DocuSage?',
+    a: 'Press Alt+Space anywhere to toggle Spotlight at your cursor, and press Shift + - or Shift + + to adjust window transparency. Pressing Escape hides it without losing state; choose Quit from the tray to exit.',
   },
   {
     q: 'Are AI answers and citations guaranteed accurate?',

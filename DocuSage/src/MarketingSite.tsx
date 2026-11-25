@@ -36,7 +36,6 @@ function Brand() {
     <a className="brand-mark" href="#top" aria-label="DocuSage home">
       <img src={IMAGES.logo} alt="" width="34" height="34" />
       <span>DocuSage</span>
-      <span className="brand-version">2.0</span>
     </a>
   );
 }
@@ -147,7 +146,7 @@ function MarketingSite() {
               <div className="hero-copy">
                 <p className="kicker">
                   <span className="kicker-dot" aria-hidden="true" />
-                  DocuSage 2.0 · Local-First Desktop AI
+                  DocuSage v2.0.5 · Local-First Desktop AI
                 </p>
                 <h1 id="hero-heading">
                   Ask your files. <em>Keep them yours.</em>
@@ -513,7 +512,7 @@ function MarketingSite() {
                   target="_blank"
                   rel="noreferrer"
                 >
-                  v2.0.0 Notes <ArrowRight size={15} aria-hidden="true" />
+                  v2.0.5 Notes <ArrowRight size={15} aria-hidden="true" />
                 </a>
               </div>
             </div>
@@ -542,7 +541,7 @@ function MarketingSite() {
           <nav className="footer-links" aria-label="Footer links">
             <a href={LINKS.release} target="_blank" rel="noreferrer">Download</a>
             <a href={LINKS.source} target="_blank" rel="noreferrer">GitHub</a>
-            <a href={LINKS.releaseNotes} target="_blank" rel="noreferrer">v2.0 Notes</a>
+            <a href={LINKS.releaseNotes} target="_blank" rel="noreferrer">Release Notes</a>
             <a href={LINKS.docs} target="_blank" rel="noreferrer">Docs</a>
           </nav>
           <p className="footer-credit">
