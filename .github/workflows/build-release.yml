@@ -26,6 +26,15 @@ jobs:
     timeout-minutes: 90
     env:
       LIBCLANG_PATH: C:\Program Files\LLVM\bin
+      GGML_NATIVE: "OFF"
+      GGML_AVX: "OFF"
+      GGML_AVX2: "OFF"
+      GGML_AVX512: "OFF"
+      GGML_BMI2: "OFF"
+      GGML_FMA: "OFF"
+      GGML_F16C: "OFF"
+      GGML_SSE42: "OFF"
+      GGML_CPU_REPACK: "OFF"
     steps:
       - name: Checkout the release tag
         uses: actions/checkout@v4
@@ -47,7 +56,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with:
-          shared-key: windows
+          shared-key: windows-portable-x64
           workspaces: DocuSage/src-tauri -> target
       - name: Install and test frontend
         working-directory: DocuSage
@@ -60,6 +69,55 @@ jobs:
       - name: Run Rust regression tests
         working-directory: DocuSage/src-tauri
         run: cargo test --locked --release --lib --features tauri/custom-protocol --config profile.release.lto=false
+      - name: Verify real Windows GGUF load, generation, and corrupt-file handling
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $testDir = Join-Path $env:RUNNER_TEMP 'docusage-gguf-selftest'
+          New-Item -ItemType Directory -Force $testDir | Out-Null
+          $exe = (Resolve-Path 'DocuSage/src-tauri/target/release/docusage.exe').Path
+          $modelPath = Join-Path $testDir 'qwen2.5-1.5b-instruct-q4_k_m.gguf'
+          $env:DOCUSAGE_ENGINE_LOG = Join-Path $testDir 'local-engine.log'
+
+          Write-Output 'Downloading Qwen 2.5 1.5B Instruct Q4_K_M GGUF for live Windows inference verification...'
+          curl.exe -fSL --retry 3 --retry-delay 5 `
+            -o $modelPath `
+            'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf'
+          if ($LASTEXITCODE -ne 0) { throw "Failed to download Qwen 2.5 1.5B GGUF (exit $LASTEXITCODE)" }
+
+          $stdout = Join-Path $testDir 'selftest-stdout.txt'
+          $stderr = Join-Path $testDir 'selftest-stderr.txt'
+          $p = Start-Process -FilePath $exe `
+            -ArgumentList "--local-engine-selftest `"$modelPath`"" `
+            -RedirectStandardOutput $stdout -RedirectStandardError $stderr `
+            -Wait -PassThru
+          Write-Output '--- Self-Test STDOUT ---'
+          if (Test-Path $stdout) { Get-Content $stdout }
+          Write-Output '--- Self-Test STDERR ---'
+          if (Test-Path $stderr) { Get-Content $stderr }
+          Write-Output '--- Engine Diagnostic Log ---'
+          if (Test-Path $env:DOCUSAGE_ENGINE_LOG) { Get-Content $env:DOCUSAGE_ENGINE_LOG }
+          if ($p.ExitCode -ne 0) {
+            throw "Real GGUF self-test failed with exit code $($p.ExitCode)"
+          }
+          $outText = Get-Content $stdout -Raw
+          if ($outText -notmatch 'SELFTEST_PASS') {
+            throw 'Real GGUF self-test did not report SELFTEST_PASS'
+          }
+
+          $corruptPath = Join-Path $testDir 'corrupt.gguf'
+          Set-Content -Path $corruptPath -Value 'NOT_A_VALID_GGUF_FILE' -NoNewline
+          $cOut = Join-Path $testDir 'corrupt-stdout.txt'
+          $cErr = Join-Path $testDir 'corrupt-stderr.txt'
+          $cp = Start-Process -FilePath $exe `
+            -ArgumentList "--local-engine-selftest `"$corruptPath`"" `
+            -RedirectStandardOutput $cOut -RedirectStandardError $cErr `
+            -Wait -PassThru
+          Write-Output '--- Corrupt GGUF Test STDERR ---'
+          if (Test-Path $cErr) { Get-Content $cErr }
+          if ($cp.ExitCode -ne 1) {
+            throw "Corrupt GGUF test returned unexpected exit code $($cp.ExitCode) (expected graceful exit code 1)"
+          }
       - name: Install and launch both Windows packages
         shell: pwsh
         run: ./.github/scripts/test-windows-installers.ps1
