@@ -6,6 +6,7 @@ import type { ChatMessageItem } from '../../types';
 import { ContextBadge } from './ContextBadge';
 import { Markdown } from './Markdown';
 import { SourceCitations } from './SourceCitations';
+import { LoadingDots } from '../common/LoadingDots';
 
 type Props = {
   message: ChatMessageItem;
@@ -65,9 +66,9 @@ export const MessageBubble: React.FC<Props> = ({ message, compact = false, onBra
             <span className="whitespace-pre-wrap">{message.text}</span>
           </div>
         ) : message.isStreaming && !message.text ? (
-          <div className="flex items-center gap-1.5 py-1 text-xs opacity-70">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span>Thinking…</span>
+          <div className="flex items-center gap-2 py-1 text-xs">
+            <LoadingDots className={theme.accentText} label="Model is thinking" />
+            <span className={theme.textMuted}>Thinking</span>
           </div>
         ) : isUser ? (
           <p className="text-[13.5px] leading-relaxed whitespace-pre-wrap break-words">

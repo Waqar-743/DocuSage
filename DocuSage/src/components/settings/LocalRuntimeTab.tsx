@@ -38,6 +38,7 @@ import {
 import { THEMES } from '../../lib/themes';
 import { useProviderStore } from '../../stores/useProviderStore';
 import { useUiStore } from '../../stores/useUiStore';
+import { LoadingDots } from '../common/LoadingDots';
 
 const MeterBars: React.FC<{ label: string; value: number; accentClass: string; mutedClass: string }> = ({
   label,
@@ -524,9 +525,12 @@ export const LocalRuntimeTab: React.FC = () => {
               : { label: 'Standby', cls: `${theme.badgeBg} ${theme.border}` };
             return (
               <span
-                className={`px-2 py-0.5 rounded-full text-[10.5px] font-semibold shrink-0 border ${statusBadge.cls}`}
+                className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px] font-semibold shrink-0 border ${statusBadge.cls}`}
               >
-                {statusBadge.label}
+                {(isConnectingModel || runtimeStatus.loading) && (
+                  <LoadingDots dotClassName="w-1 h-1" label="Loading model" />
+                )}
+                <span>{statusBadge.label}</span>
               </span>
             );
           })()}
@@ -749,9 +753,13 @@ export const LocalRuntimeTab: React.FC = () => {
                         isChatConnected ? theme.accentSoft : `${theme.border} ${theme.hoverBg}`
                       }`}
                     >
-                      <Link className="w-3 h-3" />
+                      {isConnectingModel ? (
+                        <LoadingDots dotClassName="w-1 h-1" label="Loading model" />
+                      ) : (
+                        <Link className="w-3 h-3" />
+                      )}
                       <span>
-                        {isChatConnected ? 'Chat Active' : isConnectingModel ? 'Loading…' : 'Load Chat'}
+                        {isChatConnected ? 'Chat Active' : isConnectingModel ? 'Loading' : 'Load Chat'}
                       </span>
                     </button>
                     <button

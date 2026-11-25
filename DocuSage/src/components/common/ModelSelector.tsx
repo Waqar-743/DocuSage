@@ -18,6 +18,7 @@ import {
 import { THEMES } from '../../lib/themes';
 import { useProviderStore } from '../../stores/useProviderStore';
 import { useUiStore } from '../../stores/useUiStore';
+import { LoadingDots } from './LoadingDots';
 
 export const ModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
   const theme = useUiStore((s) => THEMES[s.theme]);
@@ -102,18 +103,26 @@ export const ModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false
         aria-haspopup="listbox"
         className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors max-w-[260px] ${theme.surfaceBg} ${theme.border} ${theme.text} ${theme.hoverBg}`}
       >
-        <span
-          className={`w-2 h-2 rounded-full shrink-0 ${
-            isReady ? 'bg-emerald-400' : 'bg-amber-400'
-          }`}
-        />
+        {isLocal && isLocalBusy ? (
+          <LoadingDots className={`shrink-0 ${theme.accentText}`} label="Loading model" />
+        ) : (
+          <span
+            className={`w-2 h-2 rounded-full shrink-0 ${
+              isReady ? 'bg-emerald-400' : 'bg-amber-400'
+            }`}
+          />
+        )}
         {isLocal ? (
           <Cpu className={`w-3.5 h-3.5 shrink-0 ${theme.accentText}`} />
         ) : (
           <Cloud className={`w-3.5 h-3.5 shrink-0 ${theme.accentText}`} />
         )}
         <span className="truncate">
-          {compact ? activeDisplayName.slice(0, 22) : activeDisplayName}
+          {isLocal && isLocalBusy
+            ? 'Loading model'
+            : compact
+            ? activeDisplayName.slice(0, 22)
+            : activeDisplayName}
         </span>
         <ChevronDown className="w-3 h-3 opacity-70 shrink-0" />
       </button>

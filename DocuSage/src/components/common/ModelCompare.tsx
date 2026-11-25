@@ -8,6 +8,7 @@ import type { CompareTarget } from '../../types';
 import { ContextBadge } from '../chat/ContextBadge';
 import { Markdown } from '../chat/Markdown';
 import { StopButton } from '../chat/StopButton';
+import { LoadingDots } from './LoadingDots';
 
 export const ModelCompare: React.FC = () => {
   const open = useUiStore((s) => s.compareOpen);
@@ -235,7 +236,10 @@ export const ModelCompare: React.FC = () => {
                 ) : col.text ? (
                   <Markdown content={col.text} />
                 ) : col.isStreaming ? (
-                  <span className="opacity-60 animate-pulse">Streaming…</span>
+                  <div className="flex items-center gap-2 py-1">
+                    <LoadingDots className={theme.accentText} label="Model loading response" />
+                    <span className={theme.textMuted}>Loading</span>
+                  </div>
                 ) : (
                   <span className={`opacity-50 ${theme.textMuted}`}>Waiting for prompt…</span>
                 )}

@@ -23,6 +23,7 @@ import {
 import { THEMES } from '../../lib/themes';
 import { useProviderStore } from '../../stores/useProviderStore';
 import { useUiStore } from '../../stores/useUiStore';
+import { LoadingDots } from './LoadingDots';
 
 export const LocalSetupBanner: React.FC<{
   compact?: boolean;
@@ -81,6 +82,8 @@ export const LocalSetupBanner: React.FC<{
         <div className="flex items-center gap-2 min-w-0 flex-1">
           {isVerifying ? (
             <ShieldCheck className={`w-4 h-4 shrink-0 animate-pulse ${theme.accentText}`} />
+          ) : localSetup.stage === 'loadingModel' ? (
+            <LoadingDots className={`shrink-0 ${theme.accentText}`} label="Loading model" />
           ) : isWorking ? (
             <Loader2 className={`w-4 h-4 animate-spin shrink-0 ${theme.accentText}`} />
           ) : isPaused ? (
