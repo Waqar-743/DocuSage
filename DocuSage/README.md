@@ -5,168 +5,51 @@
 <h1 align="center">DocuSage Application</h1>
 
 <p align="center">
-  <strong>React 19 + TypeScript + Tauri v2 desktop AI for private PDF chat and local RAG.</strong>
+  <strong>React 19 + TypeScript + Tauri v2 desktop AI for private document chat, offline models, and latest cloud AI.</strong>
 </p>
 
 <p align="center">
   <a href="https://waqar-743.github.io/DocuSage/">Website</a>
   &nbsp; | &nbsp;
-  <a href="https://github.com/Waqar-743/DocuSage/releases/latest">Windows download</a>
+  <a href="https://github.com/Waqar-743/DocuSage/releases/latest">Download Latest Release</a>
   &nbsp; | &nbsp;
   <a href="https://github.com/Waqar-743/DocuSage">Repository</a>
 </p>
 
-## Product preview
-
-Screenshots are from a Linux source build. See [audit evidence](docs/audit.md) for tested behavior and limitations.
+## Product Preview
 
 <p align="center">
-  <img src="public/media/desktop-light.webp" alt="DocuSage light mode dashboard with private document RAG" width="100%" />
+  <img src="public/media/desktop-dark.webp" alt="DocuSage dark mode desktop workspace" width="100%" />
 </p>
 
-DocuSage launches hidden, waits in the system tray, and opens with `Alt+Space`. It combines local GGUF inference, PDF extraction, local embeddings, LanceDB semantic retrieval, and optional cloud or remote providers in one desktop workspace.
+<p align="center">
+  <img src="public/media/desktop-models.webp" alt="DocuSage Offline models catalog" width="100%" />
+</p>
 
-## Application architecture
+DocuSage runs locally on your desktop with a crash-isolated `llama.cpp` offline engine, 36-format local SQLite FTS5 + Vector RAG, latest cloud providers (Gemini 4, OpenAI GPT-6.2, Anthropic Claude 5.5), 8 high-contrast themes, and instant whole-app transparency (`Shift + -` / `Shift + +`).
 
-```mermaid
-flowchart LR
-    REACT[React 19 UI] --> API[Typed Tauri API]
-    API --> RUST[Rust commands]
-    RUST --> ASSISTANT[Tray + global shortcut]
-    RUST --> MODEL[mistral.rs + GGUF]
-    RUST --> RAG[Local RAG service]
-    RAG --> PDF[pdf-extract]
-    RAG --> EMBED[fastembed]
-    RAG --> DB[(LanceDB)]
-    RUST --> PROVIDERS[Cloud and remote providers]
-```
-
-| Layer | Main files | Responsibility |
-| --- | --- | --- |
-| Desktop interface | `src/App.tsx`, `src/App.css` | Chat, documents, settings, models, providers, and window modes. |
-| Public website | `src/MarketingSite.tsx`, `src/MarketingSite.css` | Responsive SEO-focused product website. |
-| Command bridge | `src/lib/api.ts` | Typed calls from React to Rust. |
-| Assistant lifecycle | `src-tauri/src/assistant.rs` | Hidden startup, tray menu, shortcuts, close-to-hide, sizing, and focus. |
-| App commands | `src-tauri/src/commands.rs` | Chat, model, document, settings, and persistence commands. |
-| RAG pipeline | `src-tauri/src/rag.rs` | PDF extraction, chunking, embeddings, LanceDB indexing, and retrieval. |
-| Provider layer | `src-tauri/src/providers.rs` | Local, cloud, remote, and compatible API profiles. |
-| Tauri setup | `src-tauri/src/lib.rs` | Plugin setup, managed state, and command registration. |
-
-## Development dependencies
-
-- Node.js 22.22.2+ or 24.15+
-- npm
-- Rust stable toolchain
-- Microsoft C++ Build Tools with Desktop development with C++ on Windows
-- WebView2 Runtime
-- Git
-
-Install and run:
+## Quick Commands
 
 ```bash
-npm install
-npm run tauri dev
+npm install          # Install frontend dependencies
+npm run dev          # Run website preview in browser (?desktop-preview=1 for desktop UI preview)
+npm test             # Run Vitest unit & UI regression tests
+npm run build        # Build production website
+npm run build:desktop # Build desktop-only frontend bundle
+npm run tauri dev    # Launch Tauri desktop app in dev mode
+npm run tauri build  # Build native desktop installers
 ```
 
-Build the web bundle:
-
-```bash
-npm run build
-```
-
-Build the desktop installer:
-
-```bash
-npm run tauri build
-```
-
-## Key packages
-
-### Frontend
-
-| Package | Use |
-| --- | --- |
-| React 19 | Desktop and website component tree |
-| TypeScript 5.8 | Frontend type checking |
-| Vite 7 | Local development and production build |
-| Tailwind CSS 4 | Desktop UI utility styles |
-| Lucide React | Interface icons |
-| Tauri APIs and plugins | Native desktop bridge, dialogs, and openers |
-
-### Rust
-
-| Crate | Use |
-| --- | --- |
-| `tauri` 2 | Desktop runtime and tray |
-| `mistralrs` 0.7 | Local GGUF inference |
-| `lancedb` 0.26 | Local vector database |
-| `fastembed` 4 | Local embeddings |
-| `pdf-extract` 0.10 | PDF text extraction |
-| `tokio` 1 | Async runtime |
-| `reqwest` 0.12 | Provider HTTP requests |
-| `keyring` 3 | Protected credential storage |
-
-## Source structure
-
-```text
-DocuSage/
-|-- docs/
-|   `-- hidden-assistant-mode.md
-|-- public/
-|   |-- media/
-|   |-- robots.txt
-|   `-- sitemap.xml
-|-- src/
-|   |-- App.tsx
-|   |-- App.css
-|   |-- MarketingSite.tsx
-|   |-- MarketingSite.css
-|   |-- main.tsx
-|   `-- lib/api.ts
-|-- src-tauri/
-|   |-- capabilities/
-|   |-- icons/
-|   |-- src/
-|   |   |-- assistant.rs
-|   |   |-- commands.rs
-|   |   |-- providers.rs
-|   |   |-- rag.rs
-|   |   |-- lib.rs
-|   |   `-- main.rs
-|   |-- Cargo.toml
-|   `-- tauri.conf.json
-|-- index.html
-|-- package.json
-`-- vite.config.ts
-```
-
-## Privacy and provider behavior
-
-Local mode keeps document extraction, embeddings, LanceDB retrieval, prompts, generation, model files, settings, and history storage on-device. The generation and embedding models need an initial download before offline use. Only text-based PDFs are supported; use external OCR for scans. AI answers and filename citations can be wrong.
-
-Provider mode performs retrieval locally first. Your active prompt, conversation history, and retrieved excerpts from the selected PDF are sent to the provider chosen in Settings.
-
-Supported profiles include Local, Gemini, OpenAI, Anthropic Claude, OpenRouter, Ollama Local/Remote, LM Studio Local/Remote, and custom OpenAI-compatible endpoints.
-
-## Local model discovery
-
-Place `.gguf` files in `Documents\DocuSage\models\` on Windows or use `src-tauri/.env`:
-
-```env
-MODEL_PATH=D:\DocuSage\models
-USE_GPU=0
-```
-
-## Keyboard behavior
+## Keyboard Shortcuts
 
 | Shortcut | Action |
 | --- | --- |
-| `Alt+Space` | Toggle assistant globally |
-| `Ctrl+Space` | Fallback global toggle |
-| `Escape` | Close settings, or hide to tray when settings are closed |
-| `Ctrl/Cmd + ,` | Open settings |
-| `Ctrl/Cmd + N` | New chat |
-| `Enter` | Send message |
-| `Shift+Enter` | New line |
+| `Alt + Space` | Toggle Spotlight assistant globally |
+| `Ctrl + K` | Open Command Palette |
+| `Ctrl + N` | New chat |
+| `Ctrl + Shift + V` | Quote clipboard into prompt |
+| `Shift + -` / `Shift + +` | Increase / decrease window transparency (`Ctrl + Shift + +/-` while typing) |
+| `Ctrl + /` | Open shortcuts modal |
+| `Escape` | Close active modal or hide Spotlight |
 
-For the full product story, privacy model, installation guide, and repository map, see the [root README](../README.md).
+For the full installation guide, privacy model, and architecture overview, see the [root README](../README.md).

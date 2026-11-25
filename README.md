@@ -5,16 +5,18 @@
 <h1 align="center">DocuSage</h1>
 
 <p align="center">
-  <strong>Private AI PDF chat and local RAG, built for your desktop.</strong><br />
-  Search documents locally, chat with offline GGUF models, and call the assistant from anywhere with <code>Alt+Space</code>.
+  <strong>Private AI document chat — offline models or latest cloud AI, right on your desktop.</strong><br />
+  Drop PDFs, notes, or code, search locally with zero uploads, and summon DocuSage anywhere with <code>Alt+Space</code>.
 </p>
 
 <p align="center">
   <a href="https://waqar-743.github.io/DocuSage/"><strong>Website</strong></a>
   &nbsp; | &nbsp;
-  <a href="https://github.com/Waqar-743/DocuSage/releases/latest"><strong>Download</strong></a>
+  <a href="https://github.com/Waqar-743/DocuSage/releases/latest"><strong>Download Latest Release</strong></a>
   &nbsp; | &nbsp;
-  <a href="DocuSage/docs/hidden-assistant-mode.md"><strong>Assistant mode</strong></a>
+  <a href="DocuSage/docs/releases/v2.0.5.md"><strong>v2.0.5 Release Notes</strong></a>
+  &nbsp; | &nbsp;
+  <a href="DocuSage/docs/hidden-assistant-mode.md"><strong>Assistant Mode</strong></a>
 </p>
 
 <p align="center">
@@ -26,137 +28,112 @@
 
 ---
 
-## The idea
+## Quick Start (3 Easy Steps)
 
-DocuSage started with a familiar research problem: the answer was already inside the document, but finding it meant breaking focus, searching across tabs, and often uploading private material to a hosted service.
+1. **Install DocuSage:** Download the latest Windows `.exe` or `.msi` installer from [**GitHub Releases**](https://github.com/Waqar-743/DocuSage/releases/latest) and run it.
+2. **Choose your AI:**
+   - **100% Offline (Free & Private):** Open **Settings -> Offline models** and click **Download & Run** on any model (ultra-fast models start at just **229 MB**).
+   - **Cloud AI:** Open **Settings -> Providers** and paste an API key for **Google Gemini (Gemini 4)**, **OpenAI ChatGPT (GPT-6.2)**, or **Anthropic (Claude 5.5)** — stored securely in your OS keyring.
+3. **Ask your files:** Click **Document** right under the logo (or drag & drop any file into the window) and start asking questions! Press `Alt+Space` anytime to toggle DocuSage, or `Shift + -` / `Shift + +` to adjust window transparency while reading.
 
-It is designed as the assistant that stays beside the work instead. DocuSage starts hidden, waits in the system tray, and appears as a compact panel when you press `Alt+Space`. PDF parsing, embeddings, vector retrieval, local model files, and session storage happen on your computer. Download the generation and embedding models before offline use. You can use a local GGUF model for a fully offline workflow or deliberately choose a remote provider for final answer generation.
+---
 
-## Current dashboard
+## Inside DocuSage
 
-Captured from the verified Linux source build. Windows release behavior can differ. See [audit and test evidence](DocuSage/docs/audit.md) for the verification scope.
-
-Read the release notes for the changes and Windows package checks included in each published version.
+### Workspace (Dark & Light Themes)
 
 <p align="center">
-  <img src="DocuSage/public/media/desktop-light.webp" alt="DocuSage light mode dashboard with private RAG document chat" width="100%" />
+  <img src="DocuSage/public/media/desktop-dark.webp" alt="DocuSage dark mode desktop workspace with private document chat" width="100%" />
 </p>
 
-The dashboard brings document ingestion, general chat, RAG mode, model selection, chat history, index status, and assistant controls into one desktop workspace.
+<p align="center">
+  <img src="DocuSage/public/media/desktop-light.webp" alt="DocuSage Studio Light desktop workspace" width="100%" />
+</p>
 
-## What DocuSage can do
+### Offline Models Store (from 229 MB)
 
-- Ask questions about a selected text-based PDF using local retrieval.
-- Parse, chunk, embed, and retrieve document context locally.
-- Run offline chat with local GGUF models through `mistral.rs`.
-- Store semantic document vectors in a local LanceDB index.
-- Launch hidden and toggle the assistant globally with `Alt+Space`.
-- Switch between compact, medium, and full window modes.
-- Hide to the system tray without losing drafts, sessions, documents, or model state.
-- Configure Local, Gemini, OpenAI, Anthropic Claude, OpenRouter, Ollama, LM Studio, and custom OpenAI-compatible providers.
-- Keep API credentials in the platform keyring where available.
-- Download, connect, disconnect, restart, and remove local models in the app.
-- Tune RAG chunk size, overlap, top-k retrieval, and source context display.
-- Render streamed local responses, basic Markdown, and line-numbered code blocks with copy controls. Cloud answers arrive after the provider returns.
-- Persist multiple chats, drafts, selected documents, provider choice, sidebar state, and window mode.
+<p align="center">
+  <img src="DocuSage/public/media/desktop-models.webp" alt="DocuSage Offline models store with fast compact GGUF models" width="100%" />
+</p>
+
+### Latest Cloud AI Providers & Appearance Themes
+
+<p align="center">
+  <img src="DocuSage/public/media/desktop-providers.webp" alt="DocuSage AI provider configuration with Claude 5.5, GPT-6.2, and Gemini 4" width="100%" />
+</p>
+
+<p align="center">
+  <img src="DocuSage/public/media/desktop-appearance.webp" alt="DocuSage Appearance themes and window transparency control" width="100%" />
+</p>
+
+---
+
+## Key Features
+
+- **1-Click Offline Models:** Download and run compact GGUF models right inside DocuSage — from ultra-fast tiny models (**LFM 2 350M**, **Gemma 3 270M**, **SmolLM2 360M**, **Qwen 3 0.6B**) up to larger reasoning models (**Qwen 3.5 2B / 4B**, **Gemma 4 E2B / E4B**) in a crash-isolated `llama.cpp` worker process.
+- **Latest Cloud Models:** Ready-to-use support for **Google Gemini** (`gemini-4-hydrogen`, `gemini-4-carbon`, `gemini-4-neon`, `gemini-4-argon`, `gemini-3.8-flash`), **OpenAI ChatGPT** (`gpt-6.2-sol`, `gpt-6.2-astra`, `gpt-6.1-terra`, `gpt-6-luna`, `gpt-5.2`), **Anthropic Claude** (`claude-sonnet-5-5`, `claude-opus-5-5`, `claude-haiku-5-5`, `claude-fable-5-2`), plus **Ollama**, **LM Studio**, **OpenRouter**, and custom OpenAI-compatible endpoints.
+- **36 File Formats & Hybrid Local RAG:** Drag and drop PDFs, Markdown, TXT, CSV, JSON, HTML, and source code (up to 50 MB). Small files use Full Context automatically; large documents use local **SQLite FTS5 + Vector Hybrid Search** with expandable source citations.
+- **Instant Transparency & 8 High-Contrast Themes:** Switch between 8 solid themes (Obsidian Dark, Studio Light, Cream, Navy Blue, Graphite Dark, Warm Paper, Rose Quartz, Deep Ocean) and tap `Shift + -` / `Shift + +` to adjust whole-app transparency over any window.
+- **Clean, Organized Workspace:** Manage conversations in folders, delete chats in one click from the sidebar or chat header, branch any message, compare 2–4 models side-by-side, and search across all chat history.
+- **Cursor-Summoned Spotlight & System Tray:** Launch quietly to the tray and summon DocuSage at your cursor with `Alt+Space`.
+
+---
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| `Alt + Space` | Summon / hide DocuSage globally (configurable) |
+| `Ctrl + K` | Open Command Palette (switch models, themes, or chats) |
+| `Ctrl + N` | Start a new chat |
+| `Ctrl + Shift + V` | Quote clipboard directly into the prompt |
+| `Shift + -` | Increase app transparency (or `Ctrl + Shift + -` while typing) |
+| `Shift + +` | Decrease app transparency (or `Ctrl + Shift + +` while typing) |
+| `Ctrl + /` | View all keyboard shortcuts |
+| `Enter` / `Shift + Enter` | Send message / add a new line |
+| `Escape` | Close active modal or hide Spotlight to tray |
+
+---
+
+## Privacy Boundary
+
+- **Offline mode:** Documents, extracted text, SQLite search index, embeddings, prompts, responses, model files, and chat history stay **100% on your computer**.
+- **Cloud provider mode:** Document parsing and semantic retrieval still run locally on your machine. Only your active prompt, conversation history, and the top retrieved excerpts are sent to the provider you selected. API keys are stored exclusively in your native OS keyring.
+
+---
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    UI[React 19 desktop UI] --> CMD[Tauri commands]
-    CMD --> RUST[Rust backend]
+    UI[React 19 + TypeScript UI] --> CMD[Tauri v2 Commands]
+    CMD --> RUST[Rust Backend]
 
-    PDF[Private PDF] --> PARSE[pdf-extract]
-    PARSE --> CHUNK[Local chunking]
-    CHUNK --> EMBED[fastembed embeddings]
-    EMBED --> DB[(LanceDB index)]
-    QUESTION[User question] --> SEARCH[Semantic retrieval]
+    DOC[36 File Formats] --> PARSE[Local Extraction & Chunking]
+    PARSE --> DB[(SQLite FTS5 + Vectors)]
+    QUESTION[User Question] --> SEARCH[Smart Context / Hybrid RRF]
     DB --> SEARCH
-    SEARCH --> CONTEXT[Selected local context]
+    SEARCH --> CONTEXT[Selected Local Context]
 
-    CONTEXT --> LOCAL[mistral.rs + GGUF]
-    CONTEXT --> REMOTE[Chosen cloud or remote provider]
-    LOCAL --> STREAM[Answer returned to the UI]
+    CONTEXT --> LOCAL[Isolated llama.cpp Worker + GGUF]
+    CONTEXT --> REMOTE[Gemini / OpenAI / Anthropic / Ollama]
+    LOCAL --> STREAM[Streamed Answer + Citations]
     REMOTE --> STREAM
     STREAM --> UI
 
-    TRAY[System tray] --> LIFE[Assistant lifecycle]
-    HOTKEY[Alt+Space] --> LIFE
-    LIFE --> UI
+    TRAY[System Tray + Alt+Space] --> UI
 ```
 
-### Component map
+---
 
-| Layer | Technology | Responsibility |
-| --- | --- | --- |
-| Desktop shell | Tauri v2 | Native window, tray, global shortcut, single instance, hidden startup, and installer bundle. |
-| Frontend | React 19, TypeScript, Vite | Chat, document controls, settings, provider management, model catalog, RAG controls, and marketing site. |
-| Backend | Rust 2021 + Tokio | Tauri commands, streaming, local model lifecycle, persistence, provider requests, and assistant behavior. |
-| Local inference | `mistral.rs` | On-device GGUF model execution for offline AI chat. |
-| PDF pipeline | `pdf-extract` | Local text extraction before chunking and indexing. |
-| Embeddings | `fastembed` + `BAAI/bge-small-en-v1.5` | Local vector generation for document chunks and questions. |
-| Vector database | LanceDB | Persistent semantic search across locally ingested PDFs. |
-| Provider layer | `reqwest` + platform keyring | Optional cloud/remote inference and protected credential storage. |
-| Assistant lifecycle | Tauri tray and global shortcut plugins | Hidden launch, close-to-tray, window modes, focus, and explicit quit. |
+## Build From Source
 
-## How document Q&A works
+### Prerequisites
 
-1. DocuSage extracts text from the selected text-based PDF on-device. Scanned PDFs need external OCR first.
-2. The text is split using the configured chunk size and overlap.
-3. `fastembed` creates local vectors for each chunk.
-4. LanceDB stores the vectors in a persistent local index.
-5. The question is embedded and matched against chunks from the selected PDF. Removing a document also removes its chunks; re-importing replaces its indexed content.
-6. DocuSage sends the selected context to the local GGUF model or the provider you explicitly selected.
-7. The local answer streams back; cloud responses are returned when complete. Citations are model-generated filenames and should be checked against the source. Show Retrieved Context displays the excerpts the model received.
-
-## Privacy boundary
-
-Local mode keeps the full pipeline on your computer: documents, extracted text, embeddings, retrieval, prompts, generation, model files, and history.
-
-Provider mode still performs PDF ingestion and semantic retrieval locally. Only the active prompt, conversation context, and selected document excerpts required for synthesis are sent to the configured provider. The full PDF and LanceDB index are not uploaded by the retrieval pipeline.
-
-## Desktop lifecycle
-
-| Event | Behavior |
-| --- | --- |
-| App launch | Starts hidden, registers the global shortcut, creates the tray menu, and keeps backend services ready. |
-| `Alt+Space` while hidden | Opens and focuses the compact assistant panel. |
-| `Alt+Space` while visible | Hides the assistant while preserving state. |
-| `Escape` or close | Hides the window to the tray instead of quitting. |
-| Expand control | Cycles compact -> medium -> full -> compact. |
-| Tray Quit | Explicitly stops the app and background services. |
-
-### Keyboard shortcuts
-
-| Shortcut | Action |
-| --- | --- |
-| `Alt+Space` | Toggle the assistant globally |
-| `Ctrl+Space` | Fallback global toggle |
-| `Escape` | Hide the assistant |
-| `Ctrl/Cmd + ,` | Open settings |
-| `Ctrl/Cmd + N` | Start a new chat |
-| `Enter` | Send a message |
-| `Shift+Enter` | Add a new line |
-| `Ctrl+Shift+C` | Clear the current chat |
-
-## Installation
-
-### Download the Windows app
-
-Get the newest installer from [GitHub Releases](https://github.com/Waqar-743/DocuSage/releases/latest). After installation, open DocuSage once and press `Alt+Space` or use the tray icon to show the assistant.
-
-### Build from source
-
-#### Required dependencies
-
-- Windows 10 or Windows 11
+- Windows 10/11, Linux, or macOS
 - [Node.js 22.22.2+ or 24.15+](https://nodejs.org/) and npm
 - [Rust stable toolchain](https://www.rust-lang.org/tools/install)
-- [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with Desktop development with C++
-- [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) on systems where it is not already installed
-- Git
-- Enough disk space for local GGUF model files; individual models commonly require 1.5 GB or more
+- On Windows: [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) (Desktop development with C++) and [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)
 
 ```bash
 git clone https://github.com/Waqar-743/DocuSage.git
@@ -165,132 +142,40 @@ npm install
 npm run tauri dev
 ```
 
-Build a release installer:
+Build production installers:
 
 ```bash
-cd DocuSage
+cd DocuSage/DocuSage
 npm run tauri build
 ```
 
-## Local model setup
+Run tests:
 
-Use the in-app model catalog or place a `.gguf` file in the default model directory:
-
-| Platform | Default path |
-| --- | --- |
-| Windows | `Documents\DocuSage\models\` |
-| macOS | `~/Documents/DocuSage/models/` |
-| Linux | `~/Documents/DocuSage/models/` |
-
-Override model discovery with `DocuSage/src-tauri/.env`:
-
-```env
-MODEL_PATH=D:\DocuSage\models
-USE_GPU=0
+```bash
+cd DocuSage/DocuSage
+npm test            # Frontend Vitest suite
+npm run test:web    # Playwright website + accessibility checks
 ```
 
-## Provider setup
+---
 
-Open **Settings -> AI Providers** to configure and test one of the supported profiles:
-
-- Local
-- Google Gemini
-- OpenAI
-- Anthropic Claude
-- OpenRouter
-- Ollama Local or Remote
-- LM Studio Local or Remote
-- Custom OpenAI-compatible API
-
-Each profile can define its model, base URL, timeout, temperature, organization/project metadata, enabled state, and protected API credential.
-
-## Project structure
+## Project Structure
 
 ```text
 DocuSage/
 |-- .github/workflows/
-|   `-- pages.yml                 # GitHub Pages deployment
+|   |-- pages.yml                 # Website build, Playwright verification & GitHub Pages deploy
+|   |-- release.yml               # Tag-triggered Windows installer build & GitHub Release publish
+|   `-- build-release.yml         # Portable x64 Windows build, GGUF selftest & installer checks
 |-- DocuSage/
-|   |-- docs/
-|   |   `-- hidden-assistant-mode.md
-|   |-- public/
-|   |   |-- media/               # Website and README imagery
-|   |   |-- robots.txt
-|   |   `-- sitemap.xml
+|   |-- docs/releases/            # Versioned release notes
+|   |-- public/media/             # Website and README screenshots
 |   |-- src/
-|   |   |-- App.tsx              # Desktop application interface
-|   |   |-- App.css
-|   |   |-- MarketingSite.tsx    # Public website
-|   |   |-- MarketingSite.css
-|   |   |-- main.tsx             # Web/Tauri entry selection
-|   |   `-- lib/api.ts           # Typed Tauri command bridge
-|   |-- src-tauri/
-|   |   |-- capabilities/
-|   |   |-- icons/
-|   |   |-- src/
-|   |   |   |-- assistant.rs     # Tray, shortcuts, and window lifecycle
-|   |   |   |-- commands.rs      # App and model Tauri commands
-|   |   |   |-- providers.rs     # Provider profiles and remote inference
-|   |   |   |-- rag.rs           # PDF, embeddings, and LanceDB pipeline
-|   |   |   |-- lib.rs           # Tauri setup and command registration
-|   |   |   `-- main.rs
-|   |   |-- Cargo.toml
-|   |   `-- tauri.conf.json
-|   |-- package.json
-|   |-- vite.config.ts
-|   `-- index.html
-|-- README.md
+|   |   |-- App.tsx               # Desktop application root
+|   |   |-- components/           # Chat, Dashboard, Spotlight, Settings & common UI
+|   |   |-- lib/                  # API bridge, model catalog, themes, markdown & migration
+|   |   |-- stores/               # Zustand stores (chat, documents, providers, UI)
+|   |   `-- MarketingSite.tsx     # Public product website
+|   `-- src-tauri/src/            # Rust backend (assistant, providers, SQLite RAG, isolated llama.cpp worker)
+`-- README.md
 ```
-
-## Main dependencies
-
-### Frontend
-
-| Package | Purpose |
-| --- | --- |
-| React 19 | Desktop and marketing interfaces |
-| TypeScript 5.8 | Typed frontend code |
-| Vite 7 | Development server and production bundling |
-| Tailwind CSS 4 | Utility styling used by the desktop application |
-| Lucide React | Interface icon set |
-| Tauri JavaScript APIs | Native dialogs, openers, and desktop bridge |
-
-### Rust backend
-
-| Crate | Purpose |
-| --- | --- |
-| `tauri` 2 | Native desktop runtime and tray support |
-| `mistralrs` 0.7 | GGUF local model inference |
-| `lancedb` 0.26 | Local vector storage and search |
-| `fastembed` 4 | Local text embeddings |
-| `pdf-extract` 0.10 | PDF text extraction |
-| `tokio` 1 | Async runtime |
-| `reqwest` 0.12 | Cloud and remote provider requests |
-| `keyring` 3 | Platform-backed credential storage |
-| Tauri plugins | Dialog, file system, opener, global shortcut, and single-instance behavior |
-
-## Environment variables
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `MODEL_PATH` | Auto-detected | Directory containing local `.gguf` files |
-| `DOCUSAGE_MODEL_PATH` | Unset | Alternate local model directory override |
-| `USE_GPU` | `0` | Enables GPU acceleration where the runtime supports it |
-| `CHAT_TEMPLATE` | Auto-detected | Overrides the selected model chat template |
-| `TOK_MODEL_ID` | Auto-detected | Overrides tokenizer model discovery |
-
-## Useful commands
-
-```bash
-cd DocuSage
-
-npm install          # Install frontend dependencies
-npm run dev          # Run the website/browser interface
-npm run build        # Type-check and build the web bundle
-npm run tauri dev    # Run the desktop app in development
-npm run tauri build  # Build the desktop installer
-```
-
-## License status
-
-This repository currently does not include a license file. The previous MIT badge and broken license link have been removed pending an explicit license file from the maintainer.
