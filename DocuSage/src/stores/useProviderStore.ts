@@ -221,40 +221,18 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
         }
 
         let nextLocalSetup = s.localSetup;
-        if (s.localSetup.stage === 'idle') {
-          if (activePartials.length > 0) {
-            const first = activePartials[0];
-            const entry = findCatalogEntryByFilename(first.filename);
-            const total = entry?.sizeBytes ?? 0;
-            const percent = total > 0 ? Math.min(99.9, (first.downloadedBytes / total) * 100) : 0;
-            const label = entry?.name ?? first.filename;
-            nextLocalSetup = {
-              stage: 'paused',
-              modelName: label,
-              filename: first.filename,
-              kind: entry?.kind ?? 'chat',
-              percent,
-              downloaded: first.downloadedBytes,
-              total,
-              speedBps: 0,
-              etaSecs: null,
-              downloadStage: 'cancelled',
-              message: `Paused download: ${label} (${formatBytes(first.downloadedBytes)} saved)`,
-              error: null,
-            };
-          } else if (runtime.lastInterruptedModel) {
-            const entry = findCatalogEntryByFilename(runtime.lastInterruptedModel);
-            const label = entry?.name ?? runtime.lastInterruptedModel;
-            nextLocalSetup = {
-              stage: 'error',
-              modelName: label,
-              filename: runtime.lastInterruptedModel,
-              kind: entry?.kind ?? 'chat',
-              percent: 0,
-              message: `Previous load of ${label} was interrupted`,
-              error: 'Your system may have been low on RAM. Close other apps, retry, or pick a smaller model.',
-            };
-          }
+        if (s.localSetup.stage === 'idle' && runtime.lastInterruptedModel) {
+          const entry = findCatalogEntryByFilename(runtime.lastInterruptedModel);
+          const label = entry?.name ?? runtime.lastInterruptedModel;
+          nextLocalSetup = {
+            stage: 'error',
+            modelName: label,
+            filename: runtime.lastInterruptedModel,
+            kind: entry?.kind ?? 'chat',
+            percent: 0,
+            message: `Previous load of ${label} was interrupted`,
+            error: 'Your system may have been low on RAM. Close other apps, retry, or pick a smaller model.',
+          };
         }
 
         return {
@@ -280,7 +258,15 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
   setActiveProvider: async (providerId) => {
     try {
       const id = await api.setActiveAiProvider(providerId);
-      set({ activeProviderId: id });
+      set((s) => ({
+        activeProviderId: id,
+        localSetup:
+          s.localSetup.stage === 'paused' ||
+          s.localSetup.stage === 'ready' ||
+          s.localSetup.stage === 'error'
+            ? IDLE_LOCAL_SETUP
+            : s.localSetup,
+      }));
     } catch (err) {
       useUiStore.getState().pushToast('error', String(err));
     }
@@ -310,7 +296,15 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
         }));
       }
       const id = await api.setActiveAiProvider(providerId);
-      set({ activeProviderId: id });
+      set((s) => ({
+        activeProviderId: id,
+        localSetup:
+          s.localSetup.stage === 'paused' ||
+          s.localSetup.stage === 'ready' ||
+          s.localSetup.stage === 'error'
+            ? IDLE_LOCAL_SETUP
+            : s.localSetup,
+      }));
     } catch (err) {
       useUiStore.getState().pushToast('error', String(err));
     }
@@ -602,21 +596,12 @@ export const useProviderStore = create<ProviderState>((set, get) => ({
         api.getConnectedModel().catch(() => null),
       ]);
       const resolved = connected ?? status.loadedModel ?? rawName;
-      const resolvedName = findCatalogEntryByFilename(resolved)?.name ?? displayName;
       set({
         runtimeStatus: status,
         connectedModel: resolved,
         isConnectingModel: false,
         localTestResult: null,
-        localSetup: {
-          stage: 'ready',
-          modelName: resolvedName,
-          filename: resolved,
-          kind: 'chat',
-          percent: 100,
-          message: `${resolvedName} is loaded and ready to chat.`,
-          error: null,
-        },
+        localSetup: IDLE_LOCAL_SETUP,
       });
       useUiStore.getState().pushToast('success', msg, { dedupeKey: `local-connect:${filePath}` });
       return true;

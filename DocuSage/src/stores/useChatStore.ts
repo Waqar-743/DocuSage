@@ -391,6 +391,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return;
     }
 
+    if (
+      providerState.localSetup.stage === 'ready' ||
+      providerState.localSetup.stage === 'paused' ||
+      providerState.localSetup.stage === 'error'
+    ) {
+      providerState.dismissLocalSetup();
+    }
+
     const providerLabel = provider?.name ?? 'Local';
     const modelLabel =
       opts?.modelOverride ??
