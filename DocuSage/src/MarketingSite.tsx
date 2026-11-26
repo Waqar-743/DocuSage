@@ -146,7 +146,7 @@ function MarketingSite() {
               <div className="hero-copy">
                 <p className="kicker">
                   <span className="kicker-dot" aria-hidden="true" />
-                  DocuSage v2.0.5 · Local-First Desktop AI
+                  DocuSage v2.0.6 · Local-First Desktop AI
                 </p>
                 <h1 id="hero-heading">
                   Ask your files. <em>Keep them yours.</em>
@@ -512,7 +512,7 @@ function MarketingSite() {
                   target="_blank"
                   rel="noreferrer"
                 >
-                  v2.0.5 Notes <ArrowRight size={15} aria-hidden="true" />
+                  v2.0.6 Notes <ArrowRight size={15} aria-hidden="true" />
                 </a>
               </div>
             </div>

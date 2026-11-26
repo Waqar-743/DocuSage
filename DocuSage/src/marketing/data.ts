@@ -1,7 +1,7 @@
 export const LINKS = {
   release: 'https://github.com/Waqar-743/DocuSage/releases/latest',
   source: 'https://github.com/Waqar-743/DocuSage',
-  releaseNotes: 'https://github.com/Waqar-743/DocuSage/blob/main/DocuSage/docs/releases/v2.0.5.md',
+  releaseNotes: 'https://github.com/Waqar-743/DocuSage/blob/main/DocuSage/docs/releases/v2.0.6.md',
   docs: 'https://github.com/Waqar-743/DocuSage/blob/main/README.md',
   portfolio: 'https://waqarahmed.live',
 } as const;

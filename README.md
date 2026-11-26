@@ -14,7 +14,7 @@
   &nbsp; | &nbsp;
   <a href="https://github.com/Waqar-743/DocuSage/releases/latest"><strong>Download Latest Release</strong></a>
   &nbsp; | &nbsp;
-  <a href="DocuSage/docs/releases/v2.0.5.md"><strong>v2.0.5 Release Notes</strong></a>
+  <a href="DocuSage/docs/releases/v2.0.6.md"><strong>v2.0.6 Release Notes</strong></a>
   &nbsp; | &nbsp;
   <a href="DocuSage/docs/hidden-assistant-mode.md"><strong>Assistant Mode</strong></a>
 </p>
