@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Check,
   ChevronDown,
@@ -42,6 +42,19 @@ export const ModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false
 
   const [open, setOpen] = useState(false);
 
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        setOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [open]);
+
   const active = providers.find((p) => p.id === activeProviderId) ?? providers[0];
   const isLocal = !active || active.provider === 'local';
   const activeDisplayName = isLocal
@@ -80,8 +93,8 @@ export const ModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false
       );
       return;
     }
-    await selectProviderModel(configured.id, modelId);
     setOpen(false);
+    await selectProviderModel(configured.id, modelId);
   };
 
   const handleSelectLocalModel = async (filePath: string, filename: string) => {
@@ -129,10 +142,23 @@ export const ModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false
 
       {open && (
         <>
-          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
           <div
+            data-no-drag
+            className="fixed inset-0 z-30"
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              setOpen(false);
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen(false);
+            }}
+          />
+          <div
+            data-no-drag
             role="listbox"
             aria-label="AI Models"
+            onMouseDown={(e) => e.stopPropagation()}
             className={`absolute left-0 mt-1.5 w-80 rounded-xl border shadow-2xl z-40 p-1.5 ${theme.surfaceElevated} ${theme.border} ${theme.text}`}
           >
             <div className="max-h-[70vh] overflow-y-auto space-y-2 p-0.5">
@@ -312,8 +338,8 @@ export const ModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false
                           role="option"
                           aria-selected={selected}
                           onClick={() => {
-                            void setActiveProvider(p.id);
                             setOpen(false);
+                            void setActiveProvider(p.id);
                           }}
                           className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-left text-xs transition-colors border ${
                             selected ? theme.accentSoft : `border-transparent ${theme.hoverBg}`

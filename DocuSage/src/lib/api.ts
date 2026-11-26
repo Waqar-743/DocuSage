@@ -109,7 +109,7 @@ export function handleWindowDragMouseDown(e: {
 }): void {
   if (!isTauri() || e.button !== 0 || e.detail > 1) return;
   const el = e.target as HTMLElement | null;
-  if (el?.closest('button, input, select, textarea, a, [role="button"], [role="listbox"], [role="option"]')) {
+  if (el?.closest('button, input, select, textarea, a, [role="button"], [role="listbox"], [role="option"], [data-no-drag]')) {
     return;
   }
   void getCurrentWindow().startDragging().catch(() => {});
