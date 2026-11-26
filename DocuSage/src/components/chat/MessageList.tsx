@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Cloud, Cpu, FileUp } from 'lucide-react';
 import docusageLogo from '../../assets/docusage-logo.png';
+import { isMajorCloudKind } from '../../lib/catalog';
 import { THEMES } from '../../lib/themes';
 import { useProviderStore } from '../../stores/useProviderStore';
 import { useUiStore } from '../../stores/useUiStore';
@@ -39,11 +40,23 @@ export const MessageList: React.FC<Props> = ({
   const theme = useUiStore((s) => THEMES[s.theme]);
   const openSettings = useUiStore((s) => s.openSettings);
   const runtimeStatus = useProviderStore((s) => s.runtimeStatus);
+  const connectedModel = useProviderStore((s) => s.connectedModel);
   const providers = useProviderStore((s) => s.providers);
+  const activeProviderId = useProviderStore((s) => s.activeProviderId);
   const endRef = useRef<HTMLDivElement | null>(null);
 
+  const activeProvider = providers.find((p) => p.id === activeProviderId);
+  const hasReadyLocal = Boolean(
+    runtimeStatus.running && (connectedModel || runtimeStatus.loadedModel),
+  );
+  const hasReadyCloud = Boolean(
+    activeProvider &&
+      activeProvider.provider !== 'local' &&
+      activeProvider.enabled &&
+      (activeProvider.apiKeySet || !isMajorCloudKind(activeProvider.provider)),
+  );
   const hasCloudKey = providers.some((p) => p.provider !== 'local' && p.apiKeySet);
-  const hasReadyModel = runtimeStatus.running || hasCloudKey;
+  const hasReadyModel = hasReadyLocal || hasReadyCloud || hasCloudKey;
 
   useEffect(() => {
     if (typeof endRef.current?.scrollIntoView === 'function') {
@@ -71,15 +84,13 @@ export const MessageList: React.FC<Props> = ({
             : 'Drop any PDF, Markdown, or code file here, or choose an offline or cloud model to start.'}
         </p>
 
-        {/* Easy 1-click Quick Start cards for end users */}
-        {!compact && (
+        {/* Show model setup cards only before a model is selected and ready */}
+        {!compact && !hasReadyModel && (
           <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2 w-full max-w-xl">
             <button
               type="button"
               onClick={() => openSettings('localRuntime')}
-              className={`text-left p-3 rounded-xl border transition-colors ${theme.surfaceBg} ${
-                !hasReadyModel ? theme.accentBorder : theme.border
-              } ${theme.accentHoverBorder}`}
+              className={`text-left p-3 rounded-xl border transition-colors ${theme.surfaceBg} ${theme.accentBorder} ${theme.accentHoverBorder}`}
             >
               <div className="flex items-center gap-1.5 font-semibold text-xs">
                 <Cpu className={`w-3.5 h-3.5 shrink-0 ${theme.accentText}`} />

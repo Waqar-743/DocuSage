@@ -168,6 +168,7 @@ function StatusBadge({ status, isDark }: { status: ProviderVerificationStatus; i
 export const ProvidersTab: React.FC = () => {
   const theme = useUiStore((s) => THEMES[s.theme]);
   const highlightedProviderKind = useUiStore((s) => s.highlightedProviderKind);
+  const closeSettings = useUiStore((s) => s.closeSettings);
   const pushToast = useUiStore((s) => s.pushToast);
 
   const providers = useProviderStore((s) => s.providers);
@@ -338,7 +339,10 @@ export const ProvidersTab: React.FC = () => {
                 {configured && hasKey && !isActive && (
                   <button
                     type="button"
-                    onClick={() => void setActiveProvider(configured.id)}
+                    onClick={() => {
+                      closeSettings();
+                      void setActiveProvider(configured.id);
+                    }}
                     className={`px-2.5 py-1 rounded-lg border text-[11px] font-medium ${theme.border} ${theme.hoverBg}`}
                   >
                     Use Active
@@ -446,6 +450,7 @@ export const ProvidersTab: React.FC = () => {
                   disabled={!configured}
                   onChange={(e) => {
                     if (configured) {
+                      if (hasKey) closeSettings();
                       void selectProviderModel(configured.id, e.target.value);
                     }
                   }}
@@ -517,7 +522,10 @@ export const ProvidersTab: React.FC = () => {
                     {!isActive ? (
                       <button
                         type="button"
-                        onClick={() => void setActiveProvider(p.id)}
+                        onClick={() => {
+                          closeSettings();
+                          void setActiveProvider(p.id);
+                        }}
                         className={`px-2.5 py-1 rounded-lg border text-[11px] font-medium ${theme.border} ${theme.hoverBg}`}
                       >
                         Use Active
@@ -570,13 +578,10 @@ export const ProvidersTab: React.FC = () => {
                     </span>
                     <select
                       value={p.model ?? ''}
-                      onChange={(e) =>
-                        void saveProvider({
-                          ...p,
-                          model: e.target.value,
-                          deleteApiKey: false,
-                        })
-                      }
+                      onChange={(e) => {
+                        closeSettings();
+                        void selectProviderModel(p.id, e.target.value);
+                      }}
                       className={`flex-1 rounded-lg border px-2 py-1 text-[11px] ${theme.inputBg} ${theme.border}`}
                     >
                       {fetchedModels.map((m) => (

@@ -89,6 +89,7 @@ function fitBadge(fit: DeviceFit, isDark: boolean): { label: string; cls: string
 
 export const LocalRuntimeTab: React.FC = () => {
   const theme = useUiStore((s) => THEMES[s.theme]);
+  const closeSettings = useUiStore((s) => s.closeSettings);
 
   const runtimeStatus = useProviderStore((s) => s.runtimeStatus);
   const runtimeProgress = useProviderStore((s) => s.runtimeProgress);
@@ -108,6 +109,7 @@ export const LocalRuntimeTab: React.FC = () => {
     Boolean(runtimeStatus.loading);
 
   const installRuntime = useProviderStore((s) => s.installRuntime);
+  const setActiveProvider = useProviderStore((s) => s.setActiveProvider);
   const connectLocalModel = useProviderStore((s) => s.connectLocalModel);
   const disconnectLocalModel = useProviderStore((s) => s.disconnectLocalModel);
   const restartLocalEngine = useProviderStore((s) => s.restartLocalEngine);
@@ -754,7 +756,13 @@ export const LocalRuntimeTab: React.FC = () => {
                     <button
                       type="button"
                       disabled={isLocalBusy || isChatConnected}
-                      onClick={() => void connectLocalModel(m.path)}
+                      onClick={() => {
+                        if (runtimeStatus.installed) {
+                          closeSettings();
+                          void setActiveProvider('local');
+                        }
+                        void connectLocalModel(m.path);
+                      }}
                       className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[11px] font-medium disabled:opacity-50 ${
                         isChatConnected ? theme.accentSoft : `${theme.border} ${theme.hoverBg}`
                       }`}
