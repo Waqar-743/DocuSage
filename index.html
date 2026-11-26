@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#FBF9F5" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0B1220" media="(prefers-color-scheme: dark)" />
+
+    <title>DocuSage — Private Offline &amp; Cloud AI Document Chat, Hybrid SQLite RAG</title>
+    <meta
+      name="description"
+      content="Ask your PDFs, code, and notes privately. DocuSage pairs offline models from 229 MB and latest Gemini 4, GPT-6.2 &amp; Claude 5.5 with Hybrid SQLite RAG, 36 file formats, and instant Alt+Space Spotlight."
+    />
+    <meta
+      name="keywords"
+      content="DocuSage, private AI PDF chat, local RAG desktop app, offline AI models, hybrid SQLite FTS5 RAG, GGUF llama.cpp chat, Alt+Space AI Spotlight, Tauri AI desktop app, private document search, compare AI models locally, Windows AI assistant"
+    />
+    <meta name="author" content="Waqar Ahmed" />
+    <meta name="creator" content="Waqar Ahmed" />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <meta name="application-name" content="DocuSage" />
+
+    <link rel="canonical" href="https://waqar-743.github.io/DocuSage/" />
+    <link rel="icon" type="image/png" href="/DocuSage/media/docusage-logo.png" />
+    <link rel="apple-touch-icon" href="/DocuSage/media/docusage-logo.png" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+    />
+    <link rel="preload" as="image" href="/DocuSage/media/desktop-dark.webp" type="image/webp" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="DocuSage" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:title" content="DocuSage — Private Offline &amp; Cloud AI Document Chat" />
+    <meta
+      property="og:description"
+      content="36 file formats. Offline models starting at 229 MB, latest Gemini 4 / GPT-6.2 / Claude 5.5, Hybrid SQLite RAG, and Alt+Space Spotlight. Your files stay on your machine."
+    />
+    <meta property="og:url" content="https://waqar-743.github.io/DocuSage/" />
+    <meta property="og:image" content="https://waqar-743.github.io/DocuSage/media/desktop-dark.webp" />
+    <meta property="og:image:type" content="image/webp" />
+    <meta property="og:image:width" content="1440" />
+    <meta property="og:image:height" content="1000" />
+    <meta property="og:image:alt" content="DocuSage private AI document workspace and local RAG dashboard" />
+
+    <!-- Twitter / X -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="DocuSage — Ask Your Files. Keep Them Yours." />
+    <meta
+      name="twitter:description"
+      content="Private local-first AI desktop assistant. Hybrid SQLite RAG across 36 formats, offline models from 229 MB, and instant Alt+Space Spotlight."
+    />
+    <meta name="twitter:image" content="https://waqar-743.github.io/DocuSage/media/desktop-dark.webp" />
+    <meta name="twitter:image:alt" content="DocuSage private AI document workspace" />
+
+    <!-- Structured Data: SoftwareApplication + WebSite + FAQPage + Person -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://waqar-743.github.io/DocuSage/#website",
+            "url": "https://waqar-743.github.io/DocuSage/",
+            "name": "DocuSage",
+            "description": "Private local-first AI document chat, Hybrid SQLite RAG, and Alt+Space desktop Spotlight.",
+            "inLanguage": "en",
+            "publisher": { "@id": "https://waqar-743.github.io/DocuSage/#author" }
+          },
+          {
+            "@type": "Person",
+            "@id": "https://waqar-743.github.io/DocuSage/#author",
+            "name": "Waqar Ahmed",
+            "url": "https://waqarahmed.live",
+            "sameAs": [
+              "https://github.com/Waqar-743",
+              "https://waqarahmed.live"
+            ]
+          },
+          {
+            "@type": "SoftwareApplication",
+            "@id": "https://waqar-743.github.io/DocuSage/#software",
+            "name": "DocuSage",
+            "alternateName": "DocuSage 2.0",
+            "url": "https://waqar-743.github.io/DocuSage/",
+            "applicationCategory": "ProductivityApplication",
+            "applicationSubCategory": "Private AI Document & Local RAG Assistant",
+            "operatingSystem": "Windows 10, Windows 11",
+            "softwareVersion": "2.0.6",
+            "isAccessibleForFree": true,
+            "description": "Local-first AI desktop assistant with Hybrid SQLite RAG (FTS5 BM25 + cosine vector RRF), 36 supported file formats, 1-click offline models from 229 MB in a crash-isolated llama.cpp worker, latest Gemini 4 / GPT-6.2 / Claude 5.5 cloud models, instant window transparency, and Alt+Space Spotlight.",
+            "featureList": [
+              "Hybrid SQLite RAG combining FTS5 BM25 keyword search with cosine similarity via Reciprocal Rank Fusion",
+              "Multi-format local ingestion across 36 document, markup, code, and data formats up to 50 MB",
+              "Always-on Smart Context routing between Full Context, Hybrid RAG, and FTS5 Offline",
+              "Cursor-summoned floating Spotlight window with Alt+Space and whole-app transparency via Shift + - / +",
+              "1-click offline models starting at 229 MB running in a crash-isolated llama.cpp worker",
+              "Unified streaming across Offline models, Ollama, LM Studio, Gemini 4, OpenAI GPT-6.2, Anthropic Claude 5.5, and OpenRouter",
+              "Side-by-side 2-to-4 model comparison, conversation branching, and Ctrl+K Command Palette",
+              "OS keyring credential storage and zero raw document uploads"
+            ],
+            "screenshot": [
+              "https://waqar-743.github.io/DocuSage/media/desktop-dark.webp",
+              "https://waqar-743.github.io/DocuSage/media/desktop-light.webp",
+              "https://waqar-743.github.io/DocuSage/media/desktop-models.webp",
+              "https://waqar-743.github.io/DocuSage/media/desktop-providers.webp",
+              "https://waqar-743.github.io/DocuSage/media/desktop-appearance.webp"
+            ],
+            "author": { "@id": "https://waqar-743.github.io/DocuSage/#author" },
+            "downloadUrl": "https://github.com/Waqar-743/DocuSage/releases/latest",
+            "releaseNotes": "https://github.com/Waqar-743/DocuSage/blob/main/DocuSage/docs/releases/v2.0.6.md",
+            "codeRepository": "https://github.com/Waqar-743/DocuSage",
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "USD"
+            }
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://waqar-743.github.io/DocuSage/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "What do I need for 100% offline use?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Open Settings -> Offline models and click Download & Run on any model (starting at 229 MB). The built-in isolated llama.cpp engine is already included — after one download, search and chat run completely offline."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Which documents can I import?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "36 text, document, and code formats up to 50 MB — including text-based PDFs, Markdown, CSV, JSON, Python, TypeScript, and Rust. Image-only scans need OCR before import."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Does cloud mode upload my full files?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No. Parsing, SQLite indexing, and retrieval stay on your machine. Cloud providers only receive your prompt, chat history, and retrieved excerpts."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "How do I summon or quit DocuSage?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Press Alt+Space anywhere to toggle Spotlight at your cursor, or use the system tray. Pressing Escape hides it without losing state; choose Quit from the tray to exit."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Are AI answers and citations guaranteed accurate?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No AI model is infallible. DocuSage includes an expandable Smart Context Inspector so you can verify the exact retrieved excerpts against your original file."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Which platforms are supported?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Signed-pipeline Windows x64 (.exe and .msi) installers publish on GitHub Releases, and full source builds are documented for Windows, Linux, and macOS."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+    <script type="module" crossorigin src="/DocuSage/assets/index-Lsfc5oh8.js"></script>
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <noscript>
+      <main style="max-width:720px;margin:64px auto;padding:0 24px;font-family:system-ui,sans-serif;line-height:1.6;">
+        <h1>DocuSage 2.0 — Ask your files. Keep them yours.</h1>
+        <p>
+          Private local-first AI document chat and Hybrid SQLite RAG for your desktop. Search 36 file formats locally,
+          run offline GGUF models via llama-server, or connect Gemini, Claude, OpenAI, and Ollama — all summoned
+          instantly with Alt+Space.
+        </p>
+        <p>
+          <a href="https://github.com/Waqar-743/DocuSage/releases/latest">Download for Windows</a> ·
+          <a href="https://github.com/Waqar-743/DocuSage">View Source on GitHub</a>
+        </p>
+      </main>
+    </noscript>
+  </body>
+</html>
