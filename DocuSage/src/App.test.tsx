@@ -705,7 +705,7 @@ test('runtime install failure clears resolving progress bar and displays inline 
   expect(screen.queryByText(/resolving…/i)).toBeNull();
 });
 
-test('surfaces saved partial download on reopen with Resume & Details instead of starting over', async () => {
+test('keeps chatbot header clean on reopen with saved partial download and shows Resume inside Offline models', async () => {
   vi.mocked(api.listDownloadedModels).mockResolvedValueOnce([]);
   vi.mocked(api.listPartialDownloads).mockResolvedValue([
     {
@@ -717,12 +717,18 @@ test('surfaces saved partial download on reopen with Resume & Details instead of
 
   await ready();
 
-  // Main-page banner automatically restores paused progress instead of restarting from 0%
-  expect(await screen.findByText(/Paused download: Qwen 3\.5 2B/i)).toBeTruthy();
-  expect(screen.getByRole('button', { name: /Resume/i })).toBeTruthy();
+  // Chatbot top bar must stay clean on startup — never auto-show a download banner
+  await waitFor(() => expect(useProviderStore.getState().partialDownloads).toHaveLength(1));
+  expect(screen.queryByRole('status', { name: 'Local model setup status' })).toBeNull();
+  expect(screen.queryByText(/Paused download/i)).toBeNull();
 
-  // Clicking Details on the main page banner opens that exact model's specification view
-  fireEvent.click(screen.getByRole('button', { name: /Details/i }));
+  // Saved partial progress is still cleanly available inside Settings -> Offline models
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Offline models' }));
+  expect(await screen.findByRole('button', { name: /Resume · \d+%/i })).toBeTruthy();
+
+  // Opening model specifications shows Resume Download & Discard controls
+  fireEvent.click(screen.getByRole('button', { name: /Qwen 3\.5 2B by Alibaba/i }));
   expect(await screen.findByText('Model Specifications')).toBeTruthy();
   expect(screen.getByRole('button', { name: /Resume Download/i })).toBeTruthy();
 });
@@ -916,4 +922,90 @@ test('supports Shift + - and Shift + + transparency shortcuts and includes ultra
   expect(screen.getByText('Gemma 3 270M')).toBeTruthy();
   expect(screen.getByText('SmolLM2 360M Instruct')).toBeTruthy();
   expect(screen.getByText('Qwen 3 0.6B')).toBeTruthy();
+});
+
+test('dismisses model selector immediately, closes settings on model selection, and hides setup cards once ready', async () => {
+  let resolveSetProvider!: (id: string) => void;
+  vi.mocked(api.listAiProviderConfigs).mockResolvedValue({
+    activeProviderId: 'local',
+    secureStorageAvailable: true,
+    providers: [
+      {
+        id: 'local',
+        name: 'Built-in Local (GGUF)',
+        provider: 'local',
+        enabled: true,
+        baseUrl: null,
+        model: null,
+        organization: null,
+        project: null,
+        timeoutSecs: 60,
+        temperature: 0.3,
+        apiKeySet: false,
+        options: {},
+      },
+      {
+        id: 'openai',
+        name: 'OpenAI (ChatGPT)',
+        provider: 'openAi',
+        enabled: true,
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-6.2-sol',
+        organization: null,
+        project: null,
+        timeoutSecs: 60,
+        temperature: 0.3,
+        apiKeySet: true,
+        options: {},
+      },
+    ],
+  });
+  vi.mocked(api.getLocalRuntimeStatus).mockResolvedValue({
+    installed: true,
+    binaryPath: '/tmp/llama-server',
+    running: false,
+    port: null,
+    baseUrl: null,
+    loadedModel: null,
+    loadedModelPath: null,
+    embeddingRunning: false,
+    embeddingPort: null,
+    embeddingModel: null,
+    detectedBackend: 'cpu',
+    platformSummary: 'linux-x86_64 (cpu)',
+    version: 'b5000',
+  });
+  vi.mocked(api.setActiveAiProvider).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        resolveSetProvider = resolve;
+      }),
+  );
+
+  await ready();
+
+  // Since OpenAI key is configured, onboarding model setup cards are hidden on the empty chat screen
+  expect(screen.queryByText('Cloud AI Keys')).toBeNull();
+
+  // Opening ModelSelector and pressing Escape closes the dropdown
+  fireEvent.click(screen.getByRole('button', { name: 'Select AI model' }));
+  expect(screen.getByRole('listbox', { name: 'AI Models' })).toBeTruthy();
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(screen.queryByRole('listbox', { name: 'AI Models' })).toBeNull();
+
+  // Selecting a cloud model closes the dropdown immediately before async IPC resolves
+  fireEvent.click(screen.getByRole('button', { name: 'Select AI model' }));
+  fireEvent.click(screen.getByRole('option', { name: /GPT-6\.2 Sol/i }));
+  expect(screen.queryByRole('listbox', { name: 'AI Models' })).toBeNull();
+  await act(async () => {
+    resolveSetProvider('openai');
+  });
+
+  // Selecting Load Chat in Settings -> Offline models closes the Settings modal
+  vi.mocked(api.setActiveAiProvider).mockResolvedValue('local');
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Offline models' }));
+  const loadChatBtn = await screen.findByRole('button', { name: /Load Chat/i });
+  fireEvent.click(loadChatBtn);
+  expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull();
 });
