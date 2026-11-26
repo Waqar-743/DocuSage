@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { IMAGES } from './data';
 
-const CLOUD_PROVIDERS = ['Gemini', 'OpenAI', 'Claude', 'OpenRouter', 'Ollama', 'LM Studio'];
+const CLOUD_PROVIDERS = ['Gemini 4', 'GPT-6.2', 'Claude 5.5', 'OpenRouter', 'Ollama', 'LM Studio'];
 
 export function PrivacyVault() {
   const [mode, setMode] = useState<'local' | 'cloud'>('local');
@@ -26,7 +26,7 @@ export function PrivacyVault() {
             aria-pressed={mode === 'local'}
             onClick={() => setMode('local')}
           >
-            <HardDrive size={16} aria-hidden="true" /> 100% Local (GGUF)
+            <HardDrive size={16} aria-hidden="true" /> 100% Offline Models
           </button>
           <button
             type="button"
@@ -67,7 +67,7 @@ export function PrivacyVault() {
             {mode === 'local' && (
               <li className="highlight-row">
                 <ShieldCheck size={16} aria-hidden="true" />
-                <span>llama-server GGUF inference</span>
+                <span>Crash-isolated llama.cpp engine</span>
                 <Check size={15} aria-hidden="true" className="check-ok" />
               </li>
             )}

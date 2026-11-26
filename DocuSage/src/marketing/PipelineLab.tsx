@@ -144,7 +144,7 @@ export function PipelineLab() {
               <Cpu size={20} aria-hidden="true" />
             </span>
             <small>Step 03</small>
-            <strong>{offlineOnly ? 'llama-server GGUF' : 'Local or Cloud'}</strong>
+            <strong>{offlineOnly ? 'Isolated llama.cpp' : 'Offline or Cloud'}</strong>
             <span>Streamed · Cancellable</span>
           </div>
 

@@ -186,10 +186,10 @@ function MarketingSite() {
                 </div>
               </div>
 
-              <div className="hero-metrics" aria-label="DocuSage 2.0 key metrics">
+              <div className="hero-metrics" aria-label="DocuSage key metrics">
                 <div className="metric-card">
-                  <strong>&lt;10 MB</strong>
-                  <span>Installer target</span>
+                  <strong>229 MB</strong>
+                  <span>Fastest offline model</span>
                 </div>
                 <div className="metric-card">
                   <strong>36</strong>
@@ -197,7 +197,7 @@ function MarketingSite() {
                 </div>
                 <div className="metric-card">
                   <strong>0 Bytes</strong>
-                  <span>Sent in local mode</span>
+                  <span>Sent in offline mode</span>
                 </div>
               </div>
             </div>

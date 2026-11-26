@@ -454,6 +454,14 @@ body.marketing-body {
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--white);
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.03);
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.metric-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(10, 102, 73, 0.35);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.07);
 }
 
 .metric-card strong {
@@ -475,11 +483,14 @@ body.marketing-body {
 /* ==================== INTERACTIVE HERO SANDBOX ==================== */
 .sandbox-frame {
   border-radius: var(--radius-lg);
-  border: 1px solid rgba(15, 23, 42, 0.16);
+  border: 1px solid rgba(15, 23, 42, 0.2);
   background: var(--obsidian);
   color: var(--dark-text);
   overflow: hidden;
-  box-shadow: 0 30px 70px rgba(15, 23, 42, 0.2);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 32px 72px rgba(15, 23, 42, 0.22),
+    0 8px 20px rgba(15, 23, 42, 0.1);
 }
 
 .sandbox-chrome {
@@ -760,6 +771,39 @@ body.marketing-body {
 
 @keyframes blink {
   50% { opacity: 0; }
+}
+
+.sandbox-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.sandbox-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--mint);
+  animation: sandboxDotBounce 1.15s infinite ease-in-out;
+}
+
+.sandbox-dots span:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.sandbox-dots span:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+@keyframes sandboxDotBounce {
+  0%, 80%, 100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-2.5px);
+  }
 }
 
 .citation-toggle {
@@ -1561,6 +1605,13 @@ body.marketing-body {
   color: var(--ink-muted);
   font-size: 0.86rem;
   font-weight: 700;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease, transform 150ms ease;
+}
+
+.gallery-tabs button:hover:not(.active) {
+  border-color: var(--emerald);
+  color: var(--ink);
+  transform: translateY(-1px);
 }
 
 .gallery-tabs button.active {
@@ -1666,6 +1717,14 @@ body.marketing-body {
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--white);
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.03);
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.highlight-tile:hover {
+  transform: translateY(-3px);
+  border-color: rgba(10, 102, 73, 0.35);
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.08);
 }
 
 .tile-icon {
@@ -1725,6 +1784,11 @@ body.marketing-body {
   font-weight: 700;
   color: var(--ink);
   cursor: pointer;
+  transition: color 150ms ease;
+}
+
+.faq-list summary:hover {
+  color: var(--emerald);
 }
 
 .faq-list summary::-webkit-details-marker {
@@ -1823,9 +1887,16 @@ body.marketing-body {
   border-radius: var(--radius-md);
   border: 1px solid var(--obsidian-border);
   background: var(--obsidian-card);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
   display: flex;
   flex-direction: column;
   gap: 8px;
+  transition: border-color 160ms ease, transform 160ms ease;
+}
+
+.install-rail li:hover {
+  border-color: rgba(52, 211, 153, 0.45);
+  transform: translateY(-2px);
 }
 
 .step-num {

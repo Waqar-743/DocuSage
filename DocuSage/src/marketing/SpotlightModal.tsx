@@ -31,7 +31,7 @@ function buildReply(doc: SandboxDoc, prompt: string): { text: string; citation: 
   }
   if (lower.includes('size') || lower.includes('mb') || lower.includes('fast') || lower.includes('rag')) {
     return {
-      text: 'DocuSage 2.0 targets <10 MB installers using embedded SQLite FTS5 + in-Rust cosine RRF and an on-demand llama-server sidecar [1].',
+      text: 'DocuSage pairs a compact native desktop app with embedded SQLite FTS5 + in-Rust cosine RRF and a crash-isolated llama.cpp worker [1].',
       citation: '[1] hybrid_search.rs · RRF Fusion (k = 60)',
     };
   }

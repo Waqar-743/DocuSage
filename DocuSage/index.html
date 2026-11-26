@@ -6,14 +6,14 @@
     <meta name="theme-color" content="#FBF9F5" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0B1220" media="(prefers-color-scheme: dark)" />
 
-    <title>DocuSage 2.0 — Private Local AI Chat, Hybrid SQLite RAG &amp; Desktop Spotlight</title>
+    <title>DocuSage — Private Offline &amp; Cloud AI Document Chat, Hybrid SQLite RAG</title>
     <meta
       name="description"
-      content="Ask your PDFs, code, and notes privately. DocuSage 2.0 pairs an under-10 MB desktop app with Hybrid SQLite RAG, 36 file formats, offline GGUF models, and instant Alt+Space Spotlight."
+      content="Ask your PDFs, code, and notes privately. DocuSage pairs offline models from 229 MB and latest Gemini 4, GPT-6.2 &amp; Claude 5.5 with Hybrid SQLite RAG, 36 file formats, and instant Alt+Space Spotlight."
     />
     <meta
       name="keywords"
-      content="DocuSage, private AI PDF chat, local RAG desktop app, offline document assistant, hybrid SQLite FTS5 RAG, GGUF llama-server chat, Alt+Space AI Spotlight, Tauri AI desktop app, private document search, compare AI models locally, Windows AI assistant"
+      content="DocuSage, private AI PDF chat, local RAG desktop app, offline AI models, hybrid SQLite FTS5 RAG, GGUF llama.cpp chat, Alt+Space AI Spotlight, Tauri AI desktop app, private document search, compare AI models locally, Windows AI assistant"
     />
     <meta name="author" content="Waqar Ahmed" />
     <meta name="creator" content="Waqar Ahmed" />
@@ -36,27 +36,27 @@
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="DocuSage" />
     <meta property="og:locale" content="en_US" />
-    <meta property="og:title" content="DocuSage 2.0 — Private Local AI &amp; Hybrid RAG Desktop Spotlight" />
+    <meta property="og:title" content="DocuSage — Private Offline &amp; Cloud AI Document Chat" />
     <meta
       property="og:description"
-      content="Under 10 MB. 36 file formats. Hybrid SQLite RAG, offline GGUF models, and cursor-summoned Alt+Space Spotlight. Your files stay on your machine."
+      content="36 file formats. Offline models starting at 229 MB, latest Gemini 4 / GPT-6.2 / Claude 5.5, Hybrid SQLite RAG, and Alt+Space Spotlight. Your files stay on your machine."
     />
     <meta property="og:url" content="https://waqar-743.github.io/DocuSage/" />
     <meta property="og:image" content="https://waqar-743.github.io/DocuSage/media/desktop-dark.webp" />
     <meta property="og:image:type" content="image/webp" />
     <meta property="og:image:width" content="1440" />
     <meta property="og:image:height" content="1000" />
-    <meta property="og:image:alt" content="DocuSage 2.0 private AI document workspace and local RAG dashboard" />
+    <meta property="og:image:alt" content="DocuSage private AI document workspace and local RAG dashboard" />
 
     <!-- Twitter / X -->
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="DocuSage 2.0 — Ask Your Files. Keep Them Yours." />
+    <meta name="twitter:title" content="DocuSage — Ask Your Files. Keep Them Yours." />
     <meta
       name="twitter:description"
-      content="Private local-first AI desktop assistant. Hybrid SQLite RAG across 36 formats, offline GGUF chat, and instant Alt+Space Spotlight."
+      content="Private local-first AI desktop assistant. Hybrid SQLite RAG across 36 formats, offline models from 229 MB, and instant Alt+Space Spotlight."
     />
     <meta name="twitter:image" content="https://waqar-743.github.io/DocuSage/media/desktop-dark.webp" />
-    <meta name="twitter:image:alt" content="DocuSage 2.0 private AI document workspace" />
+    <meta name="twitter:image:alt" content="DocuSage private AI document workspace" />
 
     <!-- Structured Data: SoftwareApplication + WebSite + FAQPage + Person -->
     <script type="application/ld+json">
@@ -91,16 +91,16 @@
             "applicationCategory": "ProductivityApplication",
             "applicationSubCategory": "Private AI Document & Local RAG Assistant",
             "operatingSystem": "Windows 10, Windows 11",
-            "softwareVersion": "2.0.0",
+            "softwareVersion": "2.0.5",
             "isAccessibleForFree": true,
-            "description": "Ultra-lightweight local-first AI assistant with Hybrid SQLite RAG (FTS5 BM25 + cosine vector RRF), 36 supported file formats, on-demand llama-server GGUF offline chat, side-by-side model comparison, and Alt+Space cursor-summoned Spotlight.",
+            "description": "Local-first AI desktop assistant with Hybrid SQLite RAG (FTS5 BM25 + cosine vector RRF), 36 supported file formats, 1-click offline models from 229 MB in a crash-isolated llama.cpp worker, latest Gemini 4 / GPT-6.2 / Claude 5.5 cloud models, instant window transparency, and Alt+Space Spotlight.",
             "featureList": [
               "Hybrid SQLite RAG combining FTS5 BM25 keyword search with cosine similarity via Reciprocal Rank Fusion",
               "Multi-format local ingestion across 36 document, markup, code, and data formats up to 50 MB",
               "Always-on Smart Context routing between Full Context, Hybrid RAG, and FTS5 Offline",
-              "Cursor-summoned floating Spotlight window with Alt+Space and full Dashboard workspace",
-              "On-demand llama-server sidecar with SHA256 verification for offline GGUF models",
-              "Unified streaming across Local GGUF, Ollama, LM Studio, Gemini, OpenAI, Anthropic Claude, and OpenRouter",
+              "Cursor-summoned floating Spotlight window with Alt+Space and whole-app transparency via Shift + - / +",
+              "1-click offline models starting at 229 MB running in a crash-isolated llama.cpp worker",
+              "Unified streaming across Offline models, Ollama, LM Studio, Gemini 4, OpenAI GPT-6.2, Anthropic Claude 5.5, and OpenRouter",
               "Side-by-side 2-to-4 model comparison, conversation branching, and Ctrl+K Command Palette",
               "OS keyring credential storage and zero raw document uploads"
             ],
@@ -108,11 +108,12 @@
               "https://waqar-743.github.io/DocuSage/media/desktop-dark.webp",
               "https://waqar-743.github.io/DocuSage/media/desktop-light.webp",
               "https://waqar-743.github.io/DocuSage/media/desktop-models.webp",
-              "https://waqar-743.github.io/DocuSage/media/desktop-providers.webp"
+              "https://waqar-743.github.io/DocuSage/media/desktop-providers.webp",
+              "https://waqar-743.github.io/DocuSage/media/desktop-appearance.webp"
             ],
             "author": { "@id": "https://waqar-743.github.io/DocuSage/#author" },
             "downloadUrl": "https://github.com/Waqar-743/DocuSage/releases/latest",
-            "releaseNotes": "https://github.com/Waqar-743/DocuSage/blob/main/DocuSage/docs/releases/v2.0.0.md",
+            "releaseNotes": "https://github.com/Waqar-743/DocuSage/blob/main/DocuSage/docs/releases/v2.0.5.md",
             "codeRepository": "https://github.com/Waqar-743/DocuSage",
             "offers": {
               "@type": "Offer",
@@ -129,7 +130,7 @@
                 "name": "What do I need for 100% offline use?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Download the lightweight llama-server runtime and a GGUF model once inside DocuSage. After that, search and chat run completely offline with zero network calls."
+                  "text": "Open Settings -> Offline models and click Download & Run on any model (starting at 229 MB). The built-in isolated llama.cpp engine is already included — after one download, search and chat run completely offline."
                 }
               },
               {

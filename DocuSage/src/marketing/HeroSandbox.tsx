@@ -68,7 +68,7 @@ export function HeroSandbox({ onSummonSpotlight }: Props) {
         </div>
         <div className="chrome-title">
           <span className="status-pulse" aria-hidden="true" />
-          DocuSage 2.0 · Live Interactive Demo
+          DocuSage · Live Interactive Preview
         </div>
         <div className="chrome-engine" role="group" aria-label="Demo inference engine">
           <button
@@ -77,7 +77,7 @@ export function HeroSandbox({ onSummonSpotlight }: Props) {
             aria-pressed={engine === 'local'}
             onClick={() => setEngine('local')}
           >
-            <HardDrive size={13} aria-hidden="true" /> Local GGUF
+            <HardDrive size={13} aria-hidden="true" /> Offline Models
           </button>
           <button
             type="button"
@@ -152,11 +152,20 @@ export function HeroSandbox({ onSummonSpotlight }: Props) {
               <Cpu size={14} aria-hidden="true" />
               <span>
                 {engine === 'local'
-                  ? 'llama-server · Qwen2.5-3B.gguf'
-                  : 'Claude / Gemini · Local Retrieval'}
+                  ? 'Isolated llama.cpp · Qwen 3.5 2B'
+                  : 'Gemini 4 · GPT-6.2 · Claude 5.5'}
               </span>
               <span className="ai-state">
-                {isStreaming ? 'Streaming…' : (
+                {isStreaming ? (
+                  <>
+                    <span className="sandbox-dots" aria-hidden="true">
+                      <span />
+                      <span />
+                      <span />
+                    </span>
+                    Streaming
+                  </>
+                ) : (
                   <>
                     <CheckCircle2 size={13} aria-hidden="true" /> Cited
                   </>
