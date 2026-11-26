@@ -1,23 +1,23 @@
 {
-  "date": "2026-10-14T17:10:00.663Z",
+  "date": "2026-11-26T15:38:17.041Z",
   "scope": "Local production preview; network timings are not a public-host benchmark.",
   "results": [
     {
       "name": "desktop",
       "width": 1440,
       "horizontalOverflow": false,
-      "layoutShift": 0.011005432098765432,
-      "transferredBytes": 546694,
-      "resourceRequests": 19,
+      "layoutShift": 0.0927239576400945,
+      "transferredBytes": 348212,
+      "resourceRequests": 13,
       "brokenImages": []
     },
     {
       "name": "mobile",
       "width": 390,
       "horizontalOverflow": false,
-      "layoutShift": 0.03873557634714589,
-      "transferredBytes": 546694,
-      "resourceRequests": 19,
+      "layoutShift": 0.0536941071528331,
+      "transferredBytes": 348212,
+      "resourceRequests": 13,
       "brokenImages": []
     }
   ]
